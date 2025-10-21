@@ -1,0 +1,77 @@
+---
+title: 完整示例
+description: 全部参数都注册的示例插件
+---
+
+## 3. 示例插件
+
+```ts
+import type { Client } from "tdl";
+import { Plugin } from "@plugin/BasePlugin.ts";
+import logger from "@log/index.ts";
+
+export default class HelloPlugin extends Plugin {
+	name = "hello";
+	version = "0.1.0";
+	type = "general"; // 插件类型，只能 bot 使用(使用了bot的回调按钮)还是 user (使用了bot不能使用的方法) 如何都能用则是general
+	description = "示例：响应 /hello 命令";
+    // [!code highlight]
+    // 定时任务
+	runHandlers = {
+		heartbeat: {
+			description: "每 30 秒输出心跳日志",
+			intervalMs: 30_000,
+			immediate: true,
+			handler: () => {
+				logger.info("[HelloPlugin] heartbeat");
+			},
+		},
+	};
+
+	constructor(client: Client) {
+		super(client);
+        // [!code highlight]
+        // 命令注册
+		this.cmdHandlers = {
+			hello: {
+				description: "回复 '你好，世界！'",
+				scope:"all"
+				permission:"all"
+				handler: async (updateNewMessage, args) => {
+					try {
+						await this.client.invoke({
+							_: "sendMessage",
+							chat_id: updateNewMessage.message.chat_id,
+							input_message_content: {
+								_: "inputMessageText",
+								text: { _: "formattedText", text: "你好，世界！" },
+							},
+						});
+					} catch (e) {
+						logger.error("发送消息失败", e);
+					}
+				},
+			},
+		};
+    // [!code highlight]
+    // 接收更新
+		this.updateHandlers = {
+			updateNewMessage: {
+				handler: async () => {
+					// 处理新消息逻辑
+				},
+			},
+		};
+	}
+    // [!code highlight]
+    // 初始化
+	async onLoad() {
+		logger.info("HelloPlugin 已加载，执行一次性初始化");
+	}
+    // [!code highlight]
+    // 资源清理
+	async destroy() {
+		// 清理资源或定时器
+	}
+}
+```

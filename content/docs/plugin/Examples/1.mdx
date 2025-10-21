@@ -1,0 +1,31 @@
+---
+title: 快速模板
+description: 快速启动一个插件的开发
+---
+
+### 快速开始
+
+```ts title="Examples.ts"
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+import { sendMessage } from "@TDLib/function/message.ts";
+import type { updateNewMessage } from "tdlib-types";
+
+export default class LifePlugin extends Plugin {
+  type = "插件适用的运行主体";
+  name = "插件唯一名称";
+  version = "插件版本号";
+  description = "简短描述";
+  constructor(client: Client) {
+    super(client);
+    this.cmdHandlers = {
+      插件命令: {
+        description: "详细的插件介绍",
+        handler: async (Update, _args) => {
+          收到消息后;
+        },
+      },
+    };
+  }
+}
+```

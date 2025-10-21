@@ -1,0 +1,221 @@
+---
+title: 图片生成
+description: 进行图片生成
+---
+
+## 介绍
+
+图片生成主要依靠 `satori` 进行生成图片
+
+可以将 Vue 模板渲染成图片
+
+## 须知事项
+
+- x-satori 负责把最终的静态 HTML 渲染为图片，它不会执行或运行 Vue 组件中的 JavaScript（例如 `<script>` 内的逻辑、响应式状态或生命周期钩子），也不会处理组件范围内的 `<style>`（包括 scoped/style modules）。因此，仅依赖组件内脚本或样式来生成最终效果通常不会生效。
+
+- 由于 satori 并不完整地应用组件级样式，单纯依靠 `class` 引入的样式通常不可预期。satori 对部分 Tailwind CSS 类有内置支持，但支持范围有限且可能随版本变化，使用前请务必自行测试。如果你在 `class` 中使用 Tailwind，请在目标环境中验证样式是否生效。
+
+- 要保证样式在图片中生效，推荐将关键样式写为内联样式（例如 `style="..."`），或者在渲染前把模板预渲染为包含最终样式的静态 HTML 再交给 satori。可以参考 satori 的 CSS 支持列表来确认哪些 CSS 属性被支持
+
+<Callout title="satori 支持的 CSS 列表（参考）">
+  https://github.com/vercel/satori?tab=readme-ov-file#css
+</Callout>
+
+```vue title="template.vue"
+<template>
+  {/* 不生效部分 */}
+  {/* [!code word:box] */}
+  <div class="box" style="display: flex;">
+    {{ title }}
+  </div>
+  <div style="display: flex;">
+  {/* 不生效部分 */}
+  {/* [!code highlight] */}
+    {{ newtitle }}
+  </div>
+  <div v-for="value in fortest" :key="value" style="display: flex;">
+    <p>value: {{ value }}</p>
+  </div>
+  <div v-if="show" style="display: flex;">隐藏内容</div>
+</template>
+<script setup lang="ts">
+// 不生效部分
+// [!code highlight]
+import { ref } from "vue";
+
+// 这里是传递参数部分
+defineProps<{
+  title?: string;
+  fortest?: number;
+  show?: boolean;
+}>();
+
+// 不生效部分
+// [!code highlight]
+const newtitle = ref("新标题");
+</script>
+
+// 不生效部分
+{/* [!code highlight] */}
+<style scoped>
+/* [!code highlight] */
+.box {
+  /* [!code highlight] */
+  width: 100px; /* [!code highlight] */
+  height: 100px; /* [!code highlight] */
+  background-color: red; /* [!code highlight] */
+} /* [!code highlight] */
+/* [!code highlight] */
+</style>
+```
+
+## 使用方法
+
+在 @function/genImg.ts 中 我们包装了一个 generateImage 方法用于图片生成
+
+下面是 `generateImage` 方法的类型表，使用项目内置的 `TypeTable` 组件展示参数说明与返回值：
+
+<TypeTable
+  type={{
+    "options": {
+      description: "图片生成选项对象",
+      type: <code>{`{ width: number | 'auto'; height: number | 'auto'; fonts?: FontOptions[]; debug?: boolean; quality?: number; imgname?: string; format?: 'png' | 'jpg' | 'jpeg'; jpegQuality?: number }`}</code>,
+      parameters: [
+        { name: 'width', description: <span>图片宽度，数字或字符串 <code>"auto"</code></span> },
+        { name: 'height', description: <span>图片高度，数字或字符串 <code>"auto"</code></span> },
+        { name: 'fonts', description: <span>字体配置数组，详见 <code>FontOptions</code></span> },
+        { name: 'debug', description: '是否打开调试模式，调试模式下会保留中间文件' },
+        { name: 'quality', description: '输出质量 (0-100)，仅对某些格式生效' },
+        { name: 'imgname', description: '生成文件名（可选），不含扩展名' },
+        { name: 'format', description: "图片格式：'png' | 'jpg' | 'jpeg'" },
+        { name: 'jpegQuality', description: '当 format 为 jpeg/jpg 时使用的质量设置 (0-100)' },
+      ],
+    },
+    "vuetemplateStr": {
+      description: 'Vue 模板字符串，用于渲染图片的静态 HTML',
+      type: <code>string</code>,
+    },
+    "props": {
+      description: '传入 Vue 模板的属性对象（可选）',
+      type: <code>Record&lt;string, any&gt;</code>,
+      default: <code>{`{}`}</code>,
+    },
+  }}
+/>
+
+示例：
+<Files>
+    <File name="test.ts" />
+    <File name="template.vue" />
+</Files>
+
+```ts title="test.ts"
+import template from "./template.vue?raw";
+import { generateImage } from "@function/genImg.ts";
+// 调用示例
+const result = await generateImage(
+  {
+    width: 1200,
+    height: 630,
+    format: 'png',
+    imgname: 'og-image',
+  },
+  template
+  { title: '示例标题' },
+);
+
+```
+
+## 返回处理
+
+`generateImage` 方法返回一个包含生成图片信息的对象：
+
+```ts
+{
+  path: '/tmp/og-image.png',
+  width: 1200,
+  height: 630,
+  hash: 'abcd1234',
+  file_id: 'file_5678'
+}
+```
+<TypeTable
+  type={{
+    path: {
+      description:
+        '图片的绝对路径 (如何没有路径就是有缓存使用 file_id 发送图片，避免重复上传)',
+      type: 'string',
+    },
+    width: {
+      description: '图片宽度，单位像素',
+      type: 'number',
+    },
+    height: {
+      description: '图片高度，单位像素',
+      type: 'number',
+    },
+    hash: {
+      description: '图片内容的哈希值',
+      type: 'string',
+    },
+    file_id: {
+      description: '上传到 Telegram 后的文件 ID(当有 path 时表示该参数有缓存图片)',
+      type: 'string',
+    },
+  }}
+/>
+
+```ts
+import { sendMessage } from "@TDLib/function/message.ts";
+import { generateImage } from "@function/genImg.ts";
+import { updateImgCache } from "@db/update.ts";
+import fs from "fs";
+
+
+const imagePath = await generateImage(
+  {
+    width: 1200,
+    height: "auto",
+  },
+  templateStr,
+  props
+);
+// 当有路径时表示图片生成成功并且没有缓存需要进行上传
+if (imagePath.path) {
+  const result = await sendMessage(client, message.message.chat_id, {
+    media: {
+      photo: {
+        path: imagePath.path,
+      },
+    },
+  });
+  // 保存 file_id 到缓存
+  if (result && result.content._ === "messagePhoto" && imagePath.hash) {
+    const file_id = result.content.photo.sizes.slice(-1)[0].photo.remote.id;
+    try {
+      await updateImgCache(imagePath.hash, file_id);
+    } catch (err) {
+      logger.warn("保存 file_id 缓存失败", err);
+    }
+  }
+  // 可选删除临时文件
+  await fs.promises.unlink(imagePath.path);
+  return;
+}
+
+// 当有缓存时path会为空，file_id 进行发送
+if ((imagePath.hash, imagePath.file_id)) {
+  await sendMessage(client, message.message.chat_id, {
+    media: {
+      photo: {
+        id: imagePath.file_id,
+      },
+    },
+  });
+  return;
+}
+// 图片生成失败错误处理
+await sendMessage(client, message.message.chat_id, {
+  text: "图片生成失败",
+});
+```

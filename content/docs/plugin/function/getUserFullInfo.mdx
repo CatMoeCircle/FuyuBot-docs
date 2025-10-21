@@ -1,0 +1,31 @@
+---
+title: 获取用户的完整信息
+description: 通过 TDLib 获取用户的完整信息
+---
+
+<TypeTable
+  type={{
+    client: {
+      description:
+        'TDLib 客户端实例',
+      type: 'Client',
+    },
+    user_id: {
+      description: '要获取信息的用户 ID',
+      type: 'number',
+    },
+  }}
+/>
+
+
+
+#### 获取用户信息
+可以使用 TDLib 的 `getUserFullInfo` 方法来获取用户的详细信息。以下是一个示例代码，展示如何在插件中实现这一功能：
+
+```ts title="UserInfo.ts"
+import { getUserFullInfo } from "@TDLib/function/user.ts";
+
+const user = await getUserFullInfo(client, user_id);
+```
+#### 返回内容
+[userFullInfo Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1user_full_info.html)

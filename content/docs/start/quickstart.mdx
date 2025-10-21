@@ -1,0 +1,82 @@
+---
+title: 快速开始
+description: Fuyu-TDBot 快速开始指南
+icon: Album
+---
+
+## 快速开始
+<Callout title="前提条件" type="success">
+    - 熟悉命令行
+    - 已安装 `Git`
+    - 已安装 [Node.js](https://nodejs.org/) `v22.6.0` 或更高版本
+    - 已安装 [MongoDB](https://www.mongodb.com/) 并正在运行 / 或使用远程的 MongoDB 服务
+    - 已创建 Telegram 账号（普通账号或 Bot 账号均可）
+    - 已获取 Telegram API ID 和 API Hash，获取方法请参考 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)
+</Callout>
+
+在本节中，我们将介绍如何在本地搭建 Fuyu-TDBot，并运行一个简单的机器人实例。
+
+确保你安装了最新版本的 Node.js，并且你的当前工作目录正是打算创建项目的目录。
+
+首先你需要安装 pnpm（如果你还没有安装的话）：
+
+<Tabs defaultValue="npm">
+  <TabsList>
+    <TabsTrigger value="npm">
+<svg viewBox="0 0 27.23 27.23" aria-hidden="true"><rect fill="#333333" width="27.23" height="27.23" rx="2"></rect><polygon fill="#fff" points="5.8 21.75 13.66 21.75 13.67 9.98 17.59 9.98 17.58 21.76 21.51 21.76 21.52 6.06 5.82 6.04 5.8 21.75"></polygon></svg>
+      npm
+    </TabsTrigger>
+  </TabsList>
+  <TabsContent value="npm">npm install -g pnpm</TabsContent>
+</Tabs>
+
+接下来，使用 git 克隆 Fuyu-TDBot 仓库：
+
+```bash
+git clone https://github.com/CatMoeCircle/Fuyu_TDBot.git
+cd Fuyu_TDBot
+
+# 然后，安装项目依赖
+pnpm install -P
+
+# 接下来，运行bot初始化
+pnpm start
+```
+第一次启动后，会初始化配置文件，并提示你输入必要的信息：
+
+```bash
+✔ 请输入 TG_API_ID <your_api_id>
+✔ 请输入 TG_API_HASH <your_api_hash>
+# 在MONGODB_URL的结尾中添加数据库名称，
+# [!code word:fuyu-tdbot]
+# 例如：mongodb://localhost:27017/fuyu-tdbot 可以指定数据库名称为 fuyu-tdbot
+# 默认情况下没有则为 fuyubot
+✔ 请输入 MONGODB_URL <your_mongodb_url>
+
+✔ 请选择登录的账户类型 Bot | User
+✔ 请输入 Bot Token <your_bot_token>
+
+[2025-10-21 16:27:41] INFO: Bot 已登录: Bot名称 (@BotUsername - ID: BotID)
+
+```
+## 通过 PM2 后台运行
+
+### PM2 进程守护
+
+如果你希望在后台运行 Fuyu-TDBot，可以使用 PM2 进行进程守护。
+
+<Callout title="注意" type="warn">
+    使用前请确保你已经完成了上述的初始化步骤，并登录了账户
+</Callout>
+
+```bash
+# 启动
+pnpm pm2:start
+# 停止
+pnpm pm2:stop
+# 重启
+pnpm pm2:restart
+# 查看日志
+pnpm pm2:logs
+
+```

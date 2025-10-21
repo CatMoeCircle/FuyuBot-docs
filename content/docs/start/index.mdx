@@ -1,0 +1,55 @@
+---
+title: 介绍
+description: 介绍Fuyu-TDBot
+icon: CircleQuestionMark
+---
+<GithubInfo
+  owner="CatMoeCircle"
+  repo="Fuyu_TDBot"
+/>
+## 介绍
+
+Fuyu-TDBot 是一个使用 TypeScript 编写的 TG 机器人框架，使用 [TDLib](https://core.telegram.org/tdlib) 与 Telegram 进行交互。
+[TDLib](https://core.telegram.org/tdlib) 提供了几乎完整的 Telegram API 功能，且方便开发，
+因此本框架可以登录 `普通账号` 和 `Bot 账号`
+
+## 特性
+
+- 使用 TypeScript 编写，类型安全，开发体验良好
+- 基于 TDLib，支持普通账号和 Bot 账号
+- 支持 插件化扩展，方便添加新功能
+- 提供TDLib 的 API 封装，简化开发流程
+- 内置多种实用功能插件，如自动回复、群管理等
+
+<Callout title="注意" type="warn">
+  本项目使用了 Node.js 实验性功能 `--experimental-loader`，其行为可能随 Node
+  版本更改。
+</Callout>
+
+## Telegram Database Library
+[TDLib](https://core.telegram.org/tdlib)（Telegram 数据库库）是一个跨平台、功能齐全的 Telegram 客户端实例。
+
+
+- **跨平台**。TDLib 可在 Android、iOS、Windows、macOS、Linux、WebAssembly、FreeBSD、Windows Phone、watchOS、tvOS、Tizen、Cygwin 上使用。它还应该在其他 *nix 系统上工作，无论是否付出最小的努力。
+- **多语言**。TDLib 可以轻松地与任何能够执行 C 函数的编程语言一起使用。此外，它还具有与 Java（使用 JNI）和 C#（使用 C++/CLI）的本机绑定。
+- **易于使用***。TDLib 负责所有网络实施细节、加密和本地数据存储。
+- **高性能**。在 Telegram Bot API 中，每个 TDLib 实例同时处理超过 24,000 个活跃的机器人。
+- **有据可查**。所有 TDLib API 方法和公共接口都有完整的文档。
+- **一致**。TDLib 保证所有更新都将按正确的顺序交付。
+- **可靠**。TDLib 在缓慢且不可靠的互联网连接上保持稳定。
+- **安全**。所有本地数据都使用用户提供的加密密钥进行加密。
+- **完全异步**。对 TDLib 的请求不会相互阻止或其他任何内容，响应将在可用时发
+<Callout title="注意" type="warn">
+    本部分内容摘自 [TDLib 官方文档](https://core.telegram.org/tdlib)，如有翻译不准确之处请以官方文档为准。
+</Callout>
+
+## MongoDB
+Fuyu-TDBot 使用 MongoDB 作为默认的数据存储解决方案。MongoDB 是一个基于文档的 NoSQL 数据库，具有高性能、可扩展性和灵活的数据模型，适合存储和管理大量的非结构化数据。
+
+
+## 社区与支持
+如果您在使用 Fuyu-TDBot 时遇到任何问题，或者有任何建议和反馈，欢迎加入我们的社区进行交流和讨论：
+- [GitHub 讨论区](https://github.com/CatMoeCircle/Fuyu_TDBot/discussions)
+- [Telegram 频道](https://t.me/CatMoeCircle)
+
+我们期待您的参与，共同推动 Fuyu-TDBot 的发展！

@@ -1,0 +1,41 @@
+---
+title: 更新事件注册
+description: 命令注册方法
+---
+
+#### 更新事件注册
+
+- `updateHandlers: Record<string, UpdateDef>`：TDLib 更新处理表，仅在需要接收更新时运行处理器
+
+所有的更新都可以在[TDLib Update 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_update.html)。中查找到
+
+```ts
+import type { Client } from "tdl";
+import { Plugin } from "@plugin/BasePlugin.ts";
+
+export default class HelloPlugin extends Plugin {
+  name = "插件唯一名称";
+  type = "general";
+  version = "插件版本号";
+  description = "简短描述";
+
+  constructor(client: Client) {
+    super(client);
+
+    this.updateHandlers = {
+      // updateNewMessage 为需要接收的更新
+      // [!code word:updateNewMessage]
+      // [!code highlight]
+      updateNewMessage: {
+        // update 为收到的更新内容   // [!code highlight]
+        // [!code word:update]
+        // [!code highlight]
+        handler: async (update) => {
+          // [!code highlight]
+          console.log(update);
+        }, // [!code highlight]
+      }, // [!code highlight]
+    };
+  }
+}
+```

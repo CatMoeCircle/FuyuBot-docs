@@ -1,0 +1,19 @@
+---
+title: 定时任务
+description: 定时任务使用方法
+---
+
+### 定时任务
+
+```ts
+runHandlers = {
+  heartbeat: {
+    description: "每 30 秒输出心跳日志",
+    intervalMs: 30_000,
+    immediate: true,
+    handler: () => {
+      logger.info("[HelloPlugin] heartbeat");
+    },
+  },
+};
+```

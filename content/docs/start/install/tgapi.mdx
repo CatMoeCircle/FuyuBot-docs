@@ -1,0 +1,35 @@
+---
+title: Telegram API 获取
+description:  如何获取 Telegram API ID 和 API Hash
+---
+
+## 获取 Telegram API ID 和 API Hash
+要使用 Fuyu-TDBot，您需要从 Telegram 获取 `API ID` 和 `API Hash`。以下是获取这些信息的步骤：
+
+内容来源于 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)。
+### 获取api_id
+
+为了获取 `API ID` 并使用 Telegram API 开发您自己的应用程序，您需要执行以下作：
+- 使用官方应用程序注册 Telegram。
+- 登录您的 Telegram 核心：https://my.telegram.org。
+- 转到 `API development tools` 并填写表格。
+- 您将获得基本地址以及用户授权所需的`api_id`和`api_hash`参数。
+- 目前，每个号码只能注册一个`api_id`。
+
+TG将向您在此过程中使用的电话号码发送重要的开发者通知，因此请使用连接到您活动 Telegram 帐户的最新号码。
+
+### 使用 api_id
+在使用 MTProto Telegram API 之前，请注意以下事项： 
+Telegram
+
+- 所有 API 客户端库都受到严格监控，以防止滥用。 
+
+
+- 如果你使用 Telegram API 进行刷屏、垃圾信息、伪造频道的订阅数或观看数，你将被永久封禁。 
+
+- 由于 Telegram API 滥用严重，所有使用非官方 Telegram API 客户端登录的账户都会被自动置于观察状态，以防止违反服务条款。 
+
+
+- 如果你没有违反服务条款，但在使用 API 后你的账户被封禁，请发邮件至 recover@telegram.org，解释你使用 API 的意图，请求解封。
+
+请注意，邮件需要人工审核，因此自动生成的邮件可能会被检测并封禁。

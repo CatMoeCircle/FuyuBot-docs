@@ -1,0 +1,168 @@
+---
+title: MongoDB 安装与配置
+description: 在本地或安装和配置 MongoDB 数据库
+---
+
+## 1.安装 MongoDB
+
+
+### Windows
+1. 请访问 [MongoDB 官方下载页面](https://www.mongodb.com/try/download/community) 找到 `MongoDB Community Server` 点击 `Select package` 选择适合你系统的安装包（通常是 MSI 安装包），然后点击 `Download` 下载。
+1. 运行安装程序，选择“完整”安装类型
+2. 安装完成后，MongoDB 会默认启动为 Windows 服务。
+ 
+ 额外工具：MongoDB Shell
+
+ - mongosh（MongoDB Shell）：如果你使用较新的 MongoDB 版本，推荐使用 `mongosh`。可以从官方页面的 "Tools" 或单独下载页面获取
+
+### macOS
+
+1. 使用 Homebrew 安装 MongoDB：
+
+   ```bash
+   brew tap mongodb/brew
+   brew install mongodb-community
+   ```
+
+2. 启动 MongoDB 服务：
+
+   ```bash
+   brew services start mongodb/brew/mongodb-community
+   ```
+
+ 额外工具：mongosh 
+
+ - 使用 Homebrew 安装 mongosh：
+
+    ```bash
+    brew install mongosh
+    ```
+
+### Linux
+
+1. 使用以下命令安装 MongoDB：
+
+   ```bash
+   sudo apt update
+   sudo apt install -y mongodb
+   ```
+
+2. 启动 MongoDB 服务：
+
+   ```bash
+   sudo systemctl start mongodb
+   ```
+ 
+ 额外工具：mongosh
+
+ - Ubuntu/Debian（推荐使用官方 apt 源安装最新的 mongosh 和 tools）：
+
+    ```bash
+    # 添加 MongoDB 官方源之后安装 mongosh
+    sudo apt install -y mongosh
+    ```
+
+ - 如果使用社区包，可能需要单独下载并安装 `mongosh`的 deb 包。
+## 2.配置 MongoDB
+
+默认情况下，MongoDB 会监听本地的 `27017` 端口，并且只能本地访问。如果你需要更改配置，可以编辑 MongoDB 的配置文件（通常位于 `/etc/mongod.conf` 或 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）。
+
+确保 MongoDB 服务正在运行，然后你可以使用以下连接字符串连接到本地的 MongoDB 实例：
+
+```plaintext
+mongodb://localhost:27017
+```
+### 设置账户和密码
+MongoDB 默认安装后没有启用账户密码认证。建议在生产环境开启认证并设置管理员账户。
+
+#### 1. 创建管理员账户
+1. 打开命令行，连接到 MongoDB：
+   ```powershell
+   mongo
+   ```
+2. 切换到 `admin` 数据库：
+   ```js
+   use admin
+   ```
+3. 创建管理员用户（请替换用户名和密码）：
+   ```js
+   db.createUser({
+     user: "名称",
+     pwd: "你的密码",
+     roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
+   })
+   ```
+
+#### 2. 启用认证
+1. 编辑配置文件（Windows 通常在 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）：
+   ```yaml
+   security:
+     authorization: enabled
+   ```
+2. 重启 MongoDB 服务。
+
+#### 3. 修改密码
+<Callout>
+ 如果你创建了管理员账户后无法登录，可以通过以下步骤修改密码：
+</Callout>
+
+1. 关闭认证，编辑配置文件，注释掉 `authorization: enabled
+   ```yaml
+   security:
+    # authorization: enabled
+   ```
+    重启 MongoDB 服务。
+
+2. 连接到 MongoDB 并切换到 `admin` 数据库：
+   ```js
+   use admin
+   ```
+3. 修改密码（将 `名称` 和 `新密码` 替换为你的用户名和新密码）：
+   ```js
+   db.changeUserPassword("名称", "新密码")
+   ```
+<Callout>
+ 记得重新启用认证，编辑配置文件，取消注释 `authorization: enabled`，然后重启 MongoDB 服务。
+</Callout>
+
+### 3.启用认证后常用的连接字符串示例
+
+启用认证后，客户端需要使用带凭证的连接字符串。其中常见形式包括：
+
+```plaintext
+mongodb://<username>:<password>@localhost:27017/?authSource=admin
+```
+
+- 带有数据库名称的连接字符串：
+
+```plaintext
+mongodb://<username>:<password>@localhost:27017/<database>?authSource=admin
+```
+
+参数说明（常用）：
+- `<username>`：连接数据库的用户名。
+- `<password>`：连接数据库的密码。
+- `<database>`：要连接的数据库名称。
+- `authSource`：指定用于认证的数据库（通常为 `admin`）。
+
+---
+
+## 公开 MongoDB 到公网
+
+默认情况下，MongoDB 只监听本地 `127.0.0.1`。如需让外部设备访问，需要修改绑定地址。
+
+### 步骤
+1. 编辑配置文件`mongod.conf`，找到 `net` 配置项并修改`bindIp`：
+   ```yaml
+   net:
+     port: 27017 # 你可以根据需要更改端口
+     bindIp: 0.0.0.0
+   ```
+   这样会允许所有 IP 访问 MongoDB。
+2. 重启 MongoDB 服务。
+3. 确保防火墙已开放 27017 端口，并设置安全规则，避免暴露数据库到不可信网络。
+
+
+<Callout title="注意" type="error">
+ **安全提示**：强烈建议开启认证、设置强密码，并限制访问来源 IP。
+</Callout>

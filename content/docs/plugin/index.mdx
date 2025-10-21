@@ -1,0 +1,71 @@
+---
+title: 插件开发约定
+description: 帮助你在 plugins/ 目录中快速编写、加载与调试自定义插件。
+---
+
+# 插件规则
+
+- 明白插件被 `PluginManager` 识别的规则；
+- 实现必需的接口与生命周期；
+- 注册命令、更新处理器以及可选的定时/手动运行任务；
+- 借助项目提供的 TDLib 封装函数提升开发效率。
+
+## 1. 插件加载约定
+
+- **默认目录**：`PluginManager` 会扫描 `./plugins` 的顶层文件或文件夹。
+- **导出要求**：每个插件必须默认导出一个继承自 `Plugin` 的类，例如：
+
+  ```ts
+  import { Plugin } from "@plugin/BasePlugin.ts";
+
+  export default class MyPlugin extends Plugin {}
+  ```
+
+- **构造函数签名**：`constructor(client: Client)`，其中 `client` 是获取当前运行的 TDLib 客户端实例。
+- **入口格式**：
+  - 顶层 `.ts` 文件，例如 `plugins/foo.ts`；（用于单文件插件）
+  - 或目录内的 `index.ts`，如 `plugins/bar/index.ts`。
+
+### 1.1 特殊查询导入
+
+插件中可直接使用自定义 loader 暴露的查询参数：
+
+| 查询    | 说明                     | 典型用途                   |
+| ------- | ------------------------ | -------------------------- |
+| `?file` | 返回文件的绝对路径字符串 | 传递给本地 API、原生上传等 |
+| `?raw`  | 返回文件内容文本         | 嵌入模板、Markdown、JSON   |
+
+示例：
+
+```ts
+import filePath from "../assets/logo.png?file";
+import readmeText from "../README.md?raw";
+```
+
+### 1.2 路径别名导入
+
+项目配置了多个路径别名来简化导入路径，提高代码可读性。无论你在项目的哪个位置，都可以使用这些别名进行绝对路径导入：
+
+| 别名          | 实际路径       | 用途说明           |
+| ------------- | -------------- | ------------------ |
+| `@log/*`      | `./log/*`      | 日志相关模块       |
+| `@plugin/*`   | `./plugin/*`   | 插件相关工具和类型 |
+| `@TDLib/*`    | `./TDLib/*`    | TDLib 封装和接口   |
+| `@type/*`     | `./types/*`    | 共享类型定义       |
+| `@function/*` | `./function/*` | 通用函数库         |
+| `@db/*`       | `./Database/*` | 数据库相关模块     |
+
+#### 使用示例
+
+```ts
+import logger from "@log/index.ts";
+import { Plugin } from "@plugin/BasePlugin.ts";
+
+// 导入 TDLib 工具
+import { sendMessage } from "@TDLib/function/message.ts";
+
+// 导入数据库
+import { getDatabase } from "@db/index.ts";
+```
+
+---

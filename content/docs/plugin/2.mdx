@@ -1,0 +1,88 @@
+---
+title: 常见问题排查
+description: 帮助快速找出问题
+---
+
+## 常见问题排查
+
+- **未被加载**：确认文件/文件夹未以 `.` 开头且不为 `node_modules`。
+- **缺少默认导出**：确保 `export default` 的类继承自 `Plugin`。
+- **发送消息只出现临时消息**：需要监听 `updateMessageSendSucceeded` 获取正式消息。
+- **调用原生 TDLib 方法失败**：参考 [TDLib Function 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
+
+---
+
+## `@TDLib/function` 速查
+
+项目在 `src/TDLib/function` 下封装了常见操作，可直接导入使用：
+
+### 用户 / 聊天 / 消息
+
+- `getUser(client, user_id)`
+- `getUserFullInfo(client, user_id)`
+- `getChat(client, chat_id)`
+- `getSupergroup(client, supergroup_id)` / `getSupergroupFullInfo`
+- `getMessage(client, chat_id, message_id)`
+
+```ts
+import { getUser, getChat } from "@TDLib/function";
+
+const user = await getUser(client, 123456);
+const chat = await getChat(client, 987654);
+```
+
+### 消息发送与编辑
+
+- `sendMessage` / `sendMessageAlbum`
+- `editMessageText` / `editMessageCaption` / `editMessageMedia`
+- `deleteMessage`
+
+```ts
+import { sendMessage, editMessageText } from "@TDLib/function";
+
+const msg = await sendMessage(client, chatId, { text: "Hello *world*" });
+await editMessageText(client, chatId, msg.id, { text: "Edited text" });
+```
+
+### 权限与管理
+
+- `restrictUser`
+- `setUserAsMember`
+- `setUserRestricted`
+- `banUser`
+- `isMeAdmin` / `isUserAdmin`
+
+### 文件与代理
+
+- `downloadFile`
+- `getProxies` / `addProxy` / `removeProxy`
+- `enableProxy` / `disableProxy`
+- `pingProxy` / `testProxy` / `getProxyLink`
+
+### 其他工具
+
+- `answerCallbackQuery`
+- `getLinkPreview`
+- `getMessageLink` / `getMessageLinkInfo`
+- `chatoruserMdown`
+
+示例：
+
+```ts
+import { sendMessage, getUser } from "@TDLib/function";
+
+export default class MyPlugin extends Plugin {
+  async onSomeEvent(update) {
+    const user = await getUser(this.client, update.sender_user_id);
+    await sendMessage(this.client, update.chat_id, {
+      text: `Hello ${user.first_name}`,
+    });
+  }
+}
+```
+
+> 提示：封装函数出错时会抛出异常，请使用 `try/catch` 处理。
+
+---
+
+如需更多示例或想要扩展插件框架，欢迎在仓库提出 Issue 或 PR。祝开发顺利！

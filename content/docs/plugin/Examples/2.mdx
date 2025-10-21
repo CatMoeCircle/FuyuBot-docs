@@ -1,0 +1,38 @@
+---
+title: 多命令
+description: 一个插件多个命令
+---
+
+### 多命令
+
+```ts
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+
+export default class BgmPlugin extends Plugin {
+  type = "插件适用的运行主体";
+  name = "插件唯一名称";
+  version = "插件版本号";
+  description = "简短描述";
+  constructor(client: Client) {
+    super(client);
+    this.cmdHandlers = {
+      命令1: {
+        description: "详细的插件介绍",
+        handler: async (update, _args) => {
+          const mod = await import("对应方法目录");
+          return mod.default(this.client, update.message, _args);
+        },
+      },
+      命令2: {
+        description: "详细的插件介绍",
+        handler: async (update, _args) => {
+          const mod = await import("对应方法目录");
+          return mod.default(this.client, update.message, _args);
+        },
+      },
+      //以此类推
+    };
+  }
+}
+```

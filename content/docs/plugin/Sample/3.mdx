@@ -1,0 +1,13 @@
+---
+title: 插件初始化
+description: 插件注册时立即执行
+---
+
+### 被注册时立即执行
+
+```ts
+	async onLoad() {
+		logger.info("HelloPlugin 已加载，执行一次性初始化");
+	}
+
+```

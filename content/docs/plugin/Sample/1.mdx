@@ -1,0 +1,59 @@
+---
+title: 命令注册
+description: 命令注册方法
+---
+
+#### 命令注册
+
+- `cmdHandlers: Record<string, CommandDef>`：命令路由表，仅在需要响应命令时赋值。单个命令可进一步声明 `description`、`handler`、`scope` 与 `permission`。
+
+| 字段          | 默认     | 作用                                                                                                                             |
+| ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `description` | 必填字段 | 命令的简短描述                                                                                                                   |
+| `scope[]?`    | "all"    | 命令的运行环境 `"all"`: 所有场景都能使用 `"private"`: 只能在私聊中使用 `"group"`: 只能在群组中使用 `"channel"`: 只能在频道中使用 |
+| `permission?` | "all"    | 命令的调用权限 `owner`: 只有超级管理员能使用`admin`: 管理员和超级管理员都能使用`all`: 所有人都能使用                             |
+| `showInHelp`  | true     | 该命令是否在帮助列表中显示                                                                                                       |
+| `handler`     | 必填字段 | 命令处理器                                                                                                                       |
+
+可以使用我们 TDLib 封装方法或者 TDLib 的原始调用方法来调用 [TDLib 方法 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
+
+```ts title="Examples.ts"
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+import type { updateNewMessage } from "tdlib-types";
+
+export default class LifePlugin extends Plugin {
+  name = "插件唯一名称";
+  type = "general";
+  version = "插件版本号";
+  description = "简短描述";
+
+  constructor(client: Client) {
+    super(client);
+
+	this.cmdHandlers = {
+			// 命令注册名称 // [!code highlight]
+			hello: {// [!code highlight]
+				description: "回复 '你好，世界！'",// [!code highlight]
+				scope:["all"]// [!code highlight]
+				permission:"all"// [!code highlight]
+				showInHelp: true // [!code highlight]
+				handler: async (updateNewMessage, args) => {  // [!code highlight]
+					try {
+						await this.client.invoke({
+							_: "sendMessage",
+							chat_id: updateNewMessage.message.chat_id,
+							input_message_content: {
+								_: "inputMessageText",
+								text: { _: "formattedText", text: "你好，世界！" },
+							},
+						});
+					} catch (e) {
+						logger.error("发送消息失败", e);
+					}
+				},
+			},
+		};
+  }
+}
+```

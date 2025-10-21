@@ -1,0 +1,18 @@
+{
+  "title": "插件开发指南",
+  "description": "介绍如何为 Fuyu-TDBot 开发插件",
+  "icon": "Blocks",
+  "root": true,
+  "pages": [
+    "---开始---",
+    "index",
+    "Sample",
+    "---示例---",
+    "Examples",
+    "---方法---",
+    "function",
+    "---常见问题---",
+    "1",
+    "2"
+  ]
+}

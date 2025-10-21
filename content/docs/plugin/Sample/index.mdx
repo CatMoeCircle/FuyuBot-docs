@@ -1,0 +1,61 @@
+---
+title: 插件开发帮助
+description: 帮助你快速开始
+---
+
+## 插件接口一览
+
+### 1 必需字段（实例属性）
+
+- `name: string`：插件唯一名称。
+- `type: "user" | "bot" | "general"`：插件适用的运行主体。
+- `version: string`：插件版本号。
+- `description: string`：简短描述。
+
+```ts title="Examples.ts"
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+import type { updateNewMessage } from "tdlib-types";
+
+export default class LifePlugin extends Plugin {
+  name = "插件唯一名称"; // [!code highlight]
+  type = "general"; // [!code highlight]
+  version = "插件版本号"; // [!code highlight]
+  description = "简短描述"; // [!code highlight]
+
+  constructor(client: Client) {
+    super(client);
+  }
+}
+```
+
+`type` 用来指明插件运行的环境
+
+- `user`：插件中包含只能使用 user 账户能使用的功能（如删除 48 小时前消息）。
+- `bot`：依赖 Bot API 特性（如内联按钮）。
+- `general`：两侧均可使用。
+
+```ts title="type部分"
+// [!code word:"general"]
+type = "general";
+```
+
+### 2 可选生命周期 & 运行任务
+
+| 字段/方法     | 作用                                                                                                       |
+| ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `onLoad()`    | 插件被实例化并注册后立即调用，用于一次性初始化。                                                           |
+| `runHandlers` | 注册可直接触发或定时执行的任务。支持 `cron` 表达式或 `intervalMs` 轮询，`immediate` 可在加载时先运行一次。 |
+| `destroy()`   | 卸载前调用，用于清理资源、关闭定时器等。                                                                   |
+
+`runHandlers` 的定义：
+
+```ts
+type RunDef = {
+  description?: string;
+  handler: () => Promise<void> | void;
+  cron?: string; // 优先使用 cron，依赖 cron 包，支持秒级表达式
+  intervalMs?: number; // 毫秒级轮询
+  immediate?: boolean; // 加载后立即执行一次
+};
+```
