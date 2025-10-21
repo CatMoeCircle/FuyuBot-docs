@@ -1,7 +1,7 @@
 {
   "title": "使用指南",
   "description": "介绍如何使用 Fuyu-TDBot",
-  "icon": "Wrench",
+  "icon": "Compass",
   "root": true,
   "pages": ["index", "quickstart", "install", "---命令---", "cmd"],
   "defaultOpen": true
