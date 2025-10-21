@@ -1,0 +1,1321 @@
+# FuyuBot (/docs)
+
+# FuyuBot
+
+一个基于 [Node.js](https://nodejs.org/zh-cn) + TypeScript + [TDLib](https://core.telegram.org/tdlib/docs/index.html) 的现代化 Telegram Bot 框架，支持插件化扩展，兼容 Bot 账号 与 用户账号（自走人形）
+
+<Callout title="注意" type="warn">
+  本项目使用了 Node.js 实验性功能 `--experimental-loader`，其行为可能随 Node
+  版本更改。
+</Callout>
+
+## 说明
+
+### 项目简介
+
+✨ 特性：
+
+* 🚀 基于 **TDLib**，支持原始调用功能齐全
+* 🧩 **插件系统**，模块化扩展
+* 👥 支持 **Bot 账号** 与 **用户账号（自走人形）**
+* 🔧 现代化开发：ESM + TypeScript
+* 🛠️ [插件开发文档](/docs/plugin)
+
+### 📦 安装需求
+
+在使用前，请确保已安装以下依赖环境：
+
+* **Node.js v22.6.0** 以上即可
+* **pnpm**(推荐，亦可使用 npm/yarn)
+* **MongoDB**(推荐使用 [MongoDB Community Server](https://www.mongodb.com/try/download/community),也可以使用自己的`MongoDB Server`)
+
+如果你想远程访问 MongoDB 请务必开启 **MongoDB 用户认证**,
+数据库 GUI 访问 desktop: [MongoDB Compass](https://www.mongodb.com/try/download/compass)
+Android: [Mongodb](https://github.com/vedfi/mondroid)
+
+### 🚀 快速开始
+
+```bash
+# 克隆项目
+git clone https://github.com/CatMoeCircle/Fuyu_TDBot.git
+cd Fuyu_TDBot
+
+# 安装依赖
+pnpm install -P
+
+# 启动
+pnpm start
+```
+
+技术栈
+
+* [TDLib](https://core.telegram.org/tdlib) - Telegram Database Library
+* [tdl](https://github.com/eilvelia/tdl) - TDLib 的 JavaScript 包装器
+* [prebuilt-tdlib](https://github.com/eilvelia/tdl/blob/main/packages/prebuilt-tdlib/README.md) - 预构建的 TDLib 库
+* [systeminformation](https://www.npmjs.com/package/systeminformation) - 获取系统信息
+* [mongodb](https://github.com/mongodb/node-mongodb-native) - MongoDB driver
+* [axios](https://axios-http.com/) - 网络请求工具
+* [cron](https://github.com/kelektiv/node-cron#readme) - 定时任务
+
+
+# 常见问题排查 (/docs/plugin/2)
+
+## 常见问题排查
+
+* **未被加载**：确认文件/文件夹未以 `.` 开头且不为 `node_modules`。
+* **缺少默认导出**：确保 `export default` 的类继承自 `Plugin`。
+* **发送消息只出现临时消息**：需要监听 `updateMessageSendSucceeded` 获取正式消息。
+* **调用原生 TDLib 方法失败**：参考 [TDLib Function 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
+
+***
+
+## `@TDLib/function` 速查
+
+项目在 `src/TDLib/function` 下封装了常见操作，可直接导入使用：
+
+### 用户 / 聊天 / 消息
+
+* `getUser(client, user_id)`
+* `getUserFullInfo(client, user_id)`
+* `getChat(client, chat_id)`
+* `getSupergroup(client, supergroup_id)` / `getSupergroupFullInfo`
+* `getMessage(client, chat_id, message_id)`
+
+```ts
+import { getUser, getChat } from "@TDLib/function";
+
+const user = await getUser(client, 123456);
+const chat = await getChat(client, 987654);
+```
+
+### 消息发送与编辑
+
+* `sendMessage` / `sendMessageAlbum`
+* `editMessageText` / `editMessageCaption` / `editMessageMedia`
+* `deleteMessage`
+
+```ts
+import { sendMessage, editMessageText } from "@TDLib/function";
+
+const msg = await sendMessage(client, chatId, { text: "Hello *world*" });
+await editMessageText(client, chatId, msg.id, { text: "Edited text" });
+```
+
+### 权限与管理
+
+* `restrictUser`
+* `setUserAsMember`
+* `setUserRestricted`
+* `banUser`
+* `isMeAdmin` / `isUserAdmin`
+
+### 文件与代理
+
+* `downloadFile`
+* `getProxies` / `addProxy` / `removeProxy`
+* `enableProxy` / `disableProxy`
+* `pingProxy` / `testProxy` / `getProxyLink`
+
+### 其他工具
+
+* `answerCallbackQuery`
+* `getLinkPreview`
+* `getMessageLink` / `getMessageLinkInfo`
+* `chatoruserMdown`
+
+示例：
+
+```ts
+import { sendMessage, getUser } from "@TDLib/function";
+
+export default class MyPlugin extends Plugin {
+  async onSomeEvent(update) {
+    const user = await getUser(this.client, update.sender_user_id);
+    await sendMessage(this.client, update.chat_id, {
+      text: `Hello ${user.first_name}`,
+    });
+  }
+}
+```
+
+> 提示：封装函数出错时会抛出异常，请使用 `try/catch` 处理。
+
+***
+
+如需更多示例或想要扩展插件框架，欢迎在仓库提出 Issue 或 PR。祝开发顺利！
+
+
+# 插件开发约定 (/docs/plugin)
+
+# 插件规则
+
+* 明白插件被 `PluginManager` 识别的规则；
+* 实现必需的接口与生命周期；
+* 注册命令、更新处理器以及可选的定时/手动运行任务；
+* 借助项目提供的 TDLib 封装函数提升开发效率。
+
+## 1. 插件加载约定
+
+* **默认目录**：`PluginManager` 会扫描 `./plugins` 的顶层文件或文件夹。
+
+* **导出要求**：每个插件必须默认导出一个继承自 `Plugin` 的类，例如：
+
+  ```ts
+  import { Plugin } from "@plugin/BasePlugin.ts";
+
+  export default class MyPlugin extends Plugin {}
+  ```
+
+* **构造函数签名**：`constructor(client: Client)`，其中 `client` 是获取当前运行的 TDLib 客户端实例。
+
+* **入口格式**：
+  * 顶层 `.ts` 文件，例如 `plugins/foo.ts`；（用于单文件插件）
+  * 或目录内的 `index.ts`，如 `plugins/bar/index.ts`。
+
+### 1.1 特殊查询导入
+
+插件中可直接使用自定义 loader 暴露的查询参数：
+
+| 查询      | 说明           | 典型用途               |
+| ------- | ------------ | ------------------ |
+| `?file` | 返回文件的绝对路径字符串 | 传递给本地 API、原生上传等    |
+| `?raw`  | 返回文件内容文本     | 嵌入模板、Markdown、JSON |
+
+示例：
+
+```ts
+import filePath from "../assets/logo.png?file";
+import readmeText from "../README.md?raw";
+```
+
+### 1.2 路径别名导入
+
+项目配置了多个路径别名来简化导入路径，提高代码可读性。无论你在项目的哪个位置，都可以使用这些别名进行绝对路径导入：
+
+| 别名            | 实际路径           | 用途说明        |
+| ------------- | -------------- | ----------- |
+| `@log/*`      | `./log/*`      | 日志相关模块      |
+| `@plugin/*`   | `./plugin/*`   | 插件相关工具和类型   |
+| `@TDLib/*`    | `./TDLib/*`    | TDLib 封装和接口 |
+| `@type/*`     | `./types/*`    | 共享类型定义      |
+| `@function/*` | `./function/*` | 通用函数库       |
+| `@db/*`       | `./Database/*` | 数据库相关模块     |
+
+#### 使用示例
+
+```ts
+import logger from "@log/index.ts";
+import { Plugin } from "@plugin/BasePlugin.ts";
+
+// 导入 TDLib 工具
+import { sendMessage } from "@TDLib/function/message.ts";
+
+// 导入数据库
+import { getDatabase } from "@db/index.ts";
+```
+
+***
+
+
+# 介绍 (/docs/start)
+
+<GithubInfo owner="CatMoeCircle" repo="Fuyu_TDBot" />
+
+## 介绍
+
+Fuyu-TDBot 是一个使用 TypeScript 编写的 TG 机器人框架，使用 [TDLib](https://core.telegram.org/tdlib) 与 Telegram 进行交互。
+[TDLib](https://core.telegram.org/tdlib) 提供了几乎完整的 Telegram API 功能，且方便开发，
+因此本框架可以登录 `普通账号` 和 `Bot 账号`
+
+## 特性
+
+* 使用 TypeScript 编写，类型安全，开发体验良好
+* 基于 TDLib，支持普通账号和 Bot 账号
+* 支持 插件化扩展，方便添加新功能
+* 提供TDLib 的 API 封装，简化开发流程
+* 内置多种实用功能插件，如自动回复、群管理等
+
+<Callout title="注意" type="warn">
+  本项目使用了 Node.js 实验性功能 `--experimental-loader`，其行为可能随 Node
+  版本更改。
+</Callout>
+
+## Telegram Database Library
+
+[TDLib](https://core.telegram.org/tdlib)（Telegram 数据库库）是一个跨平台、功能齐全的 Telegram 客户端实例。
+
+* **跨平台**。TDLib 可在 Android、iOS、Windows、macOS、Linux、WebAssembly、FreeBSD、Windows Phone、watchOS、tvOS、Tizen、Cygwin 上使用。它还应该在其他 \*nix 系统上工作，无论是否付出最小的努力。
+* **多语言**。TDLib 可以轻松地与任何能够执行 C 函数的编程语言一起使用。此外，它还具有与 Java（使用 JNI）和 C#（使用 C++/CLI）的本机绑定。
+* **易于使用**\*。TDLib 负责所有网络实施细节、加密和本地数据存储。
+* **高性能**。在 Telegram Bot API 中，每个 TDLib 实例同时处理超过 24,000 个活跃的机器人。
+* **有据可查**。所有 TDLib API 方法和公共接口都有完整的文档。
+* **一致**。TDLib 保证所有更新都将按正确的顺序交付。
+* **可靠**。TDLib 在缓慢且不可靠的互联网连接上保持稳定。
+* **安全**。所有本地数据都使用用户提供的加密密钥进行加密。
+* **完全异步**。对 TDLib 的请求不会相互阻止或其他任何内容，响应将在可用时发
+
+<Callout title="注意" type="warn">
+  本部分内容摘自 [TDLib 官方文档](https://core.telegram.org/tdlib)，如有翻译不准确之处请以官方文档为准。
+</Callout>
+
+## MongoDB
+
+Fuyu-TDBot 使用 MongoDB 作为默认的数据存储解决方案。MongoDB 是一个基于文档的 NoSQL 数据库，具有高性能、可扩展性和灵活的数据模型，适合存储和管理大量的非结构化数据。
+
+## 社区与支持
+
+如果您在使用 Fuyu-TDBot 时遇到任何问题，或者有任何建议和反馈，欢迎加入我们的社区进行交流和讨论：
+
+* [GitHub 讨论区](https://github.com/CatMoeCircle/Fuyu_TDBot/discussions)
+* [Telegram 频道](https://t.me/CatMoeCircle)
+
+我们期待您的参与，共同推动 Fuyu-TDBot 的发展！
+
+
+# 快速开始 (/docs/start/quickstart)
+
+## 快速开始
+
+<Callout title="前提条件" type="success">
+  * 熟悉命令行
+  * 已安装 `Git`
+  * 已安装 [Node.js](https://nodejs.org/) `v22.6.0` 或更高版本
+  * 已安装 [MongoDB](https://www.mongodb.com/) 并正在运行 / 或使用远程的 MongoDB 服务
+  * 已创建 Telegram 账号（普通账号或 Bot 账号均可）
+  * 已获取 Telegram API ID 和 API Hash，获取方法请参考 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)
+</Callout>
+
+在本节中，我们将介绍如何在本地搭建 Fuyu-TDBot，并运行一个简单的机器人实例。
+
+确保你安装了最新版本的 Node.js，并且你的当前工作目录正是打算创建项目的目录。
+
+首先你需要安装 pnpm（如果你还没有安装的话）：
+
+<Tabs defaultValue="npm">
+  <TabsList>
+    <TabsTrigger value="npm">
+      <svg viewBox="0 0 27.23 27.23" aria-hidden="true">
+        <rect fill="#333333" width="27.23" height="27.23" rx="2" />
+
+        <polygon fill="#fff" points="5.8 21.75 13.66 21.75 13.67 9.98 17.59 9.98 17.58 21.76 21.51 21.76 21.52 6.06 5.82 6.04 5.8 21.75" />
+      </svg>
+
+      npm
+    </TabsTrigger>
+  </TabsList>
+
+  <TabsContent value="npm">
+    npm install -g pnpm
+  </TabsContent>
+</Tabs>
+
+接下来，使用 git 克隆 Fuyu-TDBot 仓库：
+
+```bash
+git clone https://github.com/CatMoeCircle/Fuyu_TDBot.git
+cd Fuyu_TDBot
+
+# 然后，安装项目依赖
+pnpm install -P
+
+# 接下来，运行bot初始化
+pnpm start
+```
+
+第一次启动后，会初始化配置文件，并提示你输入必要的信息：
+
+```bash
+✔ 请输入 TG_API_ID <your_api_id>
+✔ 请输入 TG_API_HASH <your_api_hash>
+# 在MONGODB_URL的结尾中添加数据库名称，
+# [!code word:fuyu-tdbot]
+# 例如：mongodb://localhost:27017/fuyu-tdbot 可以指定数据库名称为 fuyu-tdbot
+# 默认情况下没有则为 fuyubot
+✔ 请输入 MONGODB_URL <your_mongodb_url>
+
+✔ 请选择登录的账户类型 Bot | User
+✔ 请输入 Bot Token <your_bot_token>
+
+[2025-10-21 16:27:41] INFO: Bot 已登录: Bot名称 (@BotUsername - ID: BotID)
+
+```
+
+## 通过 PM2 后台运行
+
+### PM2 进程守护
+
+如果你希望在后台运行 Fuyu-TDBot，可以使用 PM2 进行进程守护。
+
+<Callout title="注意" type="warn">
+  使用前请确保你已经完成了上述的初始化步骤，并登录了账户
+</Callout>
+
+```bash
+# 启动
+pnpm pm2:start
+# 停止
+pnpm pm2:stop
+# 重启
+pnpm pm2:restart
+# 查看日志
+pnpm pm2:logs
+
+```
+
+
+# 快速模板 (/docs/plugin/Examples/1)
+
+### 快速开始
+
+```ts title="Examples.ts"
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+import { sendMessage } from "@TDLib/function/message.ts";
+import type { updateNewMessage } from "tdlib-types";
+
+export default class LifePlugin extends Plugin {
+  type = "插件适用的运行主体";
+  name = "插件唯一名称";
+  version = "插件版本号";
+  description = "简短描述";
+  constructor(client: Client) {
+    super(client);
+    this.cmdHandlers = {
+      插件命令: {
+        description: "详细的插件介绍",
+        handler: async (Update, _args) => {
+          收到消息后;
+        },
+      },
+    };
+  }
+}
+```
+
+
+# 多命令 (/docs/plugin/Examples/2)
+
+### 多命令
+
+```ts
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+
+export default class BgmPlugin extends Plugin {
+  type = "插件适用的运行主体";
+  name = "插件唯一名称";
+  version = "插件版本号";
+  description = "简短描述";
+  constructor(client: Client) {
+    super(client);
+    this.cmdHandlers = {
+      命令1: {
+        description: "详细的插件介绍",
+        handler: async (update, _args) => {
+          const mod = await import("对应方法目录");
+          return mod.default(this.client, update.message, _args);
+        },
+      },
+      命令2: {
+        description: "详细的插件介绍",
+        handler: async (update, _args) => {
+          const mod = await import("对应方法目录");
+          return mod.default(this.client, update.message, _args);
+        },
+      },
+      //以此类推
+    };
+  }
+}
+```
+
+
+# 完整示例 (/docs/plugin/Examples/3)
+
+## 3. 示例插件
+
+```ts
+import type { Client } from "tdl";
+import { Plugin } from "@plugin/BasePlugin.ts";
+import logger from "@log/index.ts";
+
+export default class HelloPlugin extends Plugin {
+	name = "hello";
+	version = "0.1.0";
+	type = "general"; // 插件类型，只能 bot 使用(使用了bot的回调按钮)还是 user (使用了bot不能使用的方法) 如何都能用则是general
+	description = "示例：响应 /hello 命令";
+    // [!code highlight]
+    // 定时任务
+	runHandlers = {
+		heartbeat: {
+			description: "每 30 秒输出心跳日志",
+			intervalMs: 30_000,
+			immediate: true,
+			handler: () => {
+				logger.info("[HelloPlugin] heartbeat");
+			},
+		},
+	};
+
+	constructor(client: Client) {
+		super(client);
+        // [!code highlight]
+        // 命令注册
+		this.cmdHandlers = {
+			hello: {
+				description: "回复 '你好，世界！'",
+				scope:"all"
+				permission:"all"
+				handler: async (updateNewMessage, args) => {
+					try {
+						await this.client.invoke({
+							_: "sendMessage",
+							chat_id: updateNewMessage.message.chat_id,
+							input_message_content: {
+								_: "inputMessageText",
+								text: { _: "formattedText", text: "你好，世界！" },
+							},
+						});
+					} catch (e) {
+						logger.error("发送消息失败", e);
+					}
+				},
+			},
+		};
+    // [!code highlight]
+    // 接收更新
+		this.updateHandlers = {
+			updateNewMessage: {
+				handler: async () => {
+					// 处理新消息逻辑
+				},
+			},
+		};
+	}
+    // [!code highlight]
+    // 初始化
+	async onLoad() {
+		logger.info("HelloPlugin 已加载，执行一次性初始化");
+	}
+    // [!code highlight]
+    // 资源清理
+	async destroy() {
+		// 清理资源或定时器
+	}
+}
+```
+
+
+# 命令注册 (/docs/plugin/Sample/1)
+
+#### 命令注册
+
+* `cmdHandlers: Record<string, CommandDef>`：命令路由表，仅在需要响应命令时赋值。单个命令可进一步声明 `description`、`handler`、`scope` 与 `permission`。
+
+| 字段            | 默认    | 作用                                                                                        |
+| ------------- | ----- | ----------------------------------------------------------------------------------------- |
+| `description` | 必填字段  | 命令的简短描述                                                                                   |
+| `scope[]?`    | "all" | 命令的运行环境 `"all"`: 所有场景都能使用 `"private"`: 只能在私聊中使用 `"group"`: 只能在群组中使用 `"channel"`: 只能在频道中使用 |
+| `permission?` | "all" | 命令的调用权限 `owner`: 只有超级管理员能使用`admin`: 管理员和超级管理员都能使用`all`: 所有人都能使用                           |
+| `showInHelp`  | true  | 该命令是否在帮助列表中显示                                                                             |
+| `handler`     | 必填字段  | 命令处理器                                                                                     |
+
+可以使用我们 TDLib 封装方法或者 TDLib 的原始调用方法来调用 [TDLib 方法 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
+
+```ts title="Examples.ts"
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+import type { updateNewMessage } from "tdlib-types";
+
+export default class LifePlugin extends Plugin {
+  name = "插件唯一名称";
+  type = "general";
+  version = "插件版本号";
+  description = "简短描述";
+
+  constructor(client: Client) {
+    super(client);
+
+	this.cmdHandlers = {
+			// 命令注册名称 // [!code highlight]
+			hello: {// [!code highlight]
+				description: "回复 '你好，世界！'",// [!code highlight]
+				scope:["all"]// [!code highlight]
+				permission:"all"// [!code highlight]
+				showInHelp: true // [!code highlight]
+				handler: async (updateNewMessage, args) => {  // [!code highlight]
+					try {
+						await this.client.invoke({
+							_: "sendMessage",
+							chat_id: updateNewMessage.message.chat_id,
+							input_message_content: {
+								_: "inputMessageText",
+								text: { _: "formattedText", text: "你好，世界！" },
+							},
+						});
+					} catch (e) {
+						logger.error("发送消息失败", e);
+					}
+				},
+			},
+		};
+  }
+}
+```
+
+
+# 更新事件注册 (/docs/plugin/Sample/2)
+
+#### 更新事件注册
+
+* `updateHandlers: Record<string, UpdateDef>`：TDLib 更新处理表，仅在需要接收更新时运行处理器
+
+所有的更新都可以在[TDLib Update 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_update.html)。中查找到
+
+```ts
+import type { Client } from "tdl";
+import { Plugin } from "@plugin/BasePlugin.ts";
+
+export default class HelloPlugin extends Plugin {
+  name = "插件唯一名称";
+  type = "general";
+  version = "插件版本号";
+  description = "简短描述";
+
+  constructor(client: Client) {
+    super(client);
+
+    this.updateHandlers = {
+      // updateNewMessage 为需要接收的更新
+      // [!code word:updateNewMessage]
+      // [!code highlight]
+      updateNewMessage: {
+        // update 为收到的更新内容   // [!code highlight]
+        // [!code word:update]
+        // [!code highlight]
+        handler: async (update) => {
+          // [!code highlight]
+          console.log(update);
+        }, // [!code highlight]
+      }, // [!code highlight]
+    };
+  }
+}
+```
+
+
+# 插件初始化 (/docs/plugin/Sample/3)
+
+### 被注册时立即执行
+
+```ts
+	async onLoad() {
+		logger.info("HelloPlugin 已加载，执行一次性初始化");
+	}
+
+```
+
+
+# 定时任务 (/docs/plugin/Sample/4)
+
+### 定时任务
+
+```ts
+runHandlers = {
+  heartbeat: {
+    description: "每 30 秒输出心跳日志",
+    intervalMs: 30_000,
+    immediate: true,
+    handler: () => {
+      logger.info("[HelloPlugin] heartbeat");
+    },
+  },
+};
+```
+
+
+# 图片生成 (/docs/plugin/Sample/5)
+
+## 介绍
+
+图片生成主要依靠 `satori` 进行生成图片
+
+可以将 Vue 模板渲染成图片
+
+## 须知事项
+
+* x-satori 负责把最终的静态 HTML 渲染为图片，它不会执行或运行 Vue 组件中的 JavaScript（例如 `<script>` 内的逻辑、响应式状态或生命周期钩子），也不会处理组件范围内的 `<style>`（包括 scoped/style modules）。因此，仅依赖组件内脚本或样式来生成最终效果通常不会生效。
+
+* 由于 satori 并不完整地应用组件级样式，单纯依靠 `class` 引入的样式通常不可预期。satori 对部分 Tailwind CSS 类有内置支持，但支持范围有限且可能随版本变化，使用前请务必自行测试。如果你在 `class` 中使用 Tailwind，请在目标环境中验证样式是否生效。
+
+* 要保证样式在图片中生效，推荐将关键样式写为内联样式（例如 `style="..."`），或者在渲染前把模板预渲染为包含最终样式的静态 HTML 再交给 satori。可以参考 satori 的 CSS 支持列表来确认哪些 CSS 属性被支持
+
+<Callout title="satori 支持的 CSS 列表（参考）">
+  [https://github.com/vercel/satori?tab=readme-ov-file#css](https://github.com/vercel/satori?tab=readme-ov-file#css)
+</Callout>
+
+```vue title="template.vue"
+<template>
+  {/* 不生效部分 */}
+  {/* [!code word:box] */}
+  <div class="box" style="display: flex;">
+    {{ title }}
+  </div>
+  <div style="display: flex;">
+  {/* 不生效部分 */}
+  {/* [!code highlight] */}
+    {{ newtitle }}
+  </div>
+  <div v-for="value in fortest" :key="value" style="display: flex;">
+    <p>value: {{ value }}</p>
+  </div>
+  <div v-if="show" style="display: flex;">隐藏内容</div>
+</template>
+<script setup lang="ts">
+// 不生效部分
+// [!code highlight]
+import { ref } from "vue";
+
+// 这里是传递参数部分
+defineProps<{
+  title?: string;
+  fortest?: number;
+  show?: boolean;
+}>();
+
+// 不生效部分
+// [!code highlight]
+const newtitle = ref("新标题");
+</script>
+
+// 不生效部分
+{/* [!code highlight] */}
+<style scoped>
+/* [!code highlight] */
+.box {
+  /* [!code highlight] */
+  width: 100px; /* [!code highlight] */
+  height: 100px; /* [!code highlight] */
+  background-color: red; /* [!code highlight] */
+} /* [!code highlight] */
+/* [!code highlight] */
+</style>
+```
+
+## 使用方法
+
+在 @function/genImg.ts 中 我们包装了一个 generateImage 方法用于图片生成
+
+下面是 `generateImage` 方法的类型表，使用项目内置的 `TypeTable` 组件展示参数说明与返回值：
+
+<TypeTable
+  type={{
+  "options": {
+    description: "图片生成选项对象",
+    type: <code>{`{ width: number | 'auto'; height: number | 'auto'; fonts?: FontOptions[]; debug?: boolean; quality?: number; imgname?: string; format?: 'png' | 'jpg' | 'jpeg'; jpegQuality?: number }`}</code>,
+    parameters: [
+      { name: 'width', description: <span>图片宽度，数字或字符串 <code>"auto"</code></span> },
+      { name: 'height', description: <span>图片高度，数字或字符串 <code>"auto"</code></span> },
+      { name: 'fonts', description: <span>字体配置数组，详见 <code>FontOptions</code></span> },
+      { name: 'debug', description: '是否打开调试模式，调试模式下会保留中间文件' },
+      { name: 'quality', description: '输出质量 (0-100)，仅对某些格式生效' },
+      { name: 'imgname', description: '生成文件名（可选），不含扩展名' },
+      { name: 'format', description: "图片格式：'png' | 'jpg' | 'jpeg'" },
+      { name: 'jpegQuality', description: '当 format 为 jpeg/jpg 时使用的质量设置 (0-100)' },
+    ],
+  },
+  "vuetemplateStr": {
+    description: 'Vue 模板字符串，用于渲染图片的静态 HTML',
+    type: <code>string</code>,
+  },
+  "props": {
+    description: '传入 Vue 模板的属性对象（可选）',
+    type: <code>Record&lt;string, any&gt;</code>,
+    default: <code>{`{}`}</code>,
+  },
+}}
+/>
+
+示例：
+
+<Files>
+  <File name="test.ts" />
+
+  <File name="template.vue" />
+</Files>
+
+```ts title="test.ts"
+import template from "./template.vue?raw";
+import { generateImage } from "@function/genImg.ts";
+// 调用示例
+const result = await generateImage(
+  {
+    width: 1200,
+    height: 630,
+    format: 'png',
+    imgname: 'og-image',
+  },
+  template
+  { title: '示例标题' },
+);
+
+```
+
+## 返回处理
+
+`generateImage` 方法返回一个包含生成图片信息的对象：
+
+```ts
+{
+  path: '/tmp/og-image.png',
+  width: 1200,
+  height: 630,
+  hash: 'abcd1234',
+  file_id: 'file_5678'
+}
+```
+
+<TypeTable
+  type={{
+  path: {
+    description:
+      '图片的绝对路径 (如何没有路径就是有缓存使用 file_id 发送图片，避免重复上传)',
+    type: 'string',
+  },
+  width: {
+    description: '图片宽度，单位像素',
+    type: 'number',
+  },
+  height: {
+    description: '图片高度，单位像素',
+    type: 'number',
+  },
+  hash: {
+    description: '图片内容的哈希值',
+    type: 'string',
+  },
+  file_id: {
+    description: '上传到 Telegram 后的文件 ID(当有 path 时表示该参数有缓存图片)',
+    type: 'string',
+  },
+}}
+/>
+
+```ts
+import { sendMessage } from "@TDLib/function/message.ts";
+import { generateImage } from "@function/genImg.ts";
+import { updateImgCache } from "@db/update.ts";
+import fs from "fs";
+
+
+const imagePath = await generateImage(
+  {
+    width: 1200,
+    height: "auto",
+  },
+  templateStr,
+  props
+);
+// 当有路径时表示图片生成成功并且没有缓存需要进行上传
+if (imagePath.path) {
+  const result = await sendMessage(client, message.message.chat_id, {
+    media: {
+      photo: {
+        path: imagePath.path,
+      },
+    },
+  });
+  // 保存 file_id 到缓存
+  if (result && result.content._ === "messagePhoto" && imagePath.hash) {
+    const file_id = result.content.photo.sizes.slice(-1)[0].photo.remote.id;
+    try {
+      await updateImgCache(imagePath.hash, file_id);
+    } catch (err) {
+      logger.warn("保存 file_id 缓存失败", err);
+    }
+  }
+  // 可选删除临时文件
+  await fs.promises.unlink(imagePath.path);
+  return;
+}
+
+// 当有缓存时path会为空，file_id 进行发送
+if ((imagePath.hash, imagePath.file_id)) {
+  await sendMessage(client, message.message.chat_id, {
+    media: {
+      photo: {
+        id: imagePath.file_id,
+      },
+    },
+  });
+  return;
+}
+// 图片生成失败错误处理
+await sendMessage(client, message.message.chat_id, {
+  text: "图片生成失败",
+});
+```
+
+
+# 插件开发帮助 (/docs/plugin/Sample)
+
+## 插件接口一览
+
+### 1 必需字段（实例属性）
+
+* `name: string`：插件唯一名称。
+* `type: "user" | "bot" | "general"`：插件适用的运行主体。
+* `version: string`：插件版本号。
+* `description: string`：简短描述。
+
+```ts title="Examples.ts"
+import { Plugin } from "@plugin/BasePlugin.ts";
+import type { Client } from "tdl";
+import type { updateNewMessage } from "tdlib-types";
+
+export default class LifePlugin extends Plugin {
+  name = "插件唯一名称"; // [!code highlight]
+  type = "general"; // [!code highlight]
+  version = "插件版本号"; // [!code highlight]
+  description = "简短描述"; // [!code highlight]
+
+  constructor(client: Client) {
+    super(client);
+  }
+}
+```
+
+`type` 用来指明插件运行的环境
+
+* `user`：插件中包含只能使用 user 账户能使用的功能（如删除 48 小时前消息）。
+* `bot`：依赖 Bot API 特性（如内联按钮）。
+* `general`：两侧均可使用。
+
+```ts title="type部分"
+// [!code word:"general"]
+type = "general";
+```
+
+### 2 可选生命周期 & 运行任务
+
+| 字段/方法         | 作用                                                                     |
+| ------------- | ---------------------------------------------------------------------- |
+| `onLoad()`    | 插件被实例化并注册后立即调用，用于一次性初始化。                                               |
+| `runHandlers` | 注册可直接触发或定时执行的任务。支持 `cron` 表达式或 `intervalMs` 轮询，`immediate` 可在加载时先运行一次。 |
+| `destroy()`   | 卸载前调用，用于清理资源、关闭定时器等。                                                   |
+
+`runHandlers` 的定义：
+
+```ts
+type RunDef = {
+  description?: string;
+  handler: () => Promise<void> | void;
+  cron?: string; // 优先使用 cron，依赖 cron 包，支持秒级表达式
+  intervalMs?: number; // 毫秒级轮询
+  immediate?: boolean; // 加载后立即执行一次
+};
+```
+
+
+# 获取对话的基本信息 (/docs/plugin/function/getChat)
+
+<TypeTable
+  type={{
+  client: {
+    description:
+      'TDLib 客户端实例',
+    type: 'Client',
+  },
+  chat_id: {
+    description: '要获取信息的对话 ID',
+    type: 'number',
+  },
+}}
+/>
+
+#### 获取对话信息
+
+可以使用 TDLib 的 `getChat` 方法来获取对话的基本信息。以下是一个示例代码，展示如何在插件中实现这一功能：
+
+```ts title="ChatInfo.ts"
+import { getChat } from "@TDLib/function/chat.ts";
+
+const chat = await getChat(client, chat_id);
+```
+
+#### 返回内容
+
+[chat Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1chat.html)
+
+
+# 获取超级群组的基本信息 (/docs/plugin/function/getSupergroup)
+
+<TypeTable
+  type={{
+  client: {
+    description:
+      'TDLib 客户端实例',
+    type: 'Client',
+  },
+  supergroup_id: {
+    description: '要获取信息的超级群组 ID',
+    type: 'number',
+  },
+}}
+/>
+
+#### 获取超级群组信息
+
+可以使用 TDLib 的 `getSupergroup` 方法来获取超级群组的基本信息。以下是一个示例代码，展示如何在插件中实现这一功能：
+
+```ts title="SupergroupInfo.ts"
+import { getSupergroup } from "@TDLib/function/supergroup.ts";
+
+const supergroup = await getSupergroup(client, supergroup_id);
+```
+
+#### 返回内容
+
+[supergroup Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1supergroup.html)
+
+
+# 获取用户信息 (/docs/plugin/function/getUser)
+
+<TypeTable
+  type={{
+  client: {
+    description:
+      'TDLib 客户端实例',
+    type: 'Client',
+  },
+  user_id: {
+    description: '要获取信息的用户 ID',
+    type: 'number',
+  },
+}}
+/>
+
+#### 获取用户信息
+
+可以使用 TDLib 的 `getUser` 方法来获取用户的详细信息。以下是一个示例代码，展示如何在插件中实现这一功能：
+
+```ts title="UserInfo.ts"
+import { getUser } from "@TDLib/function/user.ts";
+
+const user = await getUser(client, user_id);
+```
+
+#### 返回内容
+
+[user Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1user.html)
+
+
+# 获取用户的完整信息 (/docs/plugin/function/getUserFullInfo)
+
+<TypeTable
+  type={{
+  client: {
+    description:
+      'TDLib 客户端实例',
+    type: 'Client',
+  },
+  user_id: {
+    description: '要获取信息的用户 ID',
+    type: 'number',
+  },
+}}
+/>
+
+#### 获取用户信息
+
+可以使用 TDLib 的 `getUserFullInfo` 方法来获取用户的详细信息。以下是一个示例代码，展示如何在插件中实现这一功能：
+
+```ts title="UserInfo.ts"
+import { getUserFullInfo } from "@TDLib/function/user.ts";
+
+const user = await getUserFullInfo(client, user_id);
+```
+
+#### 返回内容
+
+[userFullInfo Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1user_full_info.html)
+
+
+# 可用命令 (/docs/start/cmd)
+
+## 触发方式
+
+Fuyu-TDBot 支持通过以下消息开头触发命令：
+
+在消息开头默认使用`/`, `!`, `！`, `.`，`~`，`^` 作为前缀，例如 `/start` 或 `!help`。
+
+### 修改前缀
+
+您可以通过config命令修改前缀：
+使用 空格 分隔多个前缀
+
+```plaintext
+/config set PREFIXES / ! . 
+```
+
+## 自带命令
+
+Fuyu-TDBot 支持以下命令：
+
+| 命令          | 描述            | 权限   | 可回应场景 |
+| ----------- | ------------- | ---- | ----- |
+| `/start`    | start命令       | 所有用户 | 全部    |
+| `/help`     | 帮助命令 列出所有可用命令 | 所有用户 | 全部    |
+| `/log`      | 获取日志文件        | 管理员  | 全部    |
+| `/config`   | 配置管理          | 管理员  | 全部    |
+| `/plugin`   | 插件管理命令        | 管理员  | 全部    |
+| `/setadmin` | 设置管理员         | 主人   | 全部    |
+
+## 注意事项
+
+<Callout type="warning" title="注意">
+  如果你使用的 `User` 账户登录 即使命令权限为 `所有用户` 的情况下,也只会回应 `主人` 和 `管理员` 以及 `自身` 的命令请求,其他用户的命令请求会被忽略。使用命令 /setadmin add `<用户ID>` 可以添加管理员。
+
+  如果你使用的 `Bot` 账户登录 则不会有此限制。
+</Callout>
+
+
+# MongoDB 安装与配置 (/docs/start/install/Mongdb)
+
+## 1.安装 MongoDB
+
+### Windows
+
+1. 请访问 [MongoDB 官方下载页面](https://www.mongodb.com/try/download/community) 找到 `MongoDB Community Server` 点击 `Select package` 选择适合你系统的安装包（通常是 MSI 安装包），然后点击 `Download` 下载。
+2. 运行安装程序，选择“完整”安装类型
+3. 安装完成后，MongoDB 会默认启动为 Windows 服务。
+
+额外工具：MongoDB Shell
+
+* mongosh（MongoDB Shell）：如果你使用较新的 MongoDB 版本，推荐使用 `mongosh`。可以从官方页面的 "Tools" 或单独下载页面获取
+
+### macOS
+
+1. 使用 Homebrew 安装 MongoDB：
+
+   ```bash
+   brew tap mongodb/brew
+   brew install mongodb-community
+   ```
+
+2. 启动 MongoDB 服务：
+
+   ```bash
+   brew services start mongodb/brew/mongodb-community
+   ```
+
+额外工具：mongosh
+
+* 使用 Homebrew 安装 mongosh：
+
+  ```bash
+  brew install mongosh
+  ```
+
+### Linux
+
+1. 使用以下命令安装 MongoDB：
+
+   ```bash
+   sudo apt update
+   sudo apt install -y mongodb
+   ```
+
+2. 启动 MongoDB 服务：
+
+   ```bash
+   sudo systemctl start mongodb
+   ```
+
+额外工具：mongosh
+
+* Ubuntu/Debian（推荐使用官方 apt 源安装最新的 mongosh 和 tools）：
+
+  ```bash
+  # 添加 MongoDB 官方源之后安装 mongosh
+  sudo apt install -y mongosh
+  ```
+
+* 如果使用社区包，可能需要单独下载并安装 `mongosh`的 deb 包。
+
+## 2.配置 MongoDB
+
+默认情况下，MongoDB 会监听本地的 `27017` 端口，并且只能本地访问。如果你需要更改配置，可以编辑 MongoDB 的配置文件（通常位于 `/etc/mongod.conf` 或 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）。
+
+确保 MongoDB 服务正在运行，然后你可以使用以下连接字符串连接到本地的 MongoDB 实例：
+
+```plaintext
+mongodb://localhost:27017
+```
+
+### 设置账户和密码
+
+MongoDB 默认安装后没有启用账户密码认证。建议在生产环境开启认证并设置管理员账户。
+
+#### 1. 创建管理员账户
+
+1. 打开命令行，连接到 MongoDB：
+   ```powershell
+   mongo
+   ```
+2. 切换到 `admin` 数据库：
+   ```js
+   use admin
+   ```
+3. 创建管理员用户（请替换用户名和密码）：
+   ```js
+   db.createUser({
+     user: "名称",
+     pwd: "你的密码",
+     roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
+   })
+   ```
+
+#### 2. 启用认证
+
+1. 编辑配置文件（Windows 通常在 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）：
+   ```yaml
+   security:
+     authorization: enabled
+   ```
+2. 重启 MongoDB 服务。
+
+#### 3. 修改密码
+
+<Callout>
+  如果你创建了管理员账户后无法登录，可以通过以下步骤修改密码：
+</Callout>
+
+1. 关闭认证，编辑配置文件，注释掉 \`authorization: enabled
+   ```yaml
+   security:
+    # authorization: enabled
+   ```
+   重启 MongoDB 服务。
+
+2. 连接到 MongoDB 并切换到 `admin` 数据库：
+   ```js
+   use admin
+   ```
+
+3. 修改密码（将 `名称` 和 `新密码` 替换为你的用户名和新密码）：
+   ```js
+   db.changeUserPassword("名称", "新密码")
+   ```
+
+<Callout>
+  记得重新启用认证，编辑配置文件，取消注释 `authorization: enabled`，然后重启 MongoDB 服务。
+</Callout>
+
+### 3.启用认证后常用的连接字符串示例
+
+启用认证后，客户端需要使用带凭证的连接字符串。其中常见形式包括：
+
+```plaintext
+mongodb://<username>:<password>@localhost:27017/?authSource=admin
+```
+
+* 带有数据库名称的连接字符串：
+
+```plaintext
+mongodb://<username>:<password>@localhost:27017/<database>?authSource=admin
+```
+
+参数说明（常用）：
+
+* `<username>`：连接数据库的用户名。
+* `<password>`：连接数据库的密码。
+* `<database>`：要连接的数据库名称。
+* `authSource`：指定用于认证的数据库（通常为 `admin`）。
+
+***
+
+## 公开 MongoDB 到公网
+
+默认情况下，MongoDB 只监听本地 `127.0.0.1`。如需让外部设备访问，需要修改绑定地址。
+
+### 步骤
+
+1. 编辑配置文件`mongod.conf`，找到 `net` 配置项并修改`bindIp`：
+   ```yaml
+   net:
+     port: 27017 # 你可以根据需要更改端口
+     bindIp: 0.0.0.0
+   ```
+   这样会允许所有 IP 访问 MongoDB。
+2. 重启 MongoDB 服务。
+3. 确保防火墙已开放 27017 端口，并设置安全规则，避免暴露数据库到不可信网络。
+
+<Callout title="注意" type="error">
+  **安全提示**：强烈建议开启认证、设置强密码，并限制访问来源 IP。
+</Callout>
+
+
+# Node.js 安装 (/docs/start/install/nodejs)
+
+## 安装 Node.js
+
+### Windows
+
+1. 访问 [Node.js 官方下载页面](https://nodejs.org/zh-cn/download)。
+2. 点击 Windows Installer (.msi) 下载适用于 Windows 的安装包。
+3. 运行下载的安装程序，按照提示完成安装。
+
+### macOS & Linux
+
+前往 [Node.js 官方网站](https://nodejs.org/zh-cn/download) 下载适用于你操作系统的安装包。
+
+或者，你也可以使用包管理器安装 Node.js：
+
+* **macOS**（使用 Homebrew）：
+
+  ```bash
+  brew install node
+  ```
+* **Ubuntu/Debian**：
+
+  ```bash
+  sudo apt update
+  sudo apt install -y nodejs npm
+  ```
+
+
+# Telegram API 获取 (/docs/start/install/tgapi)
+
+## 获取 Telegram API ID 和 API Hash
+
+要使用 Fuyu-TDBot，您需要从 Telegram 获取 `API ID` 和 `API Hash`。以下是获取这些信息的步骤：
+
+内容来源于 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)。
+
+### 获取api\_id
+
+为了获取 `API ID` 并使用 Telegram API 开发您自己的应用程序，您需要执行以下作：
+
+* 使用官方应用程序注册 Telegram。
+* 登录您的 Telegram 核心：[https://my.telegram.org。](https://my.telegram.org。)
+* 转到 `API development tools` 并填写表格。
+* 您将获得基本地址以及用户授权所需的`api_id`和`api_hash`参数。
+* 目前，每个号码只能注册一个`api_id`。
+
+TG将向您在此过程中使用的电话号码发送重要的开发者通知，因此请使用连接到您活动 Telegram 帐户的最新号码。
+
+### 使用 api\_id
+
+在使用 MTProto Telegram API 之前，请注意以下事项：
+Telegram
+
+* 所有 API 客户端库都受到严格监控，以防止滥用。
+
+* 如果你使用 Telegram API 进行刷屏、垃圾信息、伪造频道的订阅数或观看数，你将被永久封禁。
+
+* 由于 Telegram API 滥用严重，所有使用非官方 Telegram API 客户端登录的账户都会被自动置于观察状态，以防止违反服务条款。
+
+* 如果你没有违反服务条款，但在使用 API 后你的账户被封禁，请发邮件至 [recover@telegram.org](mailto:recover@telegram.org)，解释你使用 API 的意图，请求解封。
+
+请注意，邮件需要人工审核，因此自动生成的邮件可能会被检测并封禁。
