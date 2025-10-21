@@ -58,166 +58,7 @@ pnpm start
 * [cron](https://github.com/kelektiv/node-cron#readme) - 定时任务
 
 
-# 常见问题排查 (/docs/plugin/2)
-
-## 常见问题排查
-
-* **未被加载**：确认文件/文件夹未以 `.` 开头且不为 `node_modules`。
-* **缺少默认导出**：确保 `export default` 的类继承自 `Plugin`。
-* **发送消息只出现临时消息**：需要监听 `updateMessageSendSucceeded` 获取正式消息。
-* **调用原生 TDLib 方法失败**：参考 [TDLib Function 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
-
-***
-
-## `@TDLib/function` 速查
-
-项目在 `src/TDLib/function` 下封装了常见操作，可直接导入使用：
-
-### 用户 / 聊天 / 消息
-
-* `getUser(client, user_id)`
-* `getUserFullInfo(client, user_id)`
-* `getChat(client, chat_id)`
-* `getSupergroup(client, supergroup_id)` / `getSupergroupFullInfo`
-* `getMessage(client, chat_id, message_id)`
-
-```ts
-import { getUser, getChat } from "@TDLib/function";
-
-const user = await getUser(client, 123456);
-const chat = await getChat(client, 987654);
-```
-
-### 消息发送与编辑
-
-* `sendMessage` / `sendMessageAlbum`
-* `editMessageText` / `editMessageCaption` / `editMessageMedia`
-* `deleteMessage`
-
-```ts
-import { sendMessage, editMessageText } from "@TDLib/function";
-
-const msg = await sendMessage(client, chatId, { text: "Hello *world*" });
-await editMessageText(client, chatId, msg.id, { text: "Edited text" });
-```
-
-### 权限与管理
-
-* `restrictUser`
-* `setUserAsMember`
-* `setUserRestricted`
-* `banUser`
-* `isMeAdmin` / `isUserAdmin`
-
-### 文件与代理
-
-* `downloadFile`
-* `getProxies` / `addProxy` / `removeProxy`
-* `enableProxy` / `disableProxy`
-* `pingProxy` / `testProxy` / `getProxyLink`
-
-### 其他工具
-
-* `answerCallbackQuery`
-* `getLinkPreview`
-* `getMessageLink` / `getMessageLinkInfo`
-* `chatoruserMdown`
-
-示例：
-
-```ts
-import { sendMessage, getUser } from "@TDLib/function";
-
-export default class MyPlugin extends Plugin {
-  async onSomeEvent(update) {
-    const user = await getUser(this.client, update.sender_user_id);
-    await sendMessage(this.client, update.chat_id, {
-      text: `Hello ${user.first_name}`,
-    });
-  }
-}
-```
-
-> 提示：封装函数出错时会抛出异常，请使用 `try/catch` 处理。
-
-***
-
-如需更多示例或想要扩展插件框架，欢迎在仓库提出 Issue 或 PR。祝开发顺利！
-
-
-# 插件开发约定 (/docs/plugin)
-
-# 插件规则
-
-* 明白插件被 `PluginManager` 识别的规则；
-* 实现必需的接口与生命周期；
-* 注册命令、更新处理器以及可选的定时/手动运行任务；
-* 借助项目提供的 TDLib 封装函数提升开发效率。
-
-## 1. 插件加载约定
-
-* **默认目录**：`PluginManager` 会扫描 `./plugins` 的顶层文件或文件夹。
-
-* **导出要求**：每个插件必须默认导出一个继承自 `Plugin` 的类，例如：
-
-  ```ts
-  import { Plugin } from "@plugin/BasePlugin.ts";
-
-  export default class MyPlugin extends Plugin {}
-  ```
-
-* **构造函数签名**：`constructor(client: Client)`，其中 `client` 是获取当前运行的 TDLib 客户端实例。
-
-* **入口格式**：
-  * 顶层 `.ts` 文件，例如 `plugins/foo.ts`；（用于单文件插件）
-  * 或目录内的 `index.ts`，如 `plugins/bar/index.ts`。
-
-### 1.1 特殊查询导入
-
-插件中可直接使用自定义 loader 暴露的查询参数：
-
-| 查询      | 说明           | 典型用途               |
-| ------- | ------------ | ------------------ |
-| `?file` | 返回文件的绝对路径字符串 | 传递给本地 API、原生上传等    |
-| `?raw`  | 返回文件内容文本     | 嵌入模板、Markdown、JSON |
-
-示例：
-
-```ts
-import filePath from "../assets/logo.png?file";
-import readmeText from "../README.md?raw";
-```
-
-### 1.2 路径别名导入
-
-项目配置了多个路径别名来简化导入路径，提高代码可读性。无论你在项目的哪个位置，都可以使用这些别名进行绝对路径导入：
-
-| 别名            | 实际路径           | 用途说明        |
-| ------------- | -------------- | ----------- |
-| `@log/*`      | `./log/*`      | 日志相关模块      |
-| `@plugin/*`   | `./plugin/*`   | 插件相关工具和类型   |
-| `@TDLib/*`    | `./TDLib/*`    | TDLib 封装和接口 |
-| `@type/*`     | `./types/*`    | 共享类型定义      |
-| `@function/*` | `./function/*` | 通用函数库       |
-| `@db/*`       | `./Database/*` | 数据库相关模块     |
-
-#### 使用示例
-
-```ts
-import logger from "@log/index.ts";
-import { Plugin } from "@plugin/BasePlugin.ts";
-
-// 导入 TDLib 工具
-import { sendMessage } from "@TDLib/function/message.ts";
-
-// 导入数据库
-import { getDatabase } from "@db/index.ts";
-```
-
-***
-
-
-# 介绍 (/docs/start)
+# 介绍 (/docs/1.start)
 
 <GithubInfo owner="CatMoeCircle" repo="Fuyu_TDBot" />
 
@@ -272,7 +113,7 @@ Fuyu-TDBot 使用 MongoDB 作为默认的数据存储解决方案。MongoDB 是�
 我们期待您的参与，共同推动 Fuyu-TDBot 的发展！
 
 
-# 快速开始 (/docs/start/quickstart)
+# 快速开始 (/docs/1.start/quickstart)
 
 ## 快速开始
 
@@ -363,7 +204,373 @@ pnpm pm2:logs
 ```
 
 
-# 快速模板 (/docs/plugin/Examples/1)
+# 常见问题排查 (/docs/2.plugin/2)
+
+## 常见问题排查
+
+* **未被加载**：确认文件/文件夹未以 `.` 开头且不为 `node_modules`。
+* **缺少默认导出**：确保 `export default` 的类继承自 `Plugin`。
+* **发送消息只出现临时消息**：需要监听 `updateMessageSendSucceeded` 获取正式消息。
+* **调用原生 TDLib 方法失败**：参考 [TDLib Function 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
+
+***
+
+如需更多示例或想要扩展插件框架，欢迎在仓库提出 Issue 或 PR。祝开发顺利！
+
+
+# 插件开发约定 (/docs/2.plugin)
+
+# 插件规则
+
+* 明白插件被 `PluginManager` 识别的规则；
+* 实现必需的接口与生命周期；
+* 注册命令、更新处理器以及可选的定时/手动运行任务；
+* 借助项目提供的 TDLib 封装函数提升开发效率。
+
+## 1. 插件加载约定
+
+* **默认目录**：`PluginManager` 会扫描 `./plugins` 的顶层文件或文件夹。
+
+* **导出要求**：每个插件必须默认导出一个继承自 `Plugin` 的类，例如：
+
+  ```ts
+  import { Plugin } from "@plugin/BasePlugin.ts";
+
+  export default class MyPlugin extends Plugin {}
+  ```
+
+* **构造函数签名**：`constructor(client: Client)`，其中 `client` 是获取当前运行的 TDLib 客户端实例。
+
+* **入口格式**：
+  * 顶层 `.ts` 文件，例如 `plugins/foo.ts`；（用于单文件插件）
+  * 或目录内的 `index.ts`，如 `plugins/bar/index.ts`。
+
+### 1.1 特殊查询导入
+
+插件中可直接使用自定义 loader 暴露的查询参数：
+
+| 查询      | 说明           | 典型用途               |
+| ------- | ------------ | ------------------ |
+| `?file` | 返回文件的绝对路径字符串 | 传递给本地 API、原生上传等    |
+| `?raw`  | 返回文件内容文本     | 嵌入模板、Markdown、JSON |
+
+示例：
+
+```ts
+import filePath from "../assets/logo.png?file";
+import readmeText from "../README.md?raw";
+```
+
+### 1.2 路径别名导入
+
+项目配置了多个路径别名来简化导入路径，提高代码可读性。无论你在项目的哪个位置，都可以使用这些别名进行绝对路径导入：
+
+| 别名            | 实际路径           | 用途说明        |
+| ------------- | -------------- | ----------- |
+| `@log/*`      | `./log/*`      | 日志相关模块      |
+| `@plugin/*`   | `./plugin/*`   | 插件相关工具和类型   |
+| `@TDLib/*`    | `./TDLib/*`    | TDLib 封装和接口 |
+| `@type/*`     | `./types/*`    | 共享类型定义      |
+| `@function/*` | `./function/*` | 通用函数库       |
+| `@db/*`       | `./Database/*` | 数据库相关模块     |
+
+#### 使用示例
+
+```ts
+import logger from "@log/index.ts";
+import { Plugin } from "@plugin/BasePlugin.ts";
+
+// 导入 TDLib 工具
+import { sendMessage } from "@TDLib/function/message.ts";
+
+// 导入数据库
+import { getDatabase } from "@db/index.ts";
+```
+
+***
+
+
+# 可用命令 (/docs/1.start/cmd)
+
+## 触发方式
+
+Fuyu-TDBot 支持通过以下消息开头触发命令：
+
+在消息开头默认使用`/`, `!`, `！`, `.`，`~`，`^` 作为前缀，例如 `/start` 或 `!help`。
+
+### 修改前缀
+
+您可以通过config命令修改前缀：
+使用 空格 分隔多个前缀
+
+```plaintext
+/config set PREFIXES / ! . 
+```
+
+## 自带命令
+
+Fuyu-TDBot 支持以下命令：
+
+| 命令          | 描述            | 权限   | 可回应场景 |
+| ----------- | ------------- | ---- | ----- |
+| `/start`    | start命令       | 所有用户 | 全部    |
+| `/help`     | 帮助命令 列出所有可用命令 | 所有用户 | 全部    |
+| `/log`      | 获取日志文件        | 管理员  | 全部    |
+| `/config`   | 配置管理          | 管理员  | 全部    |
+| `/plugin`   | 插件管理命令        | 管理员  | 全部    |
+| `/setadmin` | 设置管理员         | 主人   | 全部    |
+
+## 注意事项
+
+<Callout type="warning" title="注意">
+  如果你使用的 `User` 账户登录 即使命令权限为 `所有用户` 的情况下,也只会回应 `主人` 和 `管理员` 以及 `自身` 的命令请求,其他用户的命令请求会被忽略。使用命令 /setadmin add `<用户ID>` 可以添加管理员。
+
+  如果你使用的 `Bot` 账户登录 则不会有此限制。
+</Callout>
+
+
+# MongoDB 安装与配置 (/docs/1.start/install/Mongdb)
+
+## 1.安装 MongoDB
+
+### Windows
+
+1. 请访问 [MongoDB 官方下载页面](https://www.mongodb.com/try/download/community) 找到 `MongoDB Community Server` 点击 `Select package` 选择适合你系统的安装包（通常是 MSI 安装包），然后点击 `Download` 下载。
+2. 运行安装程序，选择“完整”安装类型
+3. 安装完成后，MongoDB 会默认启动为 Windows 服务。
+
+额外工具：MongoDB Shell
+
+* mongosh（MongoDB Shell）：如果你使用较新的 MongoDB 版本，推荐使用 `mongosh`。可以从官方页面的 "Tools" 或单独下载页面获取
+
+### macOS
+
+1. 使用 Homebrew 安装 MongoDB：
+
+   ```bash
+   brew tap mongodb/brew
+   brew install mongodb-community
+   ```
+
+2. 启动 MongoDB 服务：
+
+   ```bash
+   brew services start mongodb/brew/mongodb-community
+   ```
+
+额外工具：mongosh
+
+* 使用 Homebrew 安装 mongosh：
+
+  ```bash
+  brew install mongosh
+  ```
+
+### Linux
+
+1. 使用以下命令安装 MongoDB：
+
+   ```bash
+   sudo apt update
+   sudo apt install -y mongodb
+   ```
+
+2. 启动 MongoDB 服务：
+
+   ```bash
+   sudo systemctl start mongodb
+   ```
+
+额外工具：mongosh
+
+* Ubuntu/Debian（推荐使用官方 apt 源安装最新的 mongosh 和 tools）：
+
+  ```bash
+  # 添加 MongoDB 官方源之后安装 mongosh
+  sudo apt install -y mongosh
+  ```
+
+* 如果使用社区包，可能需要单独下载并安装 `mongosh`的 deb 包。
+
+## 2.配置 MongoDB
+
+默认情况下，MongoDB 会监听本地的 `27017` 端口，并且只能本地访问。如果你需要更改配置，可以编辑 MongoDB 的配置文件（通常位于 `/etc/mongod.conf` 或 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）。
+
+确保 MongoDB 服务正在运行，然后你可以使用以下连接字符串连接到本地的 MongoDB 实例：
+
+```plaintext
+mongodb://localhost:27017
+```
+
+### 设置账户和密码
+
+MongoDB 默认安装后没有启用账户密码认证。建议在生产环境开启认证并设置管理员账户。
+
+#### 1. 创建管理员账户
+
+1. 打开命令行，连接到 MongoDB：
+   ```powershell
+   mongo
+   ```
+2. 切换到 `admin` 数据库：
+   ```js
+   use admin
+   ```
+3. 创建管理员用户（请替换用户名和密码）：
+   ```js
+   db.createUser({
+     user: "名称",
+     pwd: "你的密码",
+     roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
+   })
+   ```
+
+#### 2. 启用认证
+
+1. 编辑配置文件（Windows 通常在 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）：
+   ```yaml
+   security:
+     authorization: enabled
+   ```
+2. 重启 MongoDB 服务。
+
+#### 3. 修改密码
+
+<Callout>
+  如果你创建了管理员账户后无法登录，可以通过以下步骤修改密码：
+</Callout>
+
+1. 关闭认证，编辑配置文件，注释掉 \`authorization: enabled
+   ```yaml
+   security:
+    # authorization: enabled
+   ```
+   重启 MongoDB 服务。
+
+2. 连接到 MongoDB 并切换到 `admin` 数据库：
+   ```js
+   use admin
+   ```
+
+3. 修改密码（将 `名称` 和 `新密码` 替换为你的用户名和新密码）：
+   ```js
+   db.changeUserPassword("名称", "新密码")
+   ```
+
+<Callout>
+  记得重新启用认证，编辑配置文件，取消注释 `authorization: enabled`，然后重启 MongoDB 服务。
+</Callout>
+
+### 3.启用认证后常用的连接字符串示例
+
+启用认证后，客户端需要使用带凭证的连接字符串。其中常见形式包括：
+
+```plaintext
+mongodb://<username>:<password>@localhost:27017/?authSource=admin
+```
+
+* 带有数据库名称的连接字符串：
+
+```plaintext
+mongodb://<username>:<password>@localhost:27017/<database>?authSource=admin
+```
+
+参数说明（常用）：
+
+* `<username>`：连接数据库的用户名。
+* `<password>`：连接数据库的密码。
+* `<database>`：要连接的数据库名称。
+* `authSource`：指定用于认证的数据库（通常为 `admin`）。
+
+***
+
+## 公开 MongoDB 到公网
+
+默认情况下，MongoDB 只监听本地 `127.0.0.1`。如需让外部设备访问，需要修改绑定地址。
+
+### 步骤
+
+1. 编辑配置文件`mongod.conf`，找到 `net` 配置项并修改`bindIp`：
+   ```yaml
+   net:
+     port: 27017 # 你可以根据需要更改端口
+     bindIp: 0.0.0.0
+   ```
+   这样会允许所有 IP 访问 MongoDB。
+2. 重启 MongoDB 服务。
+3. 确保防火墙已开放 27017 端口，并设置安全规则，避免暴露数据库到不可信网络。
+
+<Callout title="注意" type="error">
+  **安全提示**：强烈建议开启认证、设置强密码，并限制访问来源 IP。
+</Callout>
+
+
+# Node.js 安装 (/docs/1.start/install/nodejs)
+
+## 安装 Node.js
+
+### Windows
+
+1. 访问 [Node.js 官方下载页面](https://nodejs.org/zh-cn/download)。
+2. 点击 Windows Installer (.msi) 下载适用于 Windows 的安装包。
+3. 运行下载的安装程序，按照提示完成安装。
+
+### macOS & Linux
+
+前往 [Node.js 官方网站](https://nodejs.org/zh-cn/download) 下载适用于你操作系统的安装包。
+
+或者，你也可以使用包管理器安装 Node.js：
+
+* **macOS**（使用 Homebrew）：
+
+  ```bash
+  brew install node
+  ```
+* **Ubuntu/Debian**：
+
+  ```bash
+  sudo apt update
+  sudo apt install -y nodejs npm
+  ```
+
+
+# Telegram API 获取 (/docs/1.start/install/tgapi)
+
+## 获取 Telegram API ID 和 API Hash
+
+要使用 Fuyu-TDBot，您需要从 Telegram 获取 `API ID` 和 `API Hash`。以下是获取这些信息的步骤：
+
+内容来源于 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)。
+
+### 获取api\_id
+
+为了获取 `API ID` 并使用 Telegram API 开发您自己的应用程序，您需要执行以下作：
+
+* 使用官方应用程序注册 Telegram。
+* 登录您的 Telegram 核心：[https://my.telegram.org。](https://my.telegram.org。)
+* 转到 `API development tools` 并填写表格。
+* 您将获得基本地址以及用户授权所需的`api_id`和`api_hash`参数。
+* 目前，每个号码只能注册一个`api_id`。
+
+TG将向您在此过程中使用的电话号码发送重要的开发者通知，因此请使用连接到您活动 Telegram 帐户的最新号码。
+
+### 使用 api\_id
+
+在使用 MTProto Telegram API 之前，请注意以下事项：
+Telegram
+
+* 所有 API 客户端库都受到严格监控，以防止滥用。
+
+* 如果你使用 Telegram API 进行刷屏、垃圾信息、伪造频道的订阅数或观看数，你将被永久封禁。
+
+* 由于 Telegram API 滥用严重，所有使用非官方 Telegram API 客户端登录的账户都会被自动置于观察状态，以防止违反服务条款。
+
+* 如果你没有违反服务条款，但在使用 API 后你的账户被封禁，请发邮件至 [recover@telegram.org](mailto:recover@telegram.org)，解释你使用 API 的意图，请求解封。
+
+请注意，邮件需要人工审核，因此自动生成的邮件可能会被检测并封禁。
+
+
+# 快速模板 (/docs/2.plugin/Examples/1)
 
 ### 快速开始
 
@@ -393,7 +600,7 @@ export default class LifePlugin extends Plugin {
 ```
 
 
-# 多命令 (/docs/plugin/Examples/2)
+# 多命令 (/docs/2.plugin/Examples/2)
 
 ### 多命令
 
@@ -430,7 +637,7 @@ export default class BgmPlugin extends Plugin {
 ```
 
 
-# 完整示例 (/docs/plugin/Examples/3)
+# 完整示例 (/docs/2.plugin/Examples/3)
 
 ## 3. 示例插件
 
@@ -506,7 +713,7 @@ export default class HelloPlugin extends Plugin {
 ```
 
 
-# 命令注册 (/docs/plugin/Sample/1)
+# 命令注册 (/docs/2.plugin/Sample/1)
 
 #### 命令注册
 
@@ -564,7 +771,7 @@ export default class LifePlugin extends Plugin {
 ```
 
 
-# 更新事件注册 (/docs/plugin/Sample/2)
+# 更新事件注册 (/docs/2.plugin/Sample/2)
 
 #### 更新事件注册
 
@@ -604,7 +811,7 @@ export default class HelloPlugin extends Plugin {
 ```
 
 
-# 插件初始化 (/docs/plugin/Sample/3)
+# 插件初始化 (/docs/2.plugin/Sample/3)
 
 ### 被注册时立即执行
 
@@ -616,7 +823,7 @@ export default class HelloPlugin extends Plugin {
 ```
 
 
-# 定时任务 (/docs/plugin/Sample/4)
+# 定时任务 (/docs/2.plugin/Sample/4)
 
 ### 定时任务
 
@@ -634,7 +841,7 @@ runHandlers = {
 ```
 
 
-# 图片生成 (/docs/plugin/Sample/5)
+# 图片生成 (/docs/2.plugin/Sample/5)
 
 ## 介绍
 
@@ -857,7 +1064,7 @@ await sendMessage(client, message.message.chat_id, {
 ```
 
 
-# 插件开发帮助 (/docs/plugin/Sample)
+# 插件开发帮助 (/docs/2.plugin/Sample)
 
 ## 插件接口一览
 
@@ -917,7 +1124,7 @@ type RunDef = {
 ```
 
 
-# 获取对话的基本信息 (/docs/plugin/function/getChat)
+# 获取对话的基本信息 (/docs/2.plugin/function/getChat)
 
 <TypeTable
   type={{
@@ -948,7 +1155,7 @@ const chat = await getChat(client, chat_id);
 [chat Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1chat.html)
 
 
-# 获取超级群组的基本信息 (/docs/plugin/function/getSupergroup)
+# 获取超级群组的基本信息 (/docs/2.plugin/function/getSupergroup)
 
 <TypeTable
   type={{
@@ -979,7 +1186,7 @@ const supergroup = await getSupergroup(client, supergroup_id);
 [supergroup Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1supergroup.html)
 
 
-# 获取用户信息 (/docs/plugin/function/getUser)
+# 获取用户信息 (/docs/2.plugin/function/getUser)
 
 <TypeTable
   type={{
@@ -1010,7 +1217,7 @@ const user = await getUser(client, user_id);
 [user Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1user.html)
 
 
-# 获取用户的完整信息 (/docs/plugin/function/getUserFullInfo)
+# 获取用户的完整信息 (/docs/2.plugin/function/getUserFullInfo)
 
 <TypeTable
   type={{
@@ -1041,281 +1248,75 @@ const user = await getUserFullInfo(client, user_id);
 [userFullInfo Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1user_full_info.html)
 
 
-# 可用命令 (/docs/start/cmd)
+# 封装函数 (/docs/2.plugin/function)
 
-## 触发方式
+## `@TDLib/function` 速查
 
-Fuyu-TDBot 支持通过以下消息开头触发命令：
+项目在 `src/TDLib/function` 下封装了常见操作，可直接导入使用：
 
-在消息开头默认使用`/`, `!`, `！`, `.`，`~`，`^` 作为前缀，例如 `/start` 或 `!help`。
+### 用户 / 聊天 / 消息
 
-### 修改前缀
+* `getUser(client, user_id)`
+* `getUserFullInfo(client, user_id)`
+* `getChat(client, chat_id)`
+* `getSupergroup(client, supergroup_id)` / `getSupergroupFullInfo`
+* `getMessage(client, chat_id, message_id)`
 
-您可以通过config命令修改前缀：
-使用 空格 分隔多个前缀
+```ts
+import { getUser, getChat } from "@TDLib/function";
 
-```plaintext
-/config set PREFIXES / ! . 
+const user = await getUser(client, 123456);
+const chat = await getChat(client, 987654);
 ```
 
-## 自带命令
+### 消息发送与编辑
 
-Fuyu-TDBot 支持以下命令：
+* `sendMessage` / `sendMessageAlbum`
+* `editMessageText` / `editMessageCaption` / `editMessageMedia`
+* `deleteMessage`
 
-| 命令          | 描述            | 权限   | 可回应场景 |
-| ----------- | ------------- | ---- | ----- |
-| `/start`    | start命令       | 所有用户 | 全部    |
-| `/help`     | 帮助命令 列出所有可用命令 | 所有用户 | 全部    |
-| `/log`      | 获取日志文件        | 管理员  | 全部    |
-| `/config`   | 配置管理          | 管理员  | 全部    |
-| `/plugin`   | 插件管理命令        | 管理员  | 全部    |
-| `/setadmin` | 设置管理员         | 主人   | 全部    |
+```ts
+import { sendMessage, editMessageText } from "@TDLib/function";
 
-## 注意事项
-
-<Callout type="warning" title="注意">
-  如果你使用的 `User` 账户登录 即使命令权限为 `所有用户` 的情况下,也只会回应 `主人` 和 `管理员` 以及 `自身` 的命令请求,其他用户的命令请求会被忽略。使用命令 /setadmin add `<用户ID>` 可以添加管理员。
-
-  如果你使用的 `Bot` 账户登录 则不会有此限制。
-</Callout>
-
-
-# MongoDB 安装与配置 (/docs/start/install/Mongdb)
-
-## 1.安装 MongoDB
-
-### Windows
-
-1. 请访问 [MongoDB 官方下载页面](https://www.mongodb.com/try/download/community) 找到 `MongoDB Community Server` 点击 `Select package` 选择适合你系统的安装包（通常是 MSI 安装包），然后点击 `Download` 下载。
-2. 运行安装程序，选择“完整”安装类型
-3. 安装完成后，MongoDB 会默认启动为 Windows 服务。
-
-额外工具：MongoDB Shell
-
-* mongosh（MongoDB Shell）：如果你使用较新的 MongoDB 版本，推荐使用 `mongosh`。可以从官方页面的 "Tools" 或单独下载页面获取
-
-### macOS
-
-1. 使用 Homebrew 安装 MongoDB：
-
-   ```bash
-   brew tap mongodb/brew
-   brew install mongodb-community
-   ```
-
-2. 启动 MongoDB 服务：
-
-   ```bash
-   brew services start mongodb/brew/mongodb-community
-   ```
-
-额外工具：mongosh
-
-* 使用 Homebrew 安装 mongosh：
-
-  ```bash
-  brew install mongosh
-  ```
-
-### Linux
-
-1. 使用以下命令安装 MongoDB：
-
-   ```bash
-   sudo apt update
-   sudo apt install -y mongodb
-   ```
-
-2. 启动 MongoDB 服务：
-
-   ```bash
-   sudo systemctl start mongodb
-   ```
-
-额外工具：mongosh
-
-* Ubuntu/Debian（推荐使用官方 apt 源安装最新的 mongosh 和 tools）：
-
-  ```bash
-  # 添加 MongoDB 官方源之后安装 mongosh
-  sudo apt install -y mongosh
-  ```
-
-* 如果使用社区包，可能需要单独下载并安装 `mongosh`的 deb 包。
-
-## 2.配置 MongoDB
-
-默认情况下，MongoDB 会监听本地的 `27017` 端口，并且只能本地访问。如果你需要更改配置，可以编辑 MongoDB 的配置文件（通常位于 `/etc/mongod.conf` 或 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）。
-
-确保 MongoDB 服务正在运行，然后你可以使用以下连接字符串连接到本地的 MongoDB 实例：
-
-```plaintext
-mongodb://localhost:27017
+const msg = await sendMessage(client, chatId, { text: "Hello *world*" });
+await editMessageText(client, chatId, msg.id, { text: "Edited text" });
 ```
 
-### 设置账户和密码
+### 权限与管理
 
-MongoDB 默认安装后没有启用账户密码认证。建议在生产环境开启认证并设置管理员账户。
+* `restrictUser`
+* `setUserAsMember`
+* `setUserRestricted`
+* `banUser`
+* `isMeAdmin` / `isUserAdmin`
 
-#### 1. 创建管理员账户
+### 文件与代理
 
-1. 打开命令行，连接到 MongoDB：
-   ```powershell
-   mongo
-   ```
-2. 切换到 `admin` 数据库：
-   ```js
-   use admin
-   ```
-3. 创建管理员用户（请替换用户名和密码）：
-   ```js
-   db.createUser({
-     user: "名称",
-     pwd: "你的密码",
-     roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
-   })
-   ```
+* `downloadFile`
+* `getProxies` / `addProxy` / `removeProxy`
+* `enableProxy` / `disableProxy`
+* `pingProxy` / `testProxy` / `getProxyLink`
 
-#### 2. 启用认证
+### 其他工具
 
-1. 编辑配置文件（Windows 通常在 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）：
-   ```yaml
-   security:
-     authorization: enabled
-   ```
-2. 重启 MongoDB 服务。
+* `answerCallbackQuery`
+* `getLinkPreview`
+* `getMessageLink` / `getMessageLinkInfo`
+* `chatoruserMdown`
 
-#### 3. 修改密码
+示例：
 
-<Callout>
-  如果你创建了管理员账户后无法登录，可以通过以下步骤修改密码：
-</Callout>
+```ts
+import { sendMessage, getUser } from "@TDLib/function";
 
-1. 关闭认证，编辑配置文件，注释掉 \`authorization: enabled
-   ```yaml
-   security:
-    # authorization: enabled
-   ```
-   重启 MongoDB 服务。
-
-2. 连接到 MongoDB 并切换到 `admin` 数据库：
-   ```js
-   use admin
-   ```
-
-3. 修改密码（将 `名称` 和 `新密码` 替换为你的用户名和新密码）：
-   ```js
-   db.changeUserPassword("名称", "新密码")
-   ```
-
-<Callout>
-  记得重新启用认证，编辑配置文件，取消注释 `authorization: enabled`，然后重启 MongoDB 服务。
-</Callout>
-
-### 3.启用认证后常用的连接字符串示例
-
-启用认证后，客户端需要使用带凭证的连接字符串。其中常见形式包括：
-
-```plaintext
-mongodb://<username>:<password>@localhost:27017/?authSource=admin
+export default class MyPlugin extends Plugin {
+  async onSomeEvent(update) {
+    const user = await getUser(this.client, update.sender_user_id);
+    await sendMessage(this.client, update.chat_id, {
+      text: `Hello ${user.first_name}`,
+    });
+  }
+}
 ```
 
-* 带有数据库名称的连接字符串：
-
-```plaintext
-mongodb://<username>:<password>@localhost:27017/<database>?authSource=admin
-```
-
-参数说明（常用）：
-
-* `<username>`：连接数据库的用户名。
-* `<password>`：连接数据库的密码。
-* `<database>`：要连接的数据库名称。
-* `authSource`：指定用于认证的数据库（通常为 `admin`）。
-
-***
-
-## 公开 MongoDB 到公网
-
-默认情况下，MongoDB 只监听本地 `127.0.0.1`。如需让外部设备访问，需要修改绑定地址。
-
-### 步骤
-
-1. 编辑配置文件`mongod.conf`，找到 `net` 配置项并修改`bindIp`：
-   ```yaml
-   net:
-     port: 27017 # 你可以根据需要更改端口
-     bindIp: 0.0.0.0
-   ```
-   这样会允许所有 IP 访问 MongoDB。
-2. 重启 MongoDB 服务。
-3. 确保防火墙已开放 27017 端口，并设置安全规则，避免暴露数据库到不可信网络。
-
-<Callout title="注意" type="error">
-  **安全提示**：强烈建议开启认证、设置强密码，并限制访问来源 IP。
-</Callout>
-
-
-# Node.js 安装 (/docs/start/install/nodejs)
-
-## 安装 Node.js
-
-### Windows
-
-1. 访问 [Node.js 官方下载页面](https://nodejs.org/zh-cn/download)。
-2. 点击 Windows Installer (.msi) 下载适用于 Windows 的安装包。
-3. 运行下载的安装程序，按照提示完成安装。
-
-### macOS & Linux
-
-前往 [Node.js 官方网站](https://nodejs.org/zh-cn/download) 下载适用于你操作系统的安装包。
-
-或者，你也可以使用包管理器安装 Node.js：
-
-* **macOS**（使用 Homebrew）：
-
-  ```bash
-  brew install node
-  ```
-* **Ubuntu/Debian**：
-
-  ```bash
-  sudo apt update
-  sudo apt install -y nodejs npm
-  ```
-
-
-# Telegram API 获取 (/docs/start/install/tgapi)
-
-## 获取 Telegram API ID 和 API Hash
-
-要使用 Fuyu-TDBot，您需要从 Telegram 获取 `API ID` 和 `API Hash`。以下是获取这些信息的步骤：
-
-内容来源于 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)。
-
-### 获取api\_id
-
-为了获取 `API ID` 并使用 Telegram API 开发您自己的应用程序，您需要执行以下作：
-
-* 使用官方应用程序注册 Telegram。
-* 登录您的 Telegram 核心：[https://my.telegram.org。](https://my.telegram.org。)
-* 转到 `API development tools` 并填写表格。
-* 您将获得基本地址以及用户授权所需的`api_id`和`api_hash`参数。
-* 目前，每个号码只能注册一个`api_id`。
-
-TG将向您在此过程中使用的电话号码发送重要的开发者通知，因此请使用连接到您活动 Telegram 帐户的最新号码。
-
-### 使用 api\_id
-
-在使用 MTProto Telegram API 之前，请注意以下事项：
-Telegram
-
-* 所有 API 客户端库都受到严格监控，以防止滥用。
-
-* 如果你使用 Telegram API 进行刷屏、垃圾信息、伪造频道的订阅数或观看数，你将被永久封禁。
-
-* 由于 Telegram API 滥用严重，所有使用非官方 Telegram API 客户端登录的账户都会被自动置于观察状态，以防止违反服务条款。
-
-* 如果你没有违反服务条款，但在使用 API 后你的账户被封禁，请发邮件至 [recover@telegram.org](mailto:recover@telegram.org)，解释你使用 API 的意图，请求解封。
-
-请注意，邮件需要人工审核，因此自动生成的邮件可能会被检测并封禁。
+> 提示：封装函数出错时会抛出异常，请使用 `try/catch` 处理。
