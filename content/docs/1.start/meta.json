@@ -3,6 +3,14 @@
   "description": "介绍如何使用 Fuyu-TDBot",
   "icon": "Compass",
   "root": true,
-  "pages": ["index", "quickstart", "install", "---命令---", "cmd"],
+  "pages": [
+    "index",
+    "quickstart",
+    "install",
+    "---命令---",
+    "cmd",
+    "---插件---",
+    "plugin"
+  ],
   "defaultOpen": true
 }

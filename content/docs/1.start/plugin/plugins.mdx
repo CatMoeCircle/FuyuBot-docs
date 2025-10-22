@@ -1,0 +1,35 @@
+---
+title: 插件仓库
+description: Fuyu-TDBot 插件仓库
+---
+## 插件仓库
+<GithubInfo
+  owner="CatMoeCircle"
+  repo="FuyuBot-plugins"
+/>
+
+Fuyu-TDBot 官方插件仓库，包含多个实用插件，方便用户根据需求进行安装和使用。
+
+插件功能介绍请查看[插件仓库 README](https://github.com/CatMoeCircle/FuyuBot-plugins?tab=readme-ov-file#fuyubot-plugins)
+
+
+### 仓库目录结构
+<Files>
+  <Folder name="plugins (插件目录)" defaultOpen>
+    <File name="examplePlugin.ts (单文件插件)" />
+    <Folder name="anotherPlugin (多文件插件)" defaultOpen>
+      <File name="index.ts (入口文件)" />
+      <File name="package.json" />
+    </Folder>
+  </Folder>
+  <Folder name="scripts">
+    <File name="termux.sh" />
+  </Folder>
+</Files>
+
+单文件的为单文件插件，文件夹形式的为文件夹插件。
+
+<Callout title="添加插件" type="success">
+ - **单文件插件**：将 `examplePlugin.ts` 文件放置在 `plugins` 目录下。
+ - **文件夹插件**：将整个 `anotherPlugin` 文件夹放置在 `plugins` 目录下。
+</Callout>

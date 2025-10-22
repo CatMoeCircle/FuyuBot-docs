@@ -1,0 +1,33 @@
+---
+title: 添加插件
+description: Fuyu-TDBot 添加插件
+---
+## 插件加载
+
+Fuyu-TDBot 支持插件化扩展，您可以通过编写插件来添加新功能。插件可以是任何 TypeScript 文件，只需将其放置在 `plugins` 目录下即可。
+
+件**：包含多个 TypeScript 文件和一个 `index.ts` 入口文件，通常放在一个子目录中，例如 `anotherPlugin`。
+
+### 插件目录结构
+目前，Fuyu-TDBot 支持两种类型的插件：
+- **单文件插件**：只需一个 TypeScript 文件，通常命名为 `examplePlugin.ts`。
+- **文件夹插件**：通常为一个文件夹，包含多个 TypeScript 文件和一个 `index.ts` 入口文件，通常放在一个子目录中，例如 `anotherPlugin`。
+
+<Files>
+  <Folder name="src">
+    <File name="index.ts" />
+  </Folder>
+  <Folder name="plugins" defaultOpen>
+    <File name="examplePlugin.ts (单文件插件)" />
+    <Folder name="anotherPlugin (多文件插件)" defaultOpen>
+      <File name="index.ts (入口文件)" />
+      <File name="package.json" />
+    </Folder>
+  </Folder>
+  <File name="package.json" />
+</Files>
+
+<Callout title="添加插件" type="success">
+ - **单文件插件**：将 `examplePlugin.ts` 文件放置在 `plugins` 目录下。
+ - **文件夹插件**：将整个 `anotherPlugin` 文件夹放置在 `plugins` 目录下。
+</Callout>
