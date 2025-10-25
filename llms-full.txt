@@ -969,14 +969,14 @@ runHandlers = {
 
 ```vue title="template.vue"
 <template>
-  {/* 不生效部分 */}
-  {/* [!code word:box] */}
+  <!-- 不生效部分  -->
+  <!-- [!code word:box] -->
   <div class="box" style="display: flex;">
     {{ title }}
   </div>
   <div style="display: flex;">
-  {/* 不生效部分 */}
-  {/* [!code highlight] */}
+  <!-- 不生效部分 -->
+  <!-- [!code highlight] -->
     {{ newtitle }}
   </div>
   <div v-for="value in fortest" :key="value" style="display: flex;">
