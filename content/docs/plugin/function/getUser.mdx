@@ -23,7 +23,7 @@ description: 通过 TDLib 获取用户详细资料
 可以使用 TDLib 的 `getUser` 方法来获取用户的详细信息。以下是一个示例代码，展示如何在插件中实现这一功能：
 
 ```ts title="UserInfo.ts"
-import { getUser } from "@TDLib/function/user.ts";
+import { getUser } from "@TDLib/function/get.ts";
 
 const user = await getUser(client, user_id);
 ```

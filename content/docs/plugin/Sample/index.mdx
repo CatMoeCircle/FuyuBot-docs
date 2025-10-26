@@ -7,10 +7,36 @@ description: 帮助你快速开始
 
 ### 1 必需字段（实例属性）
 
-- `name: string`：插件唯一名称。
-- `type: "user" | "bot" | "general"`：插件适用的运行主体。
-- `version: string`：插件版本号。
-- `description: string`：简短描述。
+<TypeTable
+  type={{
+    name: {
+      description: '插件唯一名称',
+      required: true,
+      type: 'string',
+    },
+    type: {
+      description: '插件适用的运行主体',
+      type: <code>"user" | "bot" | "general"</code>,
+      default: <code>"general"</code>,
+    },
+    version: {
+      description: '插件版本号',
+      required: true,
+      type: 'string',
+    },
+    description: {
+      description: '简短描述',
+      required: true,
+      type: 'string',
+    },
+    longDescription: {
+      description: '可选的长描述',
+      type: 'string',
+    },
+
+
+  }}
+/>
 
 ```ts title="Examples.ts"
 import { Plugin } from "@plugin/BasePlugin.ts";

@@ -23,7 +23,7 @@ description: 通过 TDLib 获取对话的基本信息
 可以使用 TDLib 的 `getChat` 方法来获取对话的基本信息。以下是一个示例代码，展示如何在插件中实现这一功能：
 
 ```ts title="ChatInfo.ts"
-import { getChat } from "@TDLib/function/chat.ts";
+import { getChat } from "@TDLib/function/get.ts";
 
 const chat = await getChat(client, chat_id);
 ```

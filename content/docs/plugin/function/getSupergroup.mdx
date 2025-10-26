@@ -23,7 +23,7 @@ description: 通过 TDLib 获取超级群组的基本信息。
 可以使用 TDLib 的 `getSupergroup` 方法来获取超级群组的基本信息。以下是一个示例代码，展示如何在插件中实现这一功能：
 
 ```ts title="SupergroupInfo.ts"
-import { getSupergroup } from "@TDLib/function/supergroup.ts";
+import { getSupergroup } from "@TDLib/function/get.ts";
 
 const supergroup = await getSupergroup(client, supergroup_id);
 ```
