@@ -1,0 +1,50 @@
+---
+title: 插件常见问答 (FAQ)
+description: 插件开发与排查常见问题的问答集合
+---
+
+## 插件常见问答（FAQ）
+
+- **问：插件没有被加载，应该如何排查？**
+	- 答：确认插件目录或文件名不以 `.` 开头，且不在 `node_modules` 目录下。检查插件入口是否存在并被正确引用；确保项目启动或构建脚本没有忽略该目录。
+
+- **问：报错“缺少默认导出”，如何修复？**
+	- 答：确保你的模块使用 `export default` 导出插件实例或类，且导出的类继承自 `Plugin`。例如：
+
+	```ts
+    import { Plugin } from "@plugin/BasePlugin.ts";
+	export default class MyPlugin extends Plugin {
+		// ...实现...
+	}
+	```
+
+- **问：发送消息后返回消息对象中的id不能用**
+	- 答：发送消息后返回的是正在发送中的消息对象,发送成功的你需要监听 `updateMessageSendSucceeded` 更新，该事件会包含正式的消息 ID 和旧消息 ID 和最终状态；不要仅依赖发送中的消息值作为最终消息。
+    - 因此我们封装了一个 `sendMessage` 的函数，来帮助你发送消息并等待发送成功的结果, 这个方法精简了调用流程并直接返回最终的消息对象，优化了原版中发送消息的复杂程度,支持参数你可以在 `src\TDLib\types\message.d.ts` 中 `sendMessage` 找到。示例用法如下： 
+    ```ts
+    import { sendMessage } from "@TDLib/function/message.ts";
+
+    const result = await sendMessage(client, chatId, {
+      text: "hello world",
+    });
+    ```
+
+- **问：调用 TDLib 原生方法失败，去哪查文档？**
+	- 答：参考官方 TDLib 方法文档： https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html ，确认传参、类型与调用方式符合 TDLib 要求。
+    ```ts
+    const result = await client.invoke({
+      _: "sendMessage",
+      chat_id: chatId,
+      input_message_content: {
+        _: "inputMessageText",
+        text: {
+          _: "formattedText",
+          text: "hello world",
+        },
+      },
+    });
+    ```
+
+- **问：我想看更多示例或扩展插件框架，有建议吗？**
+	- 答： 示例中有若干示例，阅读这些示例可以快速上手；如有功能建议或补充示例，欢迎在 [文档仓库](https://github.com/CatMoeCircle/FuyuBot-docs) 提交 PR 和 [主仓库](https://github.com/CatMoeCircle/Fuyu_TDBot) 提交 issue，我们会持续完善文档和示例库。
+
