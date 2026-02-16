@@ -58,18 +58,53 @@ pnpm start
 * [cron](https://github.com/kelektiv/node-cron#readme) - 定时任务
 
 
-# 常见问题排查 (/docs/plugin/2)
+# 插件常见问答 (FAQ) (/docs/plugin/FAQ)
 
-## 常见问题排查
+## 插件常见问答（FAQ）
 
-* **未被加载**：确认文件/文件夹未以 `.` 开头且不为 `node_modules`。
-* **缺少默认导出**：确保 `export default` 的类继承自 `Plugin`。
-* **发送消息只出现临时消息**：需要监听 `updateMessageSendSucceeded` 获取正式消息。
-* **调用原生 TDLib 方法失败**：参考 [TDLib Function 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
+* **问：插件没有被加载，应该如何排查？**
+  * 答：确认插件目录或文件名不以 `.` 开头，且不在 `node_modules` 目录下。检查插件入口是否存在并被正确引用；确保项目启动或构建脚本没有忽略该目录。
 
-***
+* **问：报错“缺少默认导出”，如何修复？**
 
-如需更多示例或想要扩展插件框架，欢迎在仓库提出 Issue 或 PR。祝开发顺利！
+  * 答：确保你的模块使用 `export default` 导出插件实例或类，且导出的类继承自 `Plugin`。例如：
+
+  ```ts
+  import { Plugin } from "@plugin/BasePlugin.ts";
+  export default class MyPlugin extends Plugin {
+  	// ...实现...
+  }
+  ```
+
+* **问：发送消息后返回消息对象中的id不能用**
+  * 答：发送消息后返回的是正在发送中的消息对象,发送成功的你需要监听 `updateMessageSendSucceeded` 更新，该事件会包含正式的消息 ID 和旧消息 ID 和最终状态；不要仅依赖发送中的消息值作为最终消息。
+  * 因此我们封装了一个 `sendMessage` 的函数，来帮助你发送消息并等待发送成功的结果, 这个方法精简了调用流程并直接返回最终的消息对象，优化了原版中发送消息的复杂程度,支持参数你可以在 `src\TDLib\types\message.d.ts` 中 `sendMessage` 找到。示例用法如下：
+  ```ts
+  import { sendMessage } from "@TDLib/function/message.ts";
+
+  const result = await sendMessage(client, chatId, {
+    text: "hello world",
+  });
+  ```
+
+* **问：调用 TDLib 原生方法失败，去哪查文档？**
+  * 答：参考官方 TDLib 方法文档： [https://core.telegram.org/tdlib/docs/classtd\_1\_1td\_\_api\_1\_1\_function.html](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html) ，确认传参、类型与调用方式符合 TDLib 要求。
+  ```ts
+  const result = await client.invoke({
+    _: "sendMessage",
+    chat_id: chatId,
+    input_message_content: {
+      _: "inputMessageText",
+      text: {
+        _: "formattedText",
+        text: "hello world",
+      },
+    },
+  });
+  ```
+
+* **问：我想看更多示例或扩展插件框架，有建议吗？**
+  * 答： 示例中有若干示例，阅读这些示例可以快速上手；如有功能建议或补充示例，欢迎在 [文档仓库](https://github.com/CatMoeCircle/FuyuBot-docs) 提交 PR 和 [主仓库](https://github.com/CatMoeCircle/Fuyu_TDBot) 提交 issue，我们会持续完善文档和示例库。
 
 
 # 插件开发约定 (/docs/plugin)
@@ -99,23 +134,7 @@ pnpm start
   * 顶层 `.ts` 文件，例如 `plugins/foo.ts`；（用于单文件插件）
   * 或目录内的 `index.ts`，如 `plugins/bar/index.ts`。
 
-### 1.1 特殊查询导入
-
-插件中可直接使用自定义 loader 暴露的查询参数：
-
-| 查询      | 说明           | 典型用途               |
-| ------- | ------------ | ------------------ |
-| `?file` | 返回文件的绝对路径字符串 | 传递给本地 API、原生上传等    |
-| `?raw`  | 返回文件内容文本     | 嵌入模板、Markdown、JSON |
-
-示例：
-
-```ts
-import filePath from "../assets/logo.png?file";
-import readmeText from "../README.md?raw";
-```
-
-### 1.2 路径别名导入
+### 1.1 路径别名导入
 
 项目配置了多个路径别名来简化导入路径，提高代码可读性。无论你在项目的哪个位置，都可以使用这些别名进行绝对路径导入：
 
@@ -1126,21 +1145,21 @@ Fuyu-TDBot 支持通过以下消息开头触发命令：
 
 ## 自带命令
 
-Fuyu-TDBot 支持以下命令：
+Fuyu-TDBot-plugin 支持以下命令：
 
-| 命令          | 描述            | 权限   | 可回应场景 |
-| ----------- | ------------- | ---- | ----- |
-| `/start`    | start命令       | 所有用户 | 全部    |
-| `/help`     | 帮助命令 列出所有可用命令 | 所有用户 | 全部    |
-| `/log`      | 获取日志文件        | 管理员  | 全部    |
-| `/config`   | 配置管理          | 管理员  | 全部    |
-| `/plugin`   | 插件管理命令        | 管理员  | 全部    |
-| `/setadmin` | 设置管理员         | 主人   | 全部    |
+| 命令        | 描述            | 权限   | 可回应场景 |
+| --------- | ------------- | ---- | ----- |
+| `/start`  | start命令       | 所有用户 | 全部    |
+| `/help`   | 帮助命令 列出所有可用命令 | 所有用户 | 全部    |
+| `/log`    | 获取日志文件        | 管理员  | 私聊    |
+| `/config` | 配置管理          | 管理员  | 私聊    |
+| `/plugin` | 插件管理命令        | 管理员  | 全部    |
+| `/admin`  | 设置管理员         | 主人   | 全部    |
 
 ## 注意事项
 
 <Callout type="warning" title="注意">
-  如果你使用的 `User` 账户登录 即使命令权限为 `所有用户` 的情况下,也只会回应 `主人` 和 `管理员` 以及 `自身` 的命令请求,其他用户的命令请求会被忽略。使用命令 /setadmin add `<用户ID>` 可以添加管理员。
+  如果你使用的 `User` 账户登录 即使命令权限为 `所有用户` 的情况下,也只会回应 `主人` 和 `管理员` 以及 `自身` 的命令请求,其他用户的命令请求会被忽略,防止回复他人命令刷屏。使用命令 /setadmin add `<用户ID>` 可以添加管理员。
 
   如果你使用的 `Bot` 账户登录 则不会有此限制。
 </Callout>
