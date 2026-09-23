@@ -2,39 +2,45 @@ import { cn } from '../lib/cn';
 import { Star } from 'lucide-react';
 import { type AnchorHTMLAttributes } from 'react';
 
-async function getRepoStarsAndForks(
+async function getRepoStars(
   owner: string,
   repo: string,
   token?: string,
-): Promise<{
-  stars: number;
-  forks: number;
-}> {
+): Promise<number | null> {
   const endpoint = `https://api.github.com/repos/${owner}/${repo}`;
   const headers = new Headers({
-    'Content-Type': 'application/json',
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'FuyuBot-docs',
   });
 
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const authToken = token ?? process.env.GITHUB_TOKEN;
+  if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
 
-  const response = await fetch(endpoint, {
-    headers,
-    next: {
-      revalidate: 60,
-    },
-  } as RequestInit);
+  try {
+    // 降低未认证/限流场景下的请求频率
+    const response = await fetch(endpoint, {
+      headers,
+      next: {
+        revalidate: 3600,
+      },
+    } as RequestInit);
 
-  if (!response.ok) {
-    const message = await response.text();
+    if (!response.ok) {
+      // 限流或仓库不可用时降级，不拖垮整页渲染
+      console.warn(
+        `[GithubInfo] ${owner}/${repo} fetch failed: ${response.status}`,
+      );
+      return null;
+    }
 
-    throw new Error(`Failed to fetch repository data: ${message}`);
+    const data = (await response.json()) as { stargazers_count?: number };
+    return typeof data.stargazers_count === 'number'
+      ? data.stargazers_count
+      : null;
+  } catch (err) {
+    console.warn(`[GithubInfo] ${owner}/${repo} fetch error:`, err);
+    return null;
   }
-
-  const data = await response.json();
-  return {
-    stars: data.stargazers_count,
-    forks: data.forks_count,
-  };
 }
 
 export async function GithubInfo({
@@ -47,8 +53,7 @@ export async function GithubInfo({
   repo: string;
   token?: string;
 }) {
-  const { stars } = await getRepoStarsAndForks(owner, repo, token);
-  const humanizedStars = humanizeNumber(stars);
+  const stars = await getRepoStars(owner, repo, token);
 
   return (
     <a
@@ -68,10 +73,12 @@ export async function GithubInfo({
         </svg>
         {owner}/{repo}
       </p>
-      <p className="flex text-xs items-center gap-1 text-fd-muted-foreground">
-        <Star className="size-3" />
-        {humanizedStars}
-      </p>
+      {stars !== null ? (
+        <p className="flex text-xs items-center gap-1 text-fd-muted-foreground">
+          <Star className="size-3" />
+          {humanizeNumber(stars)}
+        </p>
+      ) : null}
     </a>
   );
 }
@@ -95,7 +102,7 @@ function humanizeNumber(num: number): string {
   }
 
   if (num < 1000000) {
-    // For numbers between 10,000 and 999,999, show as whole K (e.g., 10K, 999K)
+    // For numbers between 100,000 and 999,999, show as whole K (e.g., 10K, 999K)
     return `${Math.floor(num / 1000)}K`;
   }
 

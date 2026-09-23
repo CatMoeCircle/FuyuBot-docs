@@ -3,7 +3,7 @@ import type { MDXComponents } from 'mdx/types';
 import { Accordion, Accordions } from '@/components/accordion';
 import { TypeTable } from 'fumadocs-ui/components/type-table';
 import { File, Folder, Files } from 'fumadocs-ui/components/files';
-import { GithubInfo } from 'fumadocs-ui/components/github-info';
+import { GithubInfo } from '@/components/github-info';
 import * as TabsComponents from 'fumadocs-ui/components/tabs';
 
 
