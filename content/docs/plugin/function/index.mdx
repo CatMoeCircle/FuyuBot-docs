@@ -60,9 +60,11 @@ await editMessageText(client, chatId, msg.id, { text: "Edited text" });
 示例：
 
 ```ts
+import { Plugin } from "@fuyu-tdbot/plugin-api";
 import { sendMessage, getUser } from "@TDLib/function";
 
 export default class MyPlugin extends Plugin {
+  // 包插件：元数据在 package.json（含 pluginType）
   async onSomeEvent(update) {
     const user = await getUser(this.client, update.sender_user_id);
     await sendMessage(this.client, update.chat_id, {

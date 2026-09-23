@@ -17,9 +17,10 @@ Fuyu-TDBot 官方插件仓库，包含多个实用插件，方便用户根据需
 <Files>
   <Folder name="plugins (插件目录)" defaultOpen>
     <File name="examplePlugin.ts (单文件插件)" />
-    <Folder name="anotherPlugin (多文件插件)" defaultOpen>
+    <Folder name="anotherPlugin (包插件)" defaultOpen>
       <File name="index.ts (入口文件)" />
-      <File name="package.json" />
+      <File name="package.json（pluginType 清单）" />
+      <File name="tsconfig.json (可选)" />
     </Folder>
   </Folder>
   <Folder name="scripts">
@@ -27,9 +28,12 @@ Fuyu-TDBot 官方插件仓库，包含多个实用插件，方便用户根据需
   </Folder>
 </Files>
 
-单文件的为单文件插件，文件夹形式的为文件夹插件。
+- **单文件插件**：顶层 `.ts`，元数据在类字段，最后加载。  
+- **包插件**：目录 + `package.json`（`pluginType`），可声明依赖顺序，推荐新插件使用。
 
 <Callout title="添加插件" type="success">
  - **单文件插件**：将 `examplePlugin.ts` 文件放置在 `plugins` 目录下。
- - **文件夹插件**：将整个 `anotherPlugin` 文件夹放置在 `plugins` 目录下。
+ - **包插件**：将整个插件文件夹放置在 `plugins` 目录下，根目录执行 `pnpm install`。
 </Callout>
+
+迁移与开发约定见[插件开发约定](/docs/plugin)与[插件迁移指南](/docs/plugin/Migration)。

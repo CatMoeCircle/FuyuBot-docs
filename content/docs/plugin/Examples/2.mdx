@@ -6,14 +6,12 @@ description: 一个插件多个命令
 ### 多命令
 
 ```ts
-import { Plugin } from "@plugin/BasePlugin.ts";
+import { Plugin } from "@fuyu-tdbot/plugin-api";
 import type { Client } from "tdl";
 
 export default class BgmPlugin extends Plugin {
-  type = "插件适用的运行主体";
-  name = "插件唯一名称";
-  version = "插件版本号";
-  description = "简短描述";
+  // 包插件：元数据在 package.json（含 pluginType）
+  // 单文件插件可写：type / name / version / description 类字段
   constructor(client: Client) {
     super(client);
     this.cmdHandlers = {

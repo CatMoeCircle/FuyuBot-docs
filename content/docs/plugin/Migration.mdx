@@ -1,0 +1,277 @@
+---
+title: 插件迁移指南
+description: 将旧插件迁移到 package.json 清单 + 依赖加载 + plugin-api 类型包的新格式
+---
+
+# 插件迁移指南
+
+FuyuBot 插件系统已支持：
+
+- **包插件**：复用 `package.json` 的 `name`/`version`/`description`，用 `pluginType` / `pluginDependencies` 声明插件专有字段；
+- **类型包**：通过 `@fuyu-tdbot/plugin-api` 导入 `Plugin`、`PluginAPI` 等完整类型；
+- **依赖加载**：按 `pluginDependencies` 拓扑排序，依赖先加载；
+- **禁用预过滤**：读取包名阶段即排除已禁用插件，不执行 `import`；
+- **单文件兼容**：顶层 `.ts` 插件保持原样，**最后加载**。
+
+本页说明如何从旧格式迁到新格式。
+
+## 两种插件形态
+
+| 形态 | 位置 | 元数据 | 契约导入 | 加载顺序 |
+|------|------|--------|----------|----------|
+| **单文件插件** | `plugins/*.ts` | 类字段 `name` / `type` / … | 亦建议 `@fuyu-tdbot/plugin-api` | **最后加载** |
+| **包插件（推荐）** | `plugins/<dir>/` | `package.json` 的 `pluginType` | `@fuyu-tdbot/plugin-api` | **先加载**，可声明依赖 |
+
+<Callout title="迁移范围" type="info">
+  **目录插件**建议迁到包插件格式。**单文件插件**可继续使用类字段，无需强制迁移。
+</Callout>
+
+## 何时需要迁移
+
+出现以下情况时，建议迁移：
+
+- 插件是多文件目录，希望元数据与依赖可被框架在 **import 之前**读取；
+- 需要声明「先加载另一个插件」的依赖关系；
+- 希望在**独立仓库 / 独立 IDE 窗口**中开发，仍能解析 `Plugin` / `PluginAPI` 等类型；
+- 需要在禁用时**完全不加载模块**，避免占用内存。
+
+## 迁移步骤（目录插件）
+
+### 1. 补齐 / 修改 `package.json`
+
+在插件目录根添加（或更新）`package.json`：
+
+```json title="plugins/my-plugin/package.json"
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "我的插件",
+  "main": "index.ts",
+  "type": "module",
+  "pluginType": "general",
+  "dependencies": {
+    "@fuyu-tdbot/plugin-api": "workspace:*"
+  },
+  "peerDependencies": {
+    "tdl": "^8.0.0",
+    "tdlib-types": "*"
+  },
+  "devDependencies": {
+    "tdl": "^8.0.2",
+    "tdlib-types": "*"
+  }
+}
+```
+
+#### package.json 插件字段说明
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `name` | 是 | **运行时插件 id**：禁用列表、依赖声明、注册表键都用它 |
+| `pluginType` | 是 | `"user"` \| `"bot"` \| `"general"` |
+| `version` | 是 | 版本号 |
+| `description` | 是 | 简短描述（可为空字符串，但不能缺字段） |
+| `pluginDependencies` | 否 | **其他插件的 `name` 数组**，依赖会先加载 |
+
+<Callout title="name 必须稳定" type="warn">
+  禁用配置里写的是 package.json 的 <code>name</code>（例如 <code>adblock</code>）。改 <code>name</code> 会打断已有禁用列表与依赖声明。
+</Callout>
+
+#### 依赖其他插件
+
+```json
+{
+  "name": "ppx114514",
+  "version": "1.0.0",
+  "description": "…",
+  "pluginType": "general",
+  "pluginDependencies": ["puppeteer"]
+}
+```
+
+- 框架会按拓扑顺序加载：**依赖在前**；
+- 依赖缺失或被禁用时会告警，插件仍尝试加载；
+- 循环依赖会告警并跳过环上重复访问。
+
+### 2. 修改入口导入
+
+**旧：**
+
+```ts
+import { Plugin } from "@plugin/BasePlugin.ts";
+```
+
+**新：**
+
+```ts
+import { Plugin } from "@fuyu-tdbot/plugin-api";
+// 需要时：
+import type { PluginAPI, PluginInfo, CommandDef } from "@fuyu-tdbot/plugin-api";
+```
+
+### 3. 删除类上的元数据字段
+
+包插件的 `name` / `type` / `version` / `description` **全部由 `package.json` 注入**，类里不要再写一份。
+
+**旧 `index.ts`：**
+
+```ts
+import { Plugin } from "@fuyu-tdbot/plugin-api";
+import type { Client } from "tdl";
+
+export default class MyPlugin extends Plugin {
+  name = "我的插件";
+  type = "general";
+  version = "1.0.0";
+  description = "简短描述";
+
+  constructor(client: Client) {
+    super(client);
+    // ...
+  }
+}
+```
+
+**新 `index.ts`：**
+
+```ts
+import { Plugin } from "@fuyu-tdbot/plugin-api";
+import type { Client } from "tdl";
+
+export default class MyPlugin extends Plugin {
+  // name/version/description/pluginType 由 package.json 注入
+
+  constructor(client: Client) {
+    super(client);
+    // ...
+  }
+}
+```
+
+### 4. （推荐）添加 `tsconfig.json`
+
+便于单独打开插件目录做类型检查：
+
+```json title="plugins/my-plugin/tsconfig.json"
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["./**/*.ts"]
+}
+```
+
+### 5. 安装依赖
+
+在**框架仓库根目录**执行：
+
+```bash
+pnpm install
+```
+
+会把 `@fuyu-tdbot/plugin-api` 以 workspace 链到插件的 `node_modules`。
+
+### 6. 验证加载
+
+启动后日志中应出现插件名；也可用扫描校验脚本（若仓库提供）：
+
+```bash
+node --experimental-strip-types scripts/verify-plugin-scan.ts
+```
+
+期望：该插件出现在 **package plugins** 列表，而不是 legacy / single files。
+
+## 单文件插件：保持原样
+
+单文件插件**不需要** `package.json`，继续：
+
+```ts
+import { Plugin } from "@fuyu-tdbot/plugin-api";
+
+export default class ExamplePlugin extends Plugin {
+  name = "权限示例插件";
+  type = "general";
+  version = "1.0.0";
+  description = "演示命令权限和场景控制功能";
+
+  constructor(client: Client) {
+    super(client);
+    // ...
+  }
+}
+```
+
+加载时：
+
+1. 先加载全部**包插件**（按依赖拓扑）；
+2. 再加载无 `pluginType` 的旧目录（若有）；
+3. **最后**加载顶层单文件插件。
+
+## 禁用插件
+
+在配置的 `plugins.disabled` 数组中写入 **`name`（package.json）**（或单文件类字段的 `name`）：
+
+```json
+{
+  "plugins": {
+    "type": "plugins",
+    "disabled": ["adblock", "fuyu-plugins"]
+  }
+}
+```
+
+- **包插件**：扫描读到清单名后即跳过，**不会 `import`**，减少内存占用；
+- **单文件插件**：仍会在导入并实例化后根据 `name` 跳过注册（无法在读文件名时知道显示名）。
+
+## 加载顺序一览
+
+```text
+1. 包插件（package.json 含 pluginType）
+     └─ 按 pluginDependencies 拓扑排序，依赖在前
+2. 旧目录插件（有目录但无 pluginType）
+3. 单文件插件（plugins/*.ts）—— 最后
+```
+
+## 检查清单
+
+迁移完成后自检：
+
+- [ ] `package.json` 含 `name` / `version` / `description` / `pluginType`
+- [ ] `pluginDependencies` 使用的是其他插件的 `name`
+- [ ] 入口 `import { Plugin } from "@fuyu-tdbot/plugin-api"`
+- [ ] 类中**没有**重复的 name / version / description / pluginType
+- [ ] 框架根目录已 `pnpm install`
+- [ ] 启动日志中插件元数据正确
+- [ ] （可选）独立打开插件目录，`tsc` 能解析 `@fuyu-tdbot/plugin-api`
+
+## 仍依赖框架路径别名的部分
+
+`@fuyu-tdbot/plugin-api` 解决的是**插件契约类型**。以下别名仍由框架根 `tsconfig` / loader 提供，插件在**框架仓库内**运行时可继续使用：
+
+| 别名 | 用途 |
+|------|------|
+| `@log/*` | 日志 |
+| `@TDLib/*` | TDLib 封装 |
+| `@db/*` | 配置 / 数据库 |
+| `@function/*` | 通用函数 |
+| `@utils/*` | 工具 |
+| `@plugin/*` | 框架内部插件工具（如 `inlineTools`） |
+
+将插件**整包拷出仓库**独立运行前，还需要框架提供对应的宿主 SDK 包；当前契约层（plugin-api）已按仓库外格式设计。
+
+## 常见问题
+
+**迁移后插件名变了 / 禁用失效？**  
+检查禁用列表是否仍使用旧 `name`；新 id 以 `name`（package.json） 为准。
+
+**报缺少 `@fuyu-tdbot/plugin-api`？**  
+在框架根执行 `pnpm install`，确认插件 `dependencies` 中有 `"@fuyu-tdbot/plugin-api": "workspace:*"`。
+
+**依赖插件没先加载？**  
+确认依赖方的 `name`（package.json） 拼写完全一致，且依赖未被禁用。
+
+**单文件还需要改成 package.json 吗？**  
+不需要。单文件继续用类字段即可；只有目录 / 多文件插件推荐包格式。
+
+更多示例见[快速模板](/docs/plugin/Examples/1)与[插件开发约定](/docs/plugin)。

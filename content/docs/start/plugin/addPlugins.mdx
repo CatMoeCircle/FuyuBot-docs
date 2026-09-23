@@ -4,14 +4,14 @@ description: Fuyu-TDBot 添加插件
 ---
 ## 插件加载
 
-Fuyu-TDBot 支持插件化扩展，您可以通过编写插件来添加新功能。插件可以是任何 TypeScript 文件，只需将其放置在 `plugins` 目录下即可。
+Fuyu-TDBot 支持插件化扩展，您可以通过编写插件来添加新功能。插件放在 `plugins` 目录下，由 `PluginManager` 在启动时扫描加载。
 
-件**：包含多个 TypeScript 文件和一个 `index.ts` 入口文件，通常放在一个子目录中，例如 `anotherPlugin`。
+### 插件类型
 
-### 插件目录结构
-目前，Fuyu-TDBot 支持两种类型的插件：
-- **单文件插件**：只需一个 TypeScript 文件，通常命名为 `examplePlugin.ts`。
-- **文件夹插件**：通常为一个文件夹，包含多个 TypeScript 文件和一个 `index.ts` 入口文件，通常放在一个子目录中，例如 `anotherPlugin`。
+目前支持两种类型的插件：
+
+- **单文件插件**：一个 TypeScript 文件，通常命名为 `examplePlugin.ts`，元数据写在类字段上，**最后加载**。
+- **包插件（多文件，推荐）**：子目录包含 `index.ts` 入口和带 `pluginType` 的 `package.json`，元数据在 `package.json` 中声明，可配置插件依赖并按序加载。
 
 <Files>
   <Folder name="src">
@@ -19,9 +19,10 @@ Fuyu-TDBot 支持插件化扩展，您可以通过编写插件来添加新功能
   </Folder>
   <Folder name="plugins" defaultOpen>
     <File name="examplePlugin.ts (单文件插件)" />
-    <Folder name="anotherPlugin (多文件插件)" defaultOpen>
+    <Folder name="anotherPlugin (包插件)" defaultOpen>
       <File name="index.ts (入口文件)" />
-      <File name="package.json" />
+      <File name="package.json（pluginType 清单）" />
+      <File name="tsconfig.json (可选)" />
     </Folder>
   </Folder>
   <File name="package.json" />
@@ -29,5 +30,13 @@ Fuyu-TDBot 支持插件化扩展，您可以通过编写插件来添加新功能
 
 <Callout title="添加插件" type="success">
  - **单文件插件**：将 `examplePlugin.ts` 文件放置在 `plugins` 目录下。
- - **文件夹插件**：将整个 `anotherPlugin` 文件夹放置在 `plugins` 目录下。
+ - **包插件**：将整个插件文件夹放置在 `plugins` 目录下，并确保 `package.json` 含 `pluginType` 字段。
 </Callout>
+
+### 加载顺序
+
+1. **包插件**（`package.json` 含 `pluginType`）— 按 `pluginDependencies` 拓扑排序，依赖在前  
+2. 旧目录插件（无 `pluginType`）  
+3. **单文件插件** — 最后加载  
+
+包插件禁用后在读取清单名时即跳过，不会执行 `import`。详见[插件迁移指南](/docs/plugin/Migration)。

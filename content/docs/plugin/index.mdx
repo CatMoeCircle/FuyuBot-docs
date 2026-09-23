@@ -10,45 +10,107 @@ description: 帮助你在 plugins/ 目录中快速编写、加载与调试自定
 - 注册命令、更新处理器以及可选的定时/手动运行任务；
 - 借助项目提供的 TDLib 封装函数提升开发效率。
 
+插件分两种形态：**包插件**（目录 + `package.json` 清单，推荐）与**单文件插件**（顶层 `.ts`，元数据写在类上）。从旧格式升级请看[插件迁移指南](/docs/plugin/Migration)。
+
 ## 1. 插件加载约定
 
-- **默认目录**：`PluginManager` 会扫描 `./plugins` 的顶层文件或文件夹。
-- **导出要求**：每个插件必须默认导出一个继承自 `Plugin` 的类，例如：
-
-  ```ts
-  import { Plugin } from "@plugin/BasePlugin.ts";
-
-  export default class MyPlugin extends Plugin {}
-  ```
-
-- **构造函数签名**：`constructor(client: Client)`，其中 `client` 是获取当前运行的 TDLib 客户端实例。
+- **默认目录**：`PluginManager` 扫描 `./plugins` 顶层条目。
+- **导出要求**：默认导出一个继承自 `Plugin` 的类。
 - **入口格式**：
-  - 顶层 `.ts` 文件，例如 `plugins/foo.ts`；（用于单文件插件）
-  - 或目录内的 `index.ts`，如 `plugins/bar/index.ts`。
+  - 单文件：`plugins/foo.ts`
+  - 目录：`plugins/bar/index.ts`（或 `package.json` 的 `main`）
 
-### 1.1 路径别名导入
+### 1.1 加载顺序
 
-项目配置了多个路径别名来简化导入路径，提高代码可读性。无论你在项目的哪个位置，都可以使用这些别名进行绝对路径导入：
+```text
+1. 包插件（package.json 含 pluginType）→ 按 pluginDependencies 拓扑，依赖在前
+2. 旧目录插件（无 pluginType）
+3. 顶层单文件插件 → 最后加载
+```
 
-| 别名          | 实际路径       | 用途说明           |
-| ------------- | -------------- | ------------------ |
-| `@log/*`      | `./log/*`      | 日志相关模块       |
-| `@plugin/*`   | `./plugin/*`   | 插件相关工具和类型 |
-| `@TDLib/*`    | `./TDLib/*`    | TDLib 封装和接口   |
-| `@type/*`     | `./types/*`    | 共享类型定义       |
-| `@function/*` | `./function/*` | 通用函数库         |
-| `@db/*`       | `./Database/*` | 数据库相关模块     |
+**禁用**：包插件在读取 `package.json` 的 `name` 后即排除，**不会 import**；配置里的禁用名与此一致。
+
+### 1.2 包插件（推荐）
+
+目录需带 `package.json`，复用 `name`/`version`/`description`，并用 `pluginType` / `pluginDependencies` 声明插件专有字段：
+
+```json title="plugins/my-plugin/package.json"
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "description": "简短描述",
+  "main": "index.ts",
+  "type": "module",
+  "pluginType": "general",
+  "dependencies": {
+    "@fuyu-tdbot/plugin-api": "workspace:*"
+  }
+}
+```
+
+入口通过包名获取契约类型：
+
+```ts
+import { Plugin, type PluginAPI } from "@fuyu-tdbot/plugin-api";
+import type { Client } from "tdl";
+
+export default class MyPlugin extends Plugin {
+  // name/version/description/pluginType 由 package.json 注入，类中不要再写
+
+  constructor(client: Client, api: PluginAPI) {
+    super(client);
+  }
+}
+```
+
+- `name`：运行时 id（禁用列表、依赖声明、注册键）。
+- `pluginDependencies`：填写**其他插件的** `name`，框架保证依赖先加载。
+- 契约包：`@fuyu-tdbot/plugin-api`（`Plugin`、`PluginAPI`、`PluginInfo`、`CommandDef` 等）。
+
+### 1.3 单文件插件
+
+无需 `package.json`，元数据写在类字段上，**最后加载**：
+
+```ts
+import { Plugin } from "@fuyu-tdbot/plugin-api";
+import type { Client } from "tdl";
+
+export default class MyPlugin extends Plugin {
+  name = "我的插件";
+  type = "general";
+  version = "1.0.0";
+  description = "简短描述";
+
+  constructor(client: Client) {
+    super(client);
+  }
+}
+```
+
+构造函数签名：`constructor(client: Client, api?: PluginAPI)`。
+
+### 1.4 路径别名导入
+
+框架仓库内可用下列别名（由根 `tsconfig` 与 `node/loader.ts` 解析）：
+
+| 别名          | 实际路径              | 用途说明                         |
+| ------------- | --------------------- | -------------------------------- |
+| `@log/*`      | `src/log/*`           | 日志                             |
+| `@plugin/*`   | `src/plugin/*`        | 框架插件内部工具（单文件契约亦可） |
+| `@TDLib/*`    | `src/TDLib/*`         | TDLib 封装和接口                 |
+| `@type/*`     | `src/types/*`         | 共享类型                         |
+| `@function/*` | `src/function/*`      | 通用函数                         |
+| `@db/*`       | `src/Database/*`      | 数据库 / 配置                    |
+| `@utils/*`    | `src/utils/*`         | 工具                             |
+
+**插件契约**（`Plugin` 等）优先使用包名 `@fuyu-tdbot/plugin-api`，便于日后独立仓库开发。
 
 #### 使用示例
 
 ```ts
 import logger from "@log/index.ts";
-import { Plugin } from "@plugin/BasePlugin.ts";
-
-// 导入 TDLib 工具
+import { Plugin } from "@fuyu-tdbot/plugin-api";
 import { sendMessage } from "@TDLib/function/message.ts";
-
-// 导入数据库
 import { getDatabase } from "@db/index.ts";
 ```
 

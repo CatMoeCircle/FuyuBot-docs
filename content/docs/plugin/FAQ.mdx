@@ -6,17 +6,33 @@ description: 插件开发与排查常见问题的问答集合
 ## 插件常见问答（FAQ）
 
 - **问：插件没有被加载，应该如何排查？**
-	- 答：确认插件目录或文件名不以 `.` 开头，且不在 `node_modules` 目录下。检查插件入口是否存在并被正确引用；确保项目启动或构建脚本没有忽略该目录。
+	- 答：确认插件目录或文件名不以 `.` 开头，且不在 `node_modules` 目录下。包插件检查 `package.json` 是否含 `name`/`version`/`description`/`pluginType`，入口 `main` 或 `index.ts` 是否存在。检查是否在 `plugins.disabled` 中（包插件会在读名单阶段直接跳过）。确保根目录已 `pnpm install`。
 
 - **问：报错“缺少默认导出”，如何修复？**
-	- 答：确保你的模块使用 `export default` 导出插件实例或类，且导出的类继承自 `Plugin`。例如：
+	- 答：确保你的模块使用 `export default` 导出插件类，且继承自 `Plugin`。包插件从契约包导入：
 
 	```ts
-    import { Plugin } from "@plugin/BasePlugin.ts";
+    import { Plugin } from "@fuyu-tdbot/plugin-api";
 	export default class MyPlugin extends Plugin {
 		// ...实现...
 	}
 	```
+
+	单文件插件也可用：
+
+	```ts
+    import { Plugin } from "@fuyu-tdbot/plugin-api";
+	export default class MyPlugin extends Plugin {}
+	```
+
+- **问：包插件和单文件插件有什么区别？**
+	- 答：包插件是带 `pluginType` 的目录，元数据在 `package.json`，可声明 `pluginDependencies` 做加载排序，并在禁用时不 import；单文件是顶层 `.ts`，元数据在类字段，**最后加载**。迁移步骤见[插件迁移指南](/docs/plugin/Migration)。
+
+- **问：禁用插件应该填哪个名字？**
+	- 答：填 `package.json` 的 `name`（包插件）或类字段 `name`（单文件）。例如 `"adblock"`、`"fuyu-plugins"`。
+
+- **问：如何让插件 A 在插件 B 之后加载？**
+	- 答：在 A 的 `pluginDependencies` 里写上 B 的 `name`，例如 `"pluginDependencies": ["puppeteer"]`。框架会按拓扑顺序先加载依赖。
 
 - **问：发送消息后返回消息对象中的id不能用**
 	- 答：发送消息后返回的是正在发送中的消息对象,发送成功的你需要监听 `updateMessageSendSucceeded` 更新，该事件会包含正式的消息 ID 和旧消息 ID 和最终状态；不要仅依赖发送中的消息值作为最终消息。
@@ -45,6 +61,8 @@ description: 插件开发与排查常见问题的问答集合
     });
     ```
 
+- **问：找不到 `@fuyu-tdbot/plugin-api`？**
+	- 答：在框架根目录执行 `pnpm install`，并确认插件 `package.json` 的 `dependencies` 含 `"@fuyu-tdbot/plugin-api": "workspace:*"`。独立仓库开发时改用 `file:` / `link:` / 发布版本号。
+
 - **问：我想看更多示例或扩展插件框架，有建议吗？**
 	- 答： 示例中有若干示例，阅读这些示例可以快速上手；如有功能建议或补充示例，欢迎在 [文档仓库](https://github.com/CatMoeCircle/FuyuBot-docs) 提交 PR 和 [主仓库](https://github.com/CatMoeCircle/Fuyu_TDBot) 提交 issue，我们会持续完善文档和示例库。
-
