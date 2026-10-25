@@ -36,7 +36,7 @@ $env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
 ## 凭据 [#凭据]
 
 <Callout type="warn">
-  **凭据一律不落盘**（`AGENTS.md` 约束 41）：`api_hash`、Bot Token、手机号、验证码、两步验证密码不得写进仓库任何文件、`fuyubot.toml`、测试夹具或日志。只允许两个来源——**环境变量**（上表那几个）与**交互式输入**（`fuyubot run` 问）。
+  **凭据一律不落盘**：`api_hash`、Bot Token、手机号、验证码、两步验证密码不得写进仓库任何文件、`fuyubot.toml`、测试夹具或日志。只允许两个来源——**环境变量**（上表那几个）与**交互式输入**（`fuyubot run` 问）。
 </Callout>
 
 - `api_id` **不是**凭据，写进配置没问题（`[telegram].api_id`）。

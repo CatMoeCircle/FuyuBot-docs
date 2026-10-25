@@ -55,14 +55,13 @@ zip 只在 `publish`（Linux runner）里生成，Windows runner 的 bash 没有
 `website/` 是静态导出（`output: 'export'`），产物 `out/`：
 
 ```powershell
-cd website
 pnpm install
-pnpm build        # → website/out/
+pnpm build        # → out/
 pnpm preview      # 本地静态服务器预览
 ```
 
 把 `out/` 交给任意静态托管即可；GitHub Pages 记得 `public/.nojekyll`（`_next/` 以 `_` 开头会被 Jekyll 吞掉），
 正式域名在**构建前**设 `NEXT_PUBLIC_SITE_URL`（绝对 URL 是烘进产物的）。
 
-发布前过一遍仓库的提交检查清单（`AGENTS.md`）：文档三份都更新（HANDOFF / pitfalls / ROADMAP）、
-`cargo build/test/fmt` 三条绿、没把凭据写进任何文件。
+发布前过一遍提交检查清单：文档站与仓库里的工程台账都更新、`cargo build/test/fmt` 三条绿、
+没把凭据写进任何文件。

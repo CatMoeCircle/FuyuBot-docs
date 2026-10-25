@@ -1,4 +1,4 @@
 :HL["/FuyuBot-docs/_next/static/chunks/336p0uuno-ejz.css","style"]
 2:[["children",{"s":"__PAGE__","h":160}]]
 1:[["children",{"s":"/_not-found","h":96,"c":"$Q2"}]]
-0:{"b":"konUg0x25wAeQ6tz8v8mc","t":{"t":{"s":"","h":80,"c":"$Q1"}}}
+0:{"b":"_r-CfpGyJ_DTEoEYxEhmp","t":{"t":{"s":"","h":80,"c":"$Q1"}}}

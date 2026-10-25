@@ -4,8 +4,7 @@
 宿主是**唯一**实现这张表的 crate（`fuyubot-loader`）。脚本插件（Python / JS / TS）不改变这个结构
 ——它们的 cdylib 里只多了一个子进程。
 
-硬约束在 [`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md)；
-本文只讲**结构与数据流**。
+本文只讲**结构与数据流**；构建、发布与排错见 [开发文档](/docs/dev/)。
 
 ## crate 依赖方向 [#crate-依赖方向]
 
@@ -27,13 +26,13 @@ fuyubot-sdk-script ──► fuyubot-plugin-api          Python / JS / TS 插件
 fuyubot-simplify   ──► fuyubot-tdlib-sys           TDLib 便捷封装（可选糖，重导 td_api）
 ```
 
-| 边 | 允许吗 | 依据 |
-| --- | --- | --- |
-| `fuyubot-core` → `fuyubot-tdlib` | 禁止 | AGENTS 约束 2 |
-| `fuyubot-abi` → `fuyubot-core` | 禁止 | 同上 |
-| `event` / `service` / `tool` / `middleware` 互相依赖 | 禁止 | AGENTS 约束 12 |
-| `fuyubot-tdlib-sys` → 任何 fuyu crate | 禁止（它是最底层） | AGENTS 约束 2 |
-| `fuyubot-loader` → 四个机制 + `tdlib` + `abi` + `core` | 允许（**只有它**） | AGENTS 约束 17 |
+| 边 | 允许吗 |
+| --- | --- |
+| `fuyubot-core` → `fuyubot-tdlib` | 禁止 |
+| `fuyubot-abi` → `fuyubot-core` | 禁止 |
+| `event` / `service` / `tool` / `middleware` 互相依赖 | 禁止（彼此不依赖） |
+| `fuyubot-tdlib-sys` → 任何 fuyu crate | 禁止（它是最底层） |
+| `fuyubot-loader` → 四个机制 + `tdlib` + `abi` + `core` | 允许（**只有它**） |
 
 组合只发生在两处：`HostRuntime::new`（把四个机制 `install` 进 `Context`）与 `HostRuntime` 里的
 15 个 `unsafe extern "C"` 桥。四个机制 crate 绝不彼此调用。
@@ -50,7 +49,7 @@ Kernel::new() → kernel.start()
 
 为什么不能反过来：`attach_tdlib` 之前 `td_send` 走「没接 TDLib」分支（请求只留档 + 合成请求号，
 起点 `1 << 48`），而插件在 `plugin_start` 里就发请求（模板与示例都这样）；分发排在插件加载之后，
-否则插件漏订阅（AGENTS 约束 31）。`--replay` / `--no-tdlib` 故意不 attach——回放是离线验证。
+否则插件漏订阅。`--replay` / `--no-tdlib` 故意不 attach——回放是离线验证。
 
 ## 主链路 [#主链路]
 
