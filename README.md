@@ -1,8 +1,8 @@
 # fuyubot 文档站
 
 用 [Fumadocs](https://fumadocs.dev)（Next.js + MDX）搭的文档站，**静态导出**（`out/`），不需要 Node 运行时。
-本仓库只放文档站源码；运行时本体在 [Fuyu-Bot](https://github.com/xiaoqvan/Fuyu-Bot)，
-插件 SDK 在 [FuyuBot-SDK](https://github.com/xiaoqvan/FuyuBot-SDK)。
+本仓库只放文档站源码；运行时本体在 [Fuyu-Bot](https://github.com/CatMoeCircle/Fuyu-Bot)，
+插件 SDK 在 [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK)。
 
 ```powershell
 pnpm install     # 一次就够

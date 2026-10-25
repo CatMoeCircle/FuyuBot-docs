@@ -6,7 +6,7 @@ export const docsImageRoute = '/og/docs';
 export const docsContentRoute = '/llms.mdx/docs';
 
 export const gitConfig = {
-  user: 'xiaoqvan',
+  user: 'CatMoeCircle',
   repo: 'Fuyu-Bot',
   branch: 'main',
 };
