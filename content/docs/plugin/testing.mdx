@@ -66,7 +66,7 @@ fuyubot run --replay examples\replay\new_message.json --plugin-dir <插件目录
 脚本插件在**另一个进程**里跑，反应要经管道回来，还可能捎带网络请求——窗口太短会把最终答复漏掉。
 
 <Callout type="info">
-  回放**故意不接 TDLib**（`AGENTS.md` 约束 38）：它要在任何机器上离线可跑，接了就要账号与网络。
+  回放**故意不接 TDLib**：它要在任何机器上离线可跑，接了就要账号与网络。
   所以回放能证明「插件收到更新后做出了正确判断、发出了正确请求」，**不能**证明真 Telegram 认这些参数。
 </Callout>
 

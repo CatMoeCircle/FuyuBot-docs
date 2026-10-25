@@ -5,16 +5,13 @@ description: 改框架本身：结构、构建测试、踩过的坑、发布
 
 这一节是给**改 fuyubot 仓库**的人看的，不是给用它写 bot 的人看的。
 
-**公开文档都在这个文档站**：结构、ABI、插件写法、使用方式。仓库里只剩两类东西——
-[`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md)（硬约束，公开）
-与随源码分发、**不入库**的工程台账：
+**公开文档都在这个文档站**：结构、ABI、插件写法、使用方式。
 
-| 东西 | 什么时候看 |
+| 看什么 | 在哪 |
 | --- | --- |
-| [`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md) | 改代码前必读：硬约束、依赖方向、凭据不许落盘、提交前检查清单 |
-| 仓库 `docs/HANDOFF.md`（本地，不入库） | 入口：当前状态、构建契约、每个 crate 有什么 |
-| 仓库 `docs/pitfalls.md` / `gaps.md` / `decisions.md`（本地，不入库） | 踩过的坑（编号即引用锚）/ 未验证缺口 / 拍板的决定 |
-| [架构与数据流](./architecture.mdx) | 结构与数据流（文档站内，最全） |
+| 结构与数据流 | [架构与数据流](./architecture.mdx) |
+| 构建、测试、发布 | 下面三页 |
+| 当前状态 / 构建契约 / 已知缺口 / 踩过的坑 | 仓库里随源码分发的工程台账（`docs/`，不入库，只给改代码的人接力用） |
 
 <Callout type="warn">
   仓库有一条硬规矩：**文档里出现的命令必须真跑过**，带输出的示例要抄真实输出。
