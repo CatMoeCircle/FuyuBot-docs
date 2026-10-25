@@ -20,13 +20,22 @@ pnpm preview     # 用静态服务器预览 out/（python -m http.server 3211）
   - 项目页挂在 `/FuyuBot-docs/` 下，构建时必须设 `NEXT_PUBLIC_BASE_PATH=/FuyuBot-docs`
     （`next.config.mjs` 读它，同时设 `basePath` 与 `assetPrefix`），否则 `/_next/...` 会 404；
     本地 dev / 自定义域名构建留空即可。
-  - 发布方式：`pnpm build` 之后把 **`out/` 的内容推到 `gh-pages` 分支**（Pages 的 source 就是它，
-    `build_type=legacy`）。仓库里没有自动部署的 workflow，这一步是手动的。
+  - 发布方式：**`out/` 的内容推到 `gh-pages` 分支**（Pages 的 source 就是它，`build_type=legacy`）。
+    这一步由 `.github/workflows/pages.yml` 自动做：`main` 一有推送就 `pnpm install --frozen-lockfile`
+    → `pnpm build` → 用 `peaceiris/actions-gh-pages` 覆盖 `gh-pages`；也可以在 Actions 页面
+    `workflow_dispatch` 手填 branch / tag 补发。`NEXT_PUBLIC_BASE_PATH` / `NEXT_PUBLIC_SITE_URL`
+    写在 workflow 的 `env` 里，所以 CI 构建天然带 basePath。
+  - 手动兜底：本地 `pnpm build` 后把 `out/` 推 `gh-pages` 依然有效（workflow 就是同一件事）。
   - `out/` 里的 `_next/` 以 `_` 开头，Jekyll 会忽略它 —— `public/.nojekyll` 已经放好，
     构建时会一起拷进 `out/`。404 由 `out/404.html` 兜底。
 - **绝对 URL**：OG 图 / 站点元数据需要一个正式域名，构建时设 `NEXT_PUBLIC_SITE_URL`
   （默认 `http://localhost:3000`；Pages 上是 `https://catmoecircle.github.io/FuyuBot-docs`）。
   `next build` 会把它烘进产物，所以要改就在**构建前**改。
+- **站点图标**：`app/favicon.ico`（16/32/48 三档合一个 ico）、`app/icon.png`（192）、
+  `app/apple-icon.png`（180），用的是 GitHub 组织 [CatMoeCircle](https://github.com/CatMoeCircle)
+  的头像。走 Next 的 app 目录文件约定，`basePath` 会自动加在 `<link rel="icon">` 上
+  （产物里是 `/FuyuBot-docs/icon.png?<hash>`），所以图标文件**别**挪到 `public/`——
+  那边不会被加 basePath。换头像时按这三个尺寸重新导一遍即可。
 
 ## 内容
 
@@ -59,7 +68,7 @@ pnpm preview     # 用静态服务器预览 out/（python -m http.server 3211）
   选择存 `localStorage`，也认 `?color=violet` 这种分享链接，最后一个是 neutral（去掉属性 = 原始灰）。
 - 每页 frontmatter 至少要有 `title` 和 `description`。
 - 站点信息（名字 / GitHub / 顶部一条「文档」入口）在 `lib/shared.ts` 与 `lib/layout.shared.tsx`
-  （品牌是「渐变圆点 + fuyubot」）；**四个分类不写在那里**——它们由 root folder 承担。
+  （品牌是「组织头像 + fuyubot」，头像就是 `app/icon.png` 那张，`<img>` 里手动拼了 basePath）；**四个分类不写在那里**——它们由 root folder 承担。
 - 工程交接文档（HANDOFF / 坑 / 决策 / 路线图）**不在本仓库**：它们跟运行时源码留在 Fuyu-Bot 仓库，
   每次改代码同步，不随文档站发布。
 
