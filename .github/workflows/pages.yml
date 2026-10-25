@@ -1,0 +1,80 @@
+name: Deploy docs to GitHub Pages (gh-pages)
+
+# 静态导出（next.config.mjs 里 output: 'export'）→ 推到 gh-pages 分支，
+# Pages 的 source 就是这个分支（build_type=legacy），不在 Actions 里走 deploy-pages。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的 branch / tag（默认 main）"
+        required: false
+        default: "main"
+
+permissions:
+  contents: write
+
+# 连续推文档时只留最新的那次产物，旧的构建自动取消。
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+# 项目页挂在 /FuyuBot-docs/ 下：basePath 与绝对 URL 都要在构建前给，
+# 这两个值会被 next build 烘进产物，构建后再改无效。
+env:
+  NEXT_PUBLIC_BASE_PATH: /FuyuBot-docs
+  NEXT_PUBLIC_SITE_URL: https://catmoecircle.github.io/FuyuBot-docs
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          persist-credentials: false
+
+      # pnpm 要先于 setup-node：后者的 cache: pnpm 需要 pnpm 已经在 PATH 上。
+      # 版本与本地一致（pnpm-workspace.yaml 用的是 v11 的 allowBuilds）。
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (static export → out/)
+        run: pnpm build
+
+      # 防手滑：产物不全就别覆盖线上站点。
+      - name: Verify export
+        run: |
+          test -f out/index.html
+          test -d out/_next
+          test -f out/404.html
+          test -f out/favicon.ico
+          test -f out/icon.png
+          test -f out/apple-icon.png
+          test -f out/.nojekyll || touch out/.nojekyll
+          du -sh out
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./out
+          publish_branch: gh-pages
+          # _next/ 以 _ 开头，Jekyll 会吞掉它：显式关掉 Jekyll（会一并写 .nojekyll）。
+          enable_jekyll: false
+          commit_message: "deploy: ${{ github.sha }}"
