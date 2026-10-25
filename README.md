@@ -16,9 +16,16 @@ pnpm preview     # 用静态服务器预览 out/（python -m http.server 3211）
 `pnpm build` 之后把 **`out/` 整个目录**丢给任意静态托管即可（GitHub Pages / Netlify / Cloudflare Pages / OSS / nginx）。
 没有任何服务端组件：`next start` 已从 scripts 里删掉，它跑不了静态导出。
 
-- **GitHub Pages**：`out/` 里的 `_next/` 以 `_` 开头，Jekyll 会忽略它 —— `public/.nojekyll` 已经放好，
-  构建时会一起拷进 `out/`。404 由 `out/404.html` 兜底。
-- **绝对 URL**：OG 图 / 站点元数据需要一个正式域名，构建时设 `NEXT_PUBLIC_SITE_URL`（默认 `http://localhost:3000`）。
+- **GitHub Pages**（现在的发布位置：<https://catmoecircle.github.io/FuyuBot-docs/>）：
+  - 项目页挂在 `/FuyuBot-docs/` 下，构建时必须设 `NEXT_PUBLIC_BASE_PATH=/FuyuBot-docs`
+    （`next.config.mjs` 读它，同时设 `basePath` 与 `assetPrefix`），否则 `/_next/...` 会 404；
+    本地 dev / 自定义域名构建留空即可。
+  - 发布方式：`pnpm build` 之后把 **`out/` 的内容推到 `gh-pages` 分支**（Pages 的 source 就是它，
+    `build_type=legacy`）。仓库里没有自动部署的 workflow，这一步是手动的。
+  - `out/` 里的 `_next/` 以 `_` 开头，Jekyll 会忽略它 —— `public/.nojekyll` 已经放好，
+    构建时会一起拷进 `out/`。404 由 `out/404.html` 兜底。
+- **绝对 URL**：OG 图 / 站点元数据需要一个正式域名，构建时设 `NEXT_PUBLIC_SITE_URL`
+  （默认 `http://localhost:3000`；Pages 上是 `https://catmoecircle.github.io/FuyuBot-docs`）。
   `next build` 会把它烘进产物，所以要改就在**构建前**改。
 
 ## 内容

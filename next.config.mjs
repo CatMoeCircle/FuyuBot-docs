@@ -2,6 +2,10 @@ import { createMDX } from 'fumadocs-mdx/next';
 
 const withMDX = createMDX();
 
+// GitHub Pages 是**项目页**，站点挂在 /FuyuBot-docs/ 下：构建时把它传给 basePath，
+// 否则 /_next/... 这些绝对路径会 404。本地 dev / 自定义域名构建留空即可。
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
@@ -10,6 +14,8 @@ const config = {
   // 搜索改用 `staticGET`（构建期把 orama 索引写成静态 JSON）。
   output: 'export',
   trailingSlash: true,
+  basePath,
+  assetPrefix: basePath || undefined,
   images: {
     unoptimized: true,
   },
