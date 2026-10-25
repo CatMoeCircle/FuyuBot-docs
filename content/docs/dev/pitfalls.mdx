@@ -3,8 +3,7 @@ title: 常见陷阱
 description: 编号即引用锚：这些坑真踩过，别再踩回去
 ---
 
-仓库里有一份完整台账 [`docs/pitfalls.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/main/docs/pitfalls.md)
-（**编号是跨文件引用锚，不许重排**）。这里挑最容易复发的几条。
+每条都**真踩过**。这里挑最容易复发的几类；仓库内部的台账编号是跨文件引用锚，只随源码分发，不在这里展开。
 
 ## ABI 与回调
 
@@ -38,4 +37,4 @@ description: 编号即引用锚：这些坑真踩过，别再踩回去
   改源码一律用编辑器工具，shell 只用来跑命令。
 - **`tar` 在 Windows runner 上要 POSIX 路径**（`/d/a/…`）：GNU tar 会把 `D:/…` 当成「连主机 D」。
 
-> 看全量（含症状、根因、规矩三段）去仓库 `docs/pitfalls.md`；新踩的坑要补进去并给新编号。
+> 新踩的坑要补进仓库的 `docs/pitfalls.md` 台账（随源码分发）并给新编号——编号是跨文件引用锚。
