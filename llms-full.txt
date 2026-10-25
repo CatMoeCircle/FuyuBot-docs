@@ -1,1966 +1,2801 @@
-# FuyuBot (/docs)
+# fuyubot-sdk 命令参考 (/docs/cli/fuyubot-sdk)
 
-# FuyuBot
+写插件用的 CLI，和运行时**完全分开**：它不碰账号、不加载 TDLib，也不需要 `tdjson`。
 
-一个基于 [Node.js](https://nodejs.org/zh-cn) + TypeScript + [TDLib](https://core.telegram.org/tdlib/docs/index.html) 的现代化 Telegram Bot 框架，支持插件化扩展，兼容 Bot 账号 与 用户账号（自走人形）
+```text
+fuyubot-sdk <COMMAND>
 
-<Callout title="注意" type="warn">
-  本项目使用了 Node.js 实验性功能 `--experimental-loader`，其行为可能随 Node
-  版本更改。
-</Callout>
-
-## 说明
-
-### 项目简介
-
-✨ 特性：
-
-* 🚀 基于 **TDLib**，支持原始调用功能齐全
-* 🧩 **插件系统**，模块化扩展
-* 👥 支持 **Bot 账号** 与 **用户账号（自走人形）**
-* 🔧 现代化开发：ESM + TypeScript
-* 🛠️ [插件开发文档](/docs/plugin)
-
-### 📦 安装需求
-
-在使用前，请确保已安装以下依赖环境：
-
-* **Node.js v22.6.0** 以上即可
-* **pnpm**(推荐，亦可使用 npm/yarn)
-* **MongoDB**(推荐使用 [MongoDB Community Server](https://www.mongodb.com/try/download/community),也可以使用自己的`MongoDB Server`)
-
-如果你想远程访问 MongoDB 请务必开启 **MongoDB 用户认证**,
-数据库 GUI 访问 desktop: [MongoDB Compass](https://www.mongodb.com/try/download/compass)
-Android: [Mongodb](https://github.com/vedfi/mondroid)
-
-### 🚀 快速开始
-
-```bash
-# 克隆项目
-git clone https://github.com/CatMoeCircle/Fuyu_TDBot.git
-cd Fuyu_TDBot
-
-# 安装依赖
-pnpm install -P
-
-# 启动
-pnpm start
+Commands:
+  init         生成插件脚手架（5 种语言）
+  codegen      把 ABI 绑定落盘（刷 C 头 / .pyi / .d.ts）
+  abi-version  显示 ABI 版本
+  td-methods   列 TDLib 方法
+  td-method    看某个方法的签名
+  check        静态检查产物（不加载、不运行）
 ```
 
-技术栈
+## `init` [#init]
 
-* [TDLib](https://core.telegram.org/tdlib) - Telegram Database Library
-* [tdl](https://github.com/eilvelia/tdl) - TDLib 的 JavaScript 包装器
-* [prebuilt-tdlib](https://github.com/eilvelia/tdl/blob/main/packages/prebuilt-tdlib/README.md) - 预构建的 TDLib 库
-* [systeminformation](https://www.npmjs.com/package/systeminformation) - 获取系统信息
-* [mongodb](https://github.com/mongodb/node-mongodb-native) - MongoDB driver
-* [axios](https://axios-http.com/) - 网络请求工具
-* [cron](https://github.com/kelektiv/node-cron#readme) - 定时任务
+```text
+fuyubot-sdk init <名字> --lang <rust|c|cpp|python|js> [--dir <DIR>]
+```
+
+生成到 `<dir>/plugins/<名字>/`；`--lang` 决定模板：
+
+| 语言 | 生成什么 |
+| --- | --- |
+| `rust` | 独立 crate（`Cargo.toml` 开头有空 `[workspace]`）+ `src/lib.rs`（`define_plugin!`） |
+| `c` / `cpp` | 源码 + `fuyubot_plugin.h`（从 `PLUGIN_HEADER` 落的盘，唯一权威源） |
+| `python` | `src/lib.rs`（`script_plugin!`）+ `plugin.py` + `fuyubot_plugin.py`(+`.pyi`) |
+| `js` | `src/lib.rs` + `plugin.js` + `fuyubot_plugin.js`(+`.d.ts`) |
+
+```text
+$ fuyubot-sdk init demo --lang rust
+已生成 rust 插件脚手架：plugins/demo
+下一步：用你自己的工具链编译它（cargo build --release / gcc -shared / …）
+```
+
+生成的 Rust 插件默认写 `fuyubot-plugin-api = "0.1.0"`（crates.io）。想对着 SDK 源码开发就设
+`FUYUBOT_SDK_PATH` 指向 SDK 仓库里放着 crate 的目录（`crates/`），生成器会改写成 `path = …`；
+没设且本地找不到源码时只写版本号。
+
+## `codegen` [#codegen]
+
+```text
+fuyubot-sdk codegen --lang <c|cpp|python|js> [--dir <DIR>]
+```
+
+刷新某门语言的 ABI 绑定文件到 `<dir>`：C / C++ 是 `fuyubot_plugin.h`，Python 是
+`fuyubot_plugin.py` + `.pyi`，JS 是 `fuyubot_plugin.js` + `.d.ts`。**会覆盖同名文件**。
+所有语言都来自同一份权威源（`fuyubot_abi::PLUGIN_HEADER` 与 `fuyubot-sdk-script` 里的桥），
+不是手抄的第二份。`--lang rust` 没有可生成的绑定，命令会说明。
+
+## `check` [#check]
+
+```text
+fuyubot-sdk check <路径>
+```
+
+**静态**读 PE / ELF / Mach-O 的导出表（用 `object`，**绝不 dlopen**——加载会在宿主进程里跑插件的
+初始化代码，那已经算「运行」了）。非零退出码 = 宿主会拒绝加载（缺 `plugin_init`，或根本不是动态库）。
+
+```text
+$ fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
+文件：target\debug\fuyubot_plugin_demo.dll
+格式：Pe / X86_64 / Dynamic
+导出符号：
+  [ok] plugin_init          必需
+  [ok] plugin_start
+  [ok] plugin_stop
+```
+
+<Callout type="warn">
+  `check` 静态看不到 `PluginHandle.abi_version`——版本是 `plugin_init` 的**返回值**，不是静态符号。
+  它只会如实报「宿主是 vN，插件的版本只能运行时判定」，**别把它当兼容性结论**。
+</Callout>
+
+## `abi-version` / `td-methods` / `td-method` [#abi-version--td-methods--td-method]
+
+```text
+$ fuyubot-sdk abi-version
+1
+
+$ fuyubot-sdk td-methods --filter sendMessage
+$ fuyubot-sdk td-method sendMessage
+```
+
+`td-methods` / `td-method` 吃的是**编译期**烤进二进制的真 `td_api.tl` 元数据（`TdApiSchema::compiled()`），
+不读文件、不联网。`--filter` 是子串匹配、忽略大小写；构造器不能当方法调，`td-method` 会明确拒绝。
+
+<Callout type="info">
+  TDLib 的方法名 ≠ Telegram Bot API 的：所有发送都是 `sendMessage` + `input_message_content`，
+  `sendPhoto` / `sendDocument` 之类在 TDLib 里不存在。写请求前先用 `td-method` 核一遍。
+</Callout>
+
+## 相关页面 [#相关页面]
+
+- 各语言怎么写：[插件总览](../plugin/index.mdx)
+- 装进插件目录：[调试与安装](../plugin/testing.mdx)
+- 环境变量（`FUYUBOT_SDK_PATH`）：[环境变量](../usage/env.mdx)
 
 
-# 插件常见问答 (FAQ) (/docs/plugin/FAQ)
+# fuyubot 命令参考 (/docs/cli/fuyubot)
 
-## 插件常见问答（FAQ）
+跑框架的那个 CLI。它就是运行时包里的 `fuyubot(.exe)`（从源码跑时是 `target/{debug,release}/fuyubot`）。
 
-* **问：插件没有被加载，应该如何排查？**
-  * 答：确认插件目录或文件名不以 `.` 开头，且不在 `node_modules` 目录下。包插件检查 `package.json` 是否含 `name`/`version`/`description`/`pluginType`，入口 `main` 或 `index.ts` 是否存在。检查是否在 `plugins.disabled` 中（包插件会在读名单阶段直接跳过）。确保根目录已 `pnpm install`。
+```text
+fuyubot <COMMAND>
 
-* **问：报错“缺少默认导出”，如何修复？**
+Commands:
+  init    初始化一个 fuyubot 项目（生成 fuyubot.toml 与插件目录）
+  run     起框架、加载插件
+  status  看这个目录上的实例在不在跑（读 .fuyubot/）
+  stop    停掉这个目录上跑着的实例
+  config  看配置：打印**生效值**（默认值 + 向上找到的那份文件）
+  plugin  插件管理
+```
 
-  * 答：确保你的模块使用 `export default` 导出插件类，且继承自 `Plugin`。包插件从契约包导入：
+## `init` [#init]
 
-  ```ts
-  import { Plugin } from "@fuyu-tdbot/plugin-api";
-  export default class MyPlugin extends Plugin {
-  	// ...实现...
-  }
-  ```
+```text
+fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
+```
 
-  单文件插件也可用：
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--dir` | `.` | 项目目录，生成 `<dir>/fuyubot.toml` 与 `<dir>/plugins/` |
+| `--name` | `fuyubot` | 只影响配置里的 `name` |
+| `--api-id` | `0` | TDLib api_id（不是秘密，可以写进配置）；`0` = 没配，`run` 会问 |
 
-  ```ts
-  import { Plugin } from "@fuyu-tdbot/plugin-api";
-  export default class MyPlugin extends Plugin {}
-  ```
+`init` **只写 `api_id`**：`api_hash` 是凭据，这个命令连参数都没有，配置里也没有这个字段。
+重复 `init` 会被挡住（不覆盖你改过的配置）。
 
-* **问：包插件和单文件插件有什么区别？**
-  * 答：包插件是带 `pluginType` 的目录，元数据在 `package.json`，可声明 `pluginDependencies` 做加载排序，并在禁用时不 import；单文件是顶层 `.ts`，元数据在类字段，**最后加载**。迁移步骤见[插件迁移指南](/docs/plugin/Migration)。
+```text
+$ fuyubot init --dir demo --name mybot --api-id 12345
+已生成 demo\fuyubot.toml
+插件目录：demo\plugins
+下一步：fuyubot-sdk init demo --lang rust（插件脚手架由开发 CLI 生成）
+```
 
-* **问：禁用插件应该填哪个名字？**
-  * 答：填 `package.json` 的 `name`（包插件）或类字段 `name`（单文件）。例如 `"adblock"`、`"fuyu-plugins"`。
+## `run` [#run]
 
-* **问：如何让插件 A 在插件 B 之后加载？**
-  * 答：在 A 的 `pluginDependencies` 里写上 B 的 `name`，例如 `"pluginDependencies": ["puppeteer"]`。框架会按拓扑顺序先加载依赖。
+```text
+fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--no-tdlib]
+            [--no-login] [--background] [--replay <REPLAY>] [--replay-wait <MS>]
+```
 
-* **问：发送消息后返回消息对象中的id不能用**
-  * 答：发送消息后返回的是正在发送中的消息对象,发送成功的你需要监听 `updateMessageSendSucceeded` 更新，该事件会包含正式的消息 ID 和旧消息 ID 和最终状态；不要仅依赖发送中的消息值作为最终消息。
-  * 因此我们封装了一个 `sendMessage` 的函数，来帮助你发送消息并等待发送成功的结果, 这个方法精简了调用流程并直接返回最终的消息对象，优化了原版中发送消息的复杂程度,支持参数你可以在 `src\TDLib\types\message.d.ts` 中 `sendMessage` 找到。示例用法如下：
-  ```ts
-  import { sendMessage } from "@TDLib/function/message.ts";
+| 参数 | 作用 |
+| --- | --- |
+| `--config` | 配置文件，默认 `fuyubot.toml`（缺这个文件时 `run` 会按模板自动生成一份） |
+| `--plugin-dir` | 覆盖 `[plugins].dir` |
+| `--no-tdlib` | 不接 TDLib，只加载插件 |
+| `--no-login` | 接 TDLib 但不走登录流程（已有 session 照样能用；CI / 容器用） |
+| `--background` | 派生无终端的子进程，stdout/stderr 进 `logs/fuyubot.log`，父进程等状态发布后返回 |
+| `--replay <文件>` | 把一批更新 JSON 灌进管线后退出：**不接 TDLib、不用账号** |
+| `--replay-wait <MS>` | 回放后等插件的静默窗口；不填按插件形态自选（脚本插件 2000，原生 150） |
 
-  const result = await sendMessage(client, chatId, {
-    text: "hello world",
-  });
-  ```
+`run` 不带 `--replay` 的顺序：自动 init → 拿单实例锁 → 问/读凭据 → attach TDLib → 加载全部插件 →
+发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 才开始分发。
+**登录这一步没有真账号端到端验过**，要立刻验插件就用 `--replay`。
 
-* **问：调用 TDLib 原生方法失败，去哪查文档？**
-  * 答：参考官方 TDLib 方法文档： [https://core.telegram.org/tdlib/docs/classtd\_1\_1td\_\_api\_1\_1\_function.html](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html) ，确认传参、类型与调用方式符合 TDLib 要求。
-  ```ts
-  const result = await client.invoke({
-    _: "sendMessage",
+```powershell
+.\fuyubot.exe run --config demo\fuyubot.toml                 # 前台，可交互登录
+.\fuyubot.exe run --config demo\fuyubot.toml --background    # 日志进 demo\logs\fuyubot.log
+.\fuyubot.exe run --replay ping.json --plugin-dir demo\plugins
+```
+
+后台运行**没有 stdin**：没有 session 又没有 `TG_BOT_TOKEN` 时会直接失败并把日志尾巴打出来——
+先用前台登录一次（session 落在 `data/`）。
+
+## `status` / `stop` [#status--stop]
+
+```powershell
+.\fuyubot.exe status --config demo\fuyubot.toml
+.\fuyubot.exe stop   --config demo\fuyubot.toml
+```
+
+```text
+demo：运行中
+  pid        64852
+  已运行     0 秒
+  版本       0.1.0
+  名字       mybot
+  插件       1 个
+  日志       demo\logs\fuyubot.log
+```
+
+`status` 只读 `<项目根>/.fuyubot/`，三态：运行中 / 启动中 / 没有运行中的实例（顺带报「上次」的 pid）。
+`stop` 是**优雅**的：写 `.fuyubot/stop` 请实例自己收摊（停接收循环 → 卸载插件 → 停内核 → 放锁），
+8 秒不理会才硬杀。
+
+```text
+已停止 mybot（pid 64852，优雅退出：插件 stop 与内核都已收摊）
+```
+
+## `config` [#config]
+
+```text
+fuyubot config [--config <CONFIG>]
+```
+
+打印**生效值**：默认值填好之后每一项到底是什么，外加「向上找到的那份 `fuyubot.toml`」。
+不加载插件、不接 TDLib、不建任何东西。
+
+```text
+$ fuyubot config --config demo\fuyubot.toml
+配置文件  demo\fuyubot.toml
+项目根    demo
+[bot]       name         = mybot
+[telegram]  account_type = bot
+[telegram]  api_id       = 12345
+[telegram]  data_dir     = demo\data
+[plugins]   dir          = demo\plugins
+[tdlib]     path         = 自动（TDLIB_TDJSON_PATH → 自带 → exe 同级 → 系统库 → 裸库名）
+[tdlib]     log_verbosity= 1
+凭据        api_hash / token / 手机号不读配置（TG_API_HASH 等环境变量或交互输入）
+```
+
+- 文件不存在时第一行会写「（不存在，下面全是默认值）」——`run` 就是这样起的，不骗人。
+- `account_type` 写错**不会**静默当 bot：那一行直接是 `⚠️ [telegram].account_type = "robot" 认不出来，只能写 "bot" 或 "user"`。
+- 没有 `get` / `set` / `path`：改配置用编辑器更直接，路径 `status` 第一行已经打了。
+
+## `plugin` [#plugin]
+
+| 命令 | 作用 |
+| --- | --- |
+| `fuyubot plugin list [--config …] [--plugin-dir <目录>]` | 列出插件目录里能加载的插件（会**真的加载一次**再看名字） |
+| `fuyubot plugin install <文件或工程目录> [--config …] [--plugin-dir <目录>]` | 把编好的产物（+ 同伴脚本）复制进插件目录 |
+
+```text
+$ fuyubot plugin list --plugin-dir demo\plugins
+已加载插件 mybot (demo\plugins\mybot.dll)
+
+$ fuyubot plugin install demo\plugins\mybot --plugin-dir demo\plugins
+已安装 demo\plugins\mybot.dll
+```
+
+传**工程目录**时会去 `<工程>/target/{release,debug}` 找产物，并把工程根目录的
+`.py` / `.js` / `.ts` / `.pyi` 一起拷走；传单个 `.dll` 时只扫 dll 旁边——**脚本插件请传目录**。
+workspace 成员的产物默认落在仓库根 `target/` 下，这种情况加 `--target-dir` 或直接指着产物装。
+
+## 相关页面 [#相关页面]
+
+- 配置字段：[配置文件](../usage/config.mdx)
+- 实例与后台运行：[运行与实例管理](../usage/run.mdx)
+- 回放的输出与等待窗口：[离线回放](../usage/replay.mdx)
+
+
+# CLI 总览 (/docs/cli)
+
+fuyubot 有两个命令行程序，职责严格分离，**都不编译、不打包插件**——编译归插件作者自己的工具链
+（`cargo build`、`cl /LD`、`gcc -shared`）。
+
+| CLI | 干什么 | 二进制 |
+| --- | --- | --- |
+| [`fuyubot`](./fuyubot.mdx) | 跑框架：`init` / `run` / `status` / `stop` / `config` / `plugin` | `fuyubot(.exe)` |
+| [`fuyubot-sdk`](./fuyubot-sdk.mdx) | 写插件：脚手架 / 生成绑定 / 查 TDLib 方法 / 静态检查 | `fuyubot-sdk(.exe)` |
+
+`fuyubot` 在运行时仓库的包里（旁边带着 `tdjson` 和内置插件目录 `plugins/`），`fuyubot-sdk` 在
+[FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK/releases) 的
+`fuyubot-sdk-<系统>-<架构>.zip` 里（不需要 `tdjson`）。从源码跑的等价写法是把子命令接在 `--` 之后：
+
+```bash
+cargo run -q -p fuyubot-cli     -- run --replay examples/replay/new_message.json
+cargo run -q -p fuyubot-sdk-cli -- abi-version
+```
+
+## 共同约定 [#共同约定]
+
+| 项 | 约定 |
+| --- | --- |
+| `--config <文件>` | 默认 `fuyubot.toml`；项目根 = 配置文件所在目录，`plugins/`、`data/`、`.fuyubot/` 都相对它 |
+| `--plugin-dir <目录>` | 覆盖配置里的 `[plugins].dir` |
+| 退出码 | `0` 成功；非零是失败（`fuyubot-sdk check` 非零 = 宿主会拒绝加载） |
+| 凭据 | **只走环境变量或交互式输入**，任何命令都不把它们写进文件（`TG_API_ID` / `TG_API_HASH` / `TG_BOT_TOKEN`） |
+| 输出语言 | 中文；`status` / `stop` 是给人看的，不要拿去解析（没有 `--json`） |
+
+## 命令速查 [#命令速查]
+
+```text
+fuyubot init [--dir .] [--name 名字] [--api-id N]      生成项目
+fuyubot run  [--config …] [--plugin-dir …] [--background] [--replay 文件]
+fuyubot status | stop [--config …]                     实例状态 / 优雅停止
+fuyubot config [--config …]                            打印生效配置（含默认值）
+fuyubot plugin list | install <路径>                    插件目录管理
+
+fuyubot-sdk init <名字> --lang <rust|c|cpp|python|js>
+fuyubot-sdk codegen --lang <…> [--dir …]               刷新 ABI 绑定
+fuyubot-sdk check <路径>                               静态查导出符号（不加载）
+fuyubot-sdk abi-version | td-methods [--filter s] | td-method <名字>
+```
+
+<Cards>
+  <Card title="fuyubot 命令参考" href="/docs/cli/fuyubot/" />
+  <Card title="fuyubot-sdk 命令参考" href="/docs/cli/fuyubot-sdk/" />
+</Cards>
+
+
+# 架构与数据流 (/docs/dev/architecture)
+
+结论先说：**一个宿主进程 + N 个动态库插件（cdylib）**。插件不认识 Rust，只认识 `HostApiVTable`；
+宿主是**唯一**实现这张表的 crate（`fuyubot-loader`）。脚本插件（Python / JS / TS）不改变这个结构
+——它们的 cdylib 里只多了一个子进程。
+
+硬约束在 [`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md)；
+本文只讲**结构与数据流**。
+
+## crate 依赖方向 [#crate-依赖方向]
+
+```text
+                          fuyubot-core                （Cordis 内核，不认识 Telegram）
+                        ┌──────┬──────┬──────┬──────┐
+                        │      │      │      │      │
+                   event  service  tool  middleware │     四个机制 crate 只依赖 core，彼此不依赖
+                        └──────┴──────┴──────┴──────┘
+                                    ▲
+fuyubot-abi ─────────────────────► fuyubot-loader ◄───── fuyubot-tdlib ──► fuyubot-tdlib-sys
+（不依赖 core / 机制 crate）        （唯一宿主层）              （加载/循环/授权）（类型/元数据/FFI）
+                                    ▲
+                              fuyubot-cli（二进制 fuyubot）
+
+插件侧（**在 FuyuBot-SDK 仓库**，通过 crates.io 依赖本仓的 fuyubot-abi）：
+fuyubot-plugin-api ──► fuyubot-abi                 Rust 插件只用这一个 crate
+fuyubot-sdk-script ──► fuyubot-plugin-api          Python / JS / TS 插件的 cdylib 用它
+fuyubot-simplify   ──► fuyubot-tdlib-sys           TDLib 便捷封装（可选糖，重导 td_api）
+```
+
+| 边 | 允许吗 | 依据 |
+| --- | --- | --- |
+| `fuyubot-core` → `fuyubot-tdlib` | 禁止 | AGENTS 约束 2 |
+| `fuyubot-abi` → `fuyubot-core` | 禁止 | 同上 |
+| `event` / `service` / `tool` / `middleware` 互相依赖 | 禁止 | AGENTS 约束 12 |
+| `fuyubot-tdlib-sys` → 任何 fuyu crate | 禁止（它是最底层） | AGENTS 约束 2 |
+| `fuyubot-loader` → 四个机制 + `tdlib` + `abi` + `core` | 允许（**只有它**） | AGENTS 约束 17 |
+
+组合只发生在两处：`HostRuntime::new`（把四个机制 `install` 进 `Context`）与 `HostRuntime` 里的
+15 个 `unsafe extern "C"` 桥。四个机制 crate 绝不彼此调用。
+
+## 启动顺序：先 attach TDLib，再 load 插件 [#启动顺序先-attach-tdlib再-load-插件]
+
+```text
+Kernel::new() → kernel.start()
+  → PluginLoader::new(kernel.context().clone())   // 装四个机制 + 生成 HostApiVTable
+  → pipeline.attach_tdlib(client)                 // 把 TdClient 挂进 HostRuntime（不起循环）
+  → loader.load_with_config(dll, {"script": …})   // 逐个 dlopen 插件
+  → pipeline.spawn_dispatch()                     // 拿到 ReceiveLoop，才开始分发
+```
+
+为什么不能反过来：`attach_tdlib` 之前 `td_send` 走「没接 TDLib」分支（请求只留档 + 合成请求号，
+起点 `1 << 48`），而插件在 `plugin_start` 里就发请求（模板与示例都这样）；分发排在插件加载之后，
+否则插件漏订阅（AGENTS 约束 31）。`--replay` / `--no-tdlib` 故意不 attach——回放是离线验证。
+
+## 主链路 [#主链路]
+
+```text
+插件 ── host.on / invoke / emit / use_middleware / …
+  ▼ HostApiVTable：18 个字段 = version / size / host_ctx + 15 个函数指针（全 Option，首参 host）
+  ▼ HostRuntime：把每个桥翻译成「事件总线 / 服务容器 / 工具表 / 中间件管线 / TdClient」
+  ├── td_invoke* ──► td_send：接了走 TdClient::send（注入 @extra）／没接就留档 + 合成请求号
+  ├── td_execute ──► HostRuntime::td_execute ──► TdClient::execute：**同步**，只给不碰网络的方法用
+  ▼
+TdClient::spawn_receive_loop ──► Routed
+  ├─ Update   ──► process_value：PreUpdate → 解析 @type → PreRoute → InPlugin → 双通道发布 → PostResponse
+  │               publish_update：emit("update", …)（兜底）+ emit(@type, …)（具体）
+  └─ Response ──► deliver_response：按 request_id / @extra 找到发起者 → emit_scoped(owner, "response", …)
+```
+
+`process`（吃 `&str`）只是 `process_value` 的前半段（解析 JSON 再交给它）；接收循环那条路
+本来就有 `Value`，所以走 `process_value`。
+
+| 阶段 | 数值 | 谁跑它 |
+| --- | --- | --- |
+| `Stage::PreUpdate` / `PreRoute` / `InPlugin` / `PostResponse` | 0 / 1 / 2 / 3 | `UpdatePipeline::process_value` |
+| `Stage::PreToolCall` / `PostToolCall` | 4 / 5 | **目前没有生产调用方**（只有 `fuyubot-middleware` 自己的测试） |
+
+六阶段的数值在 `fuyubot-abi::Stage`，与 `fuyubot-middleware::Stage` 一一对应，由 `runtime.rs` 的
+`stage_numbers_match_the_middleware_crate` 测试钉住。
+
+三条容易搞错的语义：
+
+- **归属是「额外定向」，不是「排除广播」**：`emit` 发给所有订阅者，`emit_scoped(owner, …)` 是
+  「全局 + 该归属」。响应因此对所有插件透明。
+- **中间件一条更新跑一遍，不是每个监听器跑一遍**：`InPlugin` 的产出就是所有监听器看到的版本
+  （按监听器各跑一遍的话，第 N 个会看到被改过 N 次的 payload）。
+- **过滤器里的 `event_type` 键只用来选通道**，不参与负载匹配；等响应写
+  `{"event_type":"response","request_id":N}`。
+
+## 注册作用域与卸载 [#注册作用域与卸载]
+
+`HostRuntime::plugin_scope()` 给这次加载分配一个 owner id，之后所有跨 ABI 的注册
+（订阅 / 工具 / 服务 / 中间件）都记在这个 owner 名下（`RegistrationKind` + `Registration`）。
+`scope.commit()` 保留；提前 drop（init 失败、start 报错、ABI 不匹配）或 `LoadedPlugin` 被 drop 时，
+`rollback_owner(owner)` 一次性撤掉这批注册；宿主自己（owner 0）不受影响。
+
+`LoadedPlugin` 的字段声明顺序就是卸载顺序：先 `plugin_stop`，再 `rollback_owner`，
+最后 `_lib: Library` 才 drop——到这一步动态库才真正卸载。
+
+**唯一的例外是 Go 的 c-shared 库**：它的运行时有线程与信号处理器，卸载后进程会 access violation
+（`0xC0000005`，而且崩在退出那一刻）。`PluginLoader` 用文件里的 Go buildinfo 魔数认出 Go 产物，
+对这类库 `plugin_stop` 与注册回滚照跑，但**故意不卸载那个 `Library`**，让它映射到进程退出。
+代价是「同一进程内反复加载同一个 Go 插件」不可靠（热重载路径），收益是 Go 插件能正常用。
+
+## 两种插件形态 [#两种插件形态]
+
+```text
+动态库插件（Rust / C / C++）——同一地址空间、同一批线程
+  导出 plugin_init / plugin_start / plugin_stop / plugin_free_string；回调 unsafe extern "C-unwind"
+  数据不走序列化管道：回调直接收到宿主的临时 NUL 结尾字符串（只在下一次宿主调用前有效）
+  代价是共享地址空间（崩了一起崩），收益是零拷贝、零协议
+
+脚本插件（Python / JS / TS）——一个插件 = 一个解释器子进程
+  plugin_start → Bridge::start：resolve_script(config_json)（配置里的 "script" 优先，否则用宏里写的名字）
+    → spawn（python / python3 / py，或 node / bun）：stdin/stdout = 管道，stderr = inherit
+    → pump 线程读脚本 stdout（一行一个 JSON）→ 等 {"op":"ready"}（超时 10 秒）
+  订阅回调 forward() 往子进程 stdin 写一行 JSON；宿主 ◄──▶ 桥 ◄── 一行一个 JSON ──▶ 解释器
+```
+
+| | 动态库插件 | 脚本插件 |
+| --- | --- | --- |
+| 进程 / 边界 / 语言 | 与宿主同进程；C ABI 函数调用；Rust / C / C++ | 一个插件一个子进程；stdin/stdout 一行一个 JSON；Python、JS、TS（Node ≥ 23.6 类型剥离） |
+| 脚本定位 | 不适用 | **脚本必须与 cdylib 同名同目录**（`find_script`；cargo 的 `lib` 前缀会被去掉） |
+| 启动时序 / 崩溃 | 同步；崩了拖垮宿主 | `plugin_start` 阻塞等脚本报 `ready`；子进程死，宿主记一条错 |
+| 已知天花板 | panic 靠 `C-unwind` + `catch_unwind` 接住 | 管道是同步写的：脚本一直不读 stdin 会拖住宿主那条线程 |
+
+脚本侧协议见 `fuyubot-sdk-script` 的 crate 文档；两门语言共用同一份 Rust 桥，
+所以「Python SDK 与 JS SDK 对 ABI 的理解」不可能漂移。
+
+## 四大机制与内核 [#四大机制与内核]
+
+```text
+core：lib.rs（Kernel：Created → Started → Stopped）/ context.rs（Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>）
+      effect.rs（Box<dyn FnOnce() + Send> 回滚守卫，#[must_use]，merge() 后注册者先撤销）
+      plugin.rs（Plugin trait + define_plugin!）/ manager.rs（PluginManager：load/load_all/unload/reload + DFS 三色拓扑排序）
+event：EventBus / Filter / SubscriptionHandle / EventContextExt
+service：ServiceContainer / ServiceHandle / ServiceContextExt
+tool：ToolDescriptor / ToolRegistry / ToolHandle / ffi 模块 / ToolContextExt
+middleware：Stage / Middleware / Next / Pipeline / MiddlewareHandle / MiddlewareContextExt
+```
+
+共用的三条约定：**回调错误类型由 core 定**（四个 crate 不能互相依赖，所以 `fuyubot_core::Result<T>`
+是全仓唯一允许 boxed error 的地方）；**与 Context 的集成 = `install(ctx)` + 扩展 trait**
+（返回的 `Effect` 要一直持有，否则服务立刻从 Context 消失）；**所有注册都返回句柄且 `#[must_use]`**
+（四个 Handle 内部都包着 `core::Effect`，drop 即回滚）。
+
+- **事件**：`emit` 在锁**外面**调回调，所以回调里再 `on` / `emit` / `off` 不会自锁；某个回调返回
+  `Err` 会**中断**本次广播并把错误抛出去。`Filter` 用点分路径（`"message.chat.id"`）做字段相等匹配。
+- **服务**：命名容器（跨语言插件报不出 Rust 的 `TypeId`）。同名重复注册报错；`get::<T>` 类型不匹配
+  返回 `None`，用 `contains` + `type_of` 区分「没注册」和「类型不对」。
+- **工具**：`call_tool` = 查表 → 权限门 → input_schema → 处理器 → output_schema。
+  `handler: Option<ToolHandlerFn>`，`None` 表示「只有元数据的声明型工具」；注册/注销用 `on_change`
+  广播（**不认识事件系统**，要不要转成事件总线由宿主层做）。
+- **中间件**：洋葱模型，`next.run(ctx)` 前是进入段、后是退出段。`run(stage, ctx)` 会**先复制层列表
+  再执行**，所以中间件里再 `use_middleware` 不会自锁；不调 `next.run` 就是不往下走。
+
+内核几条语义：**`Context` 只有 `&self`**（`provide` 返回 `Effect`，drop 即注销，必须持有）；
+**`Effect::merge` 是 LIFO**（`a.merge(b)` 撤销顺序 `b → a`）；**加载顺序由依赖决定，卸载是加载顺序
+的倒序**（`load_all` 报错会把本次已加载的卸掉，不留半加载）；**有依赖者时 `unload` 拒绝**
+（`HasDependents`，不级联）；`reload` 能工作是因为管理器存的是 `Arc<dyn Plugin>` 而不是 `Box`。
+
+## 绑定层与运行时（`fuyubot-tdlib-sys` / `fuyubot-tdlib`） [#绑定层与运行时fuyubot-tdlib-sys--fuyubot-tdlib]
+
+```text
+crates/fuyubot-tdlib-sys/  ← 绑定层（-sys）：只出类型，不做加载
+  build.rs：必需输入 td_api.tl 的获取 + 编译期两份产物（无条件执行，没有 feature 早退）
+  src/：build_support.rs（两个构建脚本共享的缓存/下载设施，#[path] 同一份）
+        ffi.rs（函数指针 + 符号名 + 指针形状 const assert）
+        tl_schema.rs（解析与 JSON 互转，build.rs 与运行时共用）
+        tl_codegen.rs + docs.rs（→ Rust 类型 / TL 标记 → rustdoc）
+        schema.rs（TdApiSchema）、td_api.rs（include! 生成物）
+crates/fuyubot-tdlib/  ← 运行时半边（依赖并重导出 sys）
+  build.rs：只管 vendored 动态库 + 把库 staging 到可执行文件旁边
+  src/：loader.rs / loader/vendored.rs / client.rs / authorize.rs
+```
+
+`fuyubot_tdlib::` 根上重导出 sys 的 `ffi` / `schema` / `td_api` / `tl_schema` 模块与 `TdApiSchema` /
+`EntryKind` / `TlEntry` / `TlParam` / `SchemaError` / `TdApi` / `DEFAULT_LOG_VERBOSITY`——**既有调用方的
+路径全部不变**。`src/build_support.rs` 与 `src/loader/vendored.rs` 都被**两边共用**（各自的 build.rs 用
+`#[path]` 引同一份源码），所以它们只能依赖 std 与可选依赖；`[package.metadata.fuyubot]` 有两份，值必须
+一致（守卫测试 `metadata_is_in_sync_between_the_two_crates`）。
+
+运行时加载优先级（`loader::resolve`）：`TDLIB_TDJSON_PATH` 文件/目录 → **vendored 目录 →
+可执行文件所在目录（ExeDir）** → Linux 带版本号系统库 → 裸库名（真去 dlopen 试一次）；全失败返回
+`TdlibLoadError::NotFound`，消息里逐条列出 `[1]`…`[4]` 的尝试与原因。真正加载走
+`loader::open_library`（Windows 绝对路径走 `LOAD_WITH_ALTERED_SEARCH_PATH`），**不是 `Library::new`**
+——新增任何加载动态库的地方都走它。`@extra` 是**字符串**（`RequestId::to_extra()`），`route()`
+遇到非数字 `@extra` 会退化成更新而不是 panic。
+
+### `td_api.tl` 转成了什么（**只在编译期**） [#td_apitl-转成了什么只在编译期]
+
+```text
+              ┌─ tl_schema::parse ──> tl_codegen::generate ──> $OUT_DIR/td_api_generated.rs
+td_api.tl ────┤                                                    └─ include! ─> fuyubot_tdlib_sys::td_api（Rust 类型）
+（TDLIB_TD_API_TL                              └─> $OUT_DIR/td_api.json
+  或缓存/Releases 下载）                        └─ include_str! ─> TdApiSchema::compiled（可校验元数据）
+```
+
+两份产物来自同一个解析结果，而且 `tl_schema.rs` 被 build.rs 用 `#[path]` 引同一份实现，所以「编译期
+写出来的形状」与「运行时读回去的形状」不可能漂移。生成规则：类 → 带 `#[serde(tag = "@type")]` 的 enum；
+函数 → 带 `METHOD` / `RESULT` 常量的 struct（派生 `Default`，没填的字段不写进请求）；类字段一律
+`Option<Box<T>>`（断互递归 + 对上「缺字段就是没有」）；认不出的类型降级成 `serde_json::Value`；Rust
+关键字转义（`r#type`）；**文档四级齐全**（类 / 变体 / 函数 / 字段）。归类只认
+`---functions---` / `---types---` 分区标记，认不出来时**构建直接失败**。
+`check_request` 那套元数据仍然保留——它做的是生成类型做不到的本地校验（生成类型只能保证**结构**对，
+挡不住「用错方法名」）。
+
+## 关键类型对照 [#关键类型对照]
+
+| 类型 / 函数 | 位置 | 作用 |
+| --- | --- | --- |
+| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（18 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
+| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 15 个桥的落点、请求留档、响应回投、`rollback_owner`；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
+| `TdClient` / `Routed` / `ReceiveLoop` | `fuyubot-tdlib` | TDLib 客户端；`route()` 分出 `Update` / `Response`；停止把手（`stop()` / `join()`，drop **不会**停） |
+| `Simplify` | `fuyubot-simplify` | 发消息 / 相册 / 编辑 / 删除 / Markdown 转 entities / 等响应；参数是**每个方法一个结构体** |
+| `TdApiSchema::compiled()` | `fuyubot-tdlib-sys` | 编译期烘焙的元数据；`check_request` 做本地方法名/参数名校验 |
+
+
+# 构建与测试 (/docs/dev/build-test)
+
+## 三条硬门槛 [#三条硬门槛]
+
+```powershell
+cargo build --workspace --offline   # 0 退出、0 warning
+cargo test  --workspace --offline   # 全绿（另有 12 个 #[ignore]）
+cargo fmt --all --check             # 0 diff
+```
+
+⚠️ 三条都带 `--workspace`：根 `Cargo.toml` 有 `default-members = ["crates/*"]`，
+**裸** `cargo build` / `cargo test` 只编 `crates/`，不编 `examples/`。
+`#[allow]` 不算消 warning——能改就改。
+
+`cargo tree --workspace --offline` 必须无环；依赖方向随时能用
+`cargo tree -p <crate> -e normal --depth 1` 验。
+
+## 构建输入与缓存 [#构建输入与缓存]
+
+`td_api.tl` 是**构建的必需输入**，`fuyubot-tdlib-sys/build.rs` 无条件去拿它：
+
+```text
+TDLIB_TD_API_TL（显式指定，最高优先级） → 缓存 <缓存根>/<版本>/td_api.tl → 从 Releases 下载（拿不到 = 构建失败）
+```
+
+缓存根按顺序找（`build_support::cache_roots()`，两个 build.rs 共用同一串）：
+
+```text
+FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作区>/.tdlib-cache → $OUT_DIR（最后保底）
+```
+
+- 仓里的 `.cargo/config.toml` 已把第三档指好（`relative = true`，相对仓库根），克隆下来直接能用。
+- **手写必须绝对路径**：两个 build.rs 的 CWD 是各自的 crate 根，相对路径会解析到 crate 下面然后 404。
+- `$OUT_DIR` 每次重跑构建脚本都会被清空 → 退到它意味着下次**重新下载**，缓存根全写不进去时会明确警告。
+- 转换在编译期完成：日志里只有一条 `已转换 …\td_api.tl：共 N 条`。条数取决于那份文件，**别当常量写进断言**。
+
+`.cargo/config.toml` 另有三个别名：`cargo bot`（= `fuyubot run`）、`cargo package-bot`、
+`cargo package-sdk`（release 构建，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级）。
+
+## 两类测试 [#两类测试]
+
+**默认自检不碰任何外部文件**：真 tdjson、真 `td_api.tl`（用 `TDLIB_TD_API_TL` 顶替时）、真 Releases 下载
+全部藏在 `#[ignore]` 后面。所以「全绿」只证明代码自洽——**与真实 TDLib 对不对得上只有那些
+`--ignored` 能回答**：
+
+```powershell
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.66\windows-x86_64"
+cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
+
+# 「兄弟依赖定位」单独一个测试二进制，必须单独跑（进程里加载过那些 DLL 会污染它的负向对照）
+cargo test -p fuyubot-tdlib --test sibling_dependencies --offline -- --ignored
+```
+
+改 `ffi.rs` 的符号名/arity、`loader::open_library`（或任何加载动态库的地方）、
+`tl_schema` / `tl_codegen`，或碰登录/授权代码之后，**必须**跑一次。
+`--features vendored` 那条（会尝试访问 Releases，失败只警告）在动 build 脚本 / 资产表时也要跑。
+
+## 测试写法的三条规矩 [#测试写法的三条规矩]
+
+- **临时目录不许用 `%TEMP%`**：一律 `target/test-tmp/<crate>/<名字>`。MSYS 会把 `TEMP` 改成 `/tmp`，
+  受限环境里真实 `%TEMP%` 也可能写不了——换个 shell 就红的测试几乎总是这个原因。
+- **嵌套调用 cargo / 编译器时**，把子进程的 `TEMP`/`TMP` 也指到那里：MSVC 的 `link.exe`
+  建不了 `%TEMP%` 里的 `lnk*.tmp`，直接 `LNK1104`，插件/夹具根本编不出来。
+- 非平凡逻辑留**一个**可运行自检：`#[cfg(test)]` 里一个 `assert` 测试即可，不引测试框架。
+
+## 本机的离线约定 [#本机的离线约定]
+
+DSH 沙箱里 cargo 的 TLS 连不上 crates.io（`schannel … SEC_E_NO_CREDENTIALS`）。
+`Cargo.lock` 已落盘，`--offline` 就够；**只有改依赖版本时**才需要联网，那时向用户申请一次完整权限跑
+`cargo fetch`。
+
+
+# 开发文档 (/docs/dev)
+
+这一节是给**改 fuyubot 仓库**的人看的，不是给用它写 bot 的人看的。
+
+**公开文档都在这个文档站**：结构、ABI、插件写法、使用方式。仓库里只剩两类东西——
+[`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md)（硬约束，公开）
+与随源码分发、**不入库**的工程台账：
+
+| 东西 | 什么时候看 |
+| --- | --- |
+| [`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md) | 改代码前必读：硬约束、依赖方向、凭据不许落盘、提交前检查清单 |
+| 仓库 `docs/HANDOFF.md`（本地，不入库） | 入口：当前状态、构建契约、每个 crate 有什么 |
+| 仓库 `docs/pitfalls.md` / `gaps.md` / `decisions.md`（本地，不入库） | 踩过的坑（编号即引用锚）/ 未验证缺口 / 拍板的决定 |
+| [架构与数据流](./architecture.mdx) | 结构与数据流（文档站内，最全） |
+
+<Callout type="warn">
+  仓库有一条硬规矩：**文档里出现的命令必须真跑过**，带输出的示例要抄真实输出。
+  改行为就同步改文档：文档站给使用者与插件作者，仓库里的工程台账给下一个改代码的人。
+  否则下一个人会比你更相信旧文档。
+</Callout>
+
+## 本节的页面 [#本节的页面]
+
+<Cards>
+  <Card title="架构与数据流" href="/docs/dev/architecture/" />
+  <Card title="构建与测试" href="/docs/dev/build-test/" />
+  <Card title="常见陷阱" href="/docs/dev/pitfalls/" />
+  <Card title="发布" href="/docs/dev/release/" />
+</Cards>
+
+## 一分钟上手 [#一分钟上手]
+
+```bash
+git clone https://github.com/CatMoeCircle/Fuyu-Bot
+cd Fuyu-Bot
+cargo build --workspace --offline   # 0 warning
+cargo test  --workspace --offline   # 全绿
+cargo fmt --all --check             # 0 diff
+```
+
+`td_api.tl` 是**构建的必需输入**：`TDLIB_TD_API_TL` → 缓存 → 从 Releases 下载，拿不到就让构建失败。
+仓里的 `.cargo/config.toml` 已经把缓存指到 `.tdlib-cache/`（相对仓库根），所以上面三条直接敲就行。
+
+
+# 常见陷阱 (/docs/dev/pitfalls)
+
+每条都**真踩过**。这里挑最容易复发的几类；仓库内部的台账编号是跨文件引用锚，只随源码分发，不在这里展开。
+
+## ABI 与回调 [#abi-与回调]
+
+- **`extern "C"` 边界逃出去的 panic 直接 abort**，宿主来不及 `catch_unwind`：插件与中间件回调必须是
+  `unsafe extern "C-unwind"`，`define_plugin!` 自己也要包一层。
+- **一个 crate 只能展开一次 `define_plugin!`**：四个导出符号名是 ABI 定死的，展开两次必然重复定义。
+- **订阅句柄必须活着**：每轮循环里 `let _h = …` 就是每轮退订；`for` 里注册要把句柄收进循环外的 `Vec`。
+- **`Effect` / `Subscription` 是 `#[must_use]`**：`let _ =` 会立刻回滚；`drop` 就是注销。
+
+## 事件语义 [#事件语义]
+
+- **归属（scope）不是「排除广播」**：第一版写成「全局 `emit` 只发 scope 0」，插件永远收不到更新。
+  正确语义是「`emit` 发给所有人；`emit_scoped(scope)` 额外定向给该归属」。
+- **过滤器里的 `event_type` 键只选通道**，不参与负载匹配。
+
+## TDLib [#tdlib]
+
+- **方法名/字段路径按 TDLib 来，不按 Bot API**：只有 `sendMessage` + `input_message_content`；
+  `updateFile` 的 file id 在 `file.id` 不是顶层 `file_id`；`user` 没有 `is_bot` / `username`。
+- **`td_api.tl` 的「函数 vs 构造器」只认 `---functions---` / `---types---` 标记**：
+  `updateNewMessage … = Update` 是构造器，任何按首字母大写的启发式都会误判。
+- **写死 TDLib 方法名/参数名的模块必须留一条 `check_request` 测试**（离线就能红）。
+
+## Rust / Windows [#rust--windows]
+
+- **`Context` 的固有方法会遮蔽扩展 trait 的同名方法**：命名服务只能叫 `provide_named` / `resolve`。
+- **thiserror 把名为 `source` 的字段当错误链**：存额外文本的字段叫 `detail`。
+- **Windows 文件锁是强制锁**：锁住的字节范围别人 `read` 会 `ERROR_LOCK_VIOLATION`，
+  所以实例状态把「锁」与「内容」分成两个文件（`.fuyubot/lock` 与 `.fuyubot/status`）。
+- **PowerShell 的 `Get-Content` 在本机按 cp936 解码 UTF-8**：中文注释会毁，还会吞换行导致行号错位。
+  改源码一律用编辑器工具，shell 只用来跑命令。
+- **`tar` 在 Windows runner 上要 POSIX 路径**（`/d/a/…`）：GNU tar 会把 `D:/…` 当成「连主机 D」。
+
+> 新踩的坑要补进仓库的 `docs/pitfalls.md` 台账（随源码分发）并给新编号——编号是跨文件引用锚。
+
+
+# 发布 (/docs/dev/release)
+
+仓库有两套**互不替代**的发布资产，tag 前缀不同，别混：
+
+| 资产 | tag | 生产方 | 谁消费 |
+| --- | --- | --- | --- |
+| TDLib 动态库 `TDLib-<os>-<arch>` | `TDLib-v<版本>` | `build-tdlib.yml` + `.github/scripts/*.sh` | 构建期（`fuyubot-tdlib` 的 loader 表） |
+| fuyubot 本体 `fuyubot-<os>-<arch>.zip` | `v<版本>` | `release-bot.yml` | 终端用户下载、解压即跑 |
+
+## TDLib 资产（构建期契约） [#tdlib-资产构建期契约]
+
+消费方是 `crates/fuyubot-tdlib/src/loader/vendored.rs` 的 `ASSETS` 表，生产方是
+`.github/workflows/build-tdlib.yml` 的 matrix；`tests/release_assets.rs` 会**读 workflow 双向比对**，
+漂了就红。四条硬要求：
+
+1. tag 必须精确是 **`TDLib-v<版本>`**（下载 URL 由 `release_url()` 拼）；
+2. 资产名**精确等于** `ASSETS` 表的值，**不带扩展名**，`<os>-<arch>` 用 cargo 口径（`x86_64` / `aarch64`）；
+3. 内容必须是 **`.tar.gz`**（`.zip` 会被 `extract_library` 当裸库原样写出，得到坏文件还不报错）；
+4. **加平台只动 `ASSETS` 表 + CI matrix，两边同时加**（`macos/x86_64` 故意不在表里：没有那个 runner）。
+
+## fuyubot 本体（用户下载即用） [#fuyubot-本体用户下载即用]
+
+运行时仓库的 `release-bot.yml` 在 `v*` tag（或手动 dispatch）上按平台编 `fuyubot-cli` + 三个内置插件，
+**分两份单独打包**：本体（可执行文件 + 该平台的 `tdjson`，从 `TDLib-v<版本>` 那个 Release 取）与
+内置插件（`plugins/`）。`publish` 把它们叠成**各平台一个 zip** 再挂 Release：
+
+```text
+fuyubot-windows-x86_64.zip    fuyubot-windows-x86_64/{fuyubot.exe, tdjson.dll, plugins/, README.txt}
+fuyubot-windows-aarch64.zip   fuyubot-windows-aarch64/{fuyubot.exe, tdjson.dll, plugins/, README.txt}
+fuyubot-linux-x86_64.zip      fuyubot-linux-x86_64/{fuyubot, libtdjson.so, plugins/, README.txt}
+fuyubot-linux-aarch64.zip     fuyubot-linux-aarch64/{fuyubot, libtdjson.so, plugins/, README.txt}
+fuyubot-macos-aarch64.zip     fuyubot-macos-aarch64/{fuyubot, libtdjson.dylib, plugins/, README.txt}
+```
+
+`fuyubot-sdk-<os>-<arch>.zip` 由 **SDK 仓库**（`FuyuBot-SDK` 的 `release-sdk.yml`）发布，
+不混进运行时的包。
+
+平台集合与 `ASSETS` 表一致：Windows / Linux 各 x86_64 + aarch64，**macOS 只有 aarch64**。
+
+中间产物（`fuyubot-*.tar.gz` / `fuyubot-plugins-*.tar.gz` / `fuyubot-sdk-*.tar.gz`）只留在 Actions
+artifacts 里，**不挂 Release**——它们是构建产物，不是发布形态。
+
+三条契约：资产名与 `ASSETS` 同口径、zip 里保留顶层目录 `<资产名>/`、
+**`tdjson` 与可执行文件同级**（靠 loader 优先级 2「可执行文件所在目录」命中）。
+zip 只在 `publish`（Linux runner）里生成，Windows runner 的 bash 没有 `zip` 命令。
+
+<Callout type="warn">
+  GitHub Actions 在本机验不了。改 workflow 的组包步骤时，把 `Package` 与 `Merge` 两段 bash **原样抠出来在本机跑一次**，
+  解压产物验证 `--version` / `init` / `run --replay` / `--no-login --background` 全通——
+  这一步是踩过「改了却没验」之后定的规矩。
+</Callout>
+
+## 文档站 [#文档站]
+
+`website/` 是静态导出（`output: 'export'`），产物 `out/`：
+
+```powershell
+cd website
+pnpm install
+pnpm build        # → website/out/
+pnpm preview      # 本地静态服务器预览
+```
+
+把 `out/` 交给任意静态托管即可；GitHub Pages 记得 `public/.nojekyll`（`_next/` 以 `_` 开头会被 Jekyll 吞掉），
+正式域名在**构建前**设 `NEXT_PUBLIC_SITE_URL`（绝对 URL 是烘进产物的）。
+
+发布前过一遍仓库的提交检查清单（`AGENTS.md`）：文档三份都更新（HANDOFF / pitfalls / ROADMAP）、
+`cargo build/test/fmt` 三条绿、没把凭据写进任何文件。
+
+
+# fuyubot 文档 (/docs)
+
+**fuyubot** 是一个基于 TDLib 的 Telegram bot / user 框架：Rust 内核 + C ABI 插件 + 多语言 SDK。
+插件就是一个动态库（`.dll` / `.so` / `.dylib`），一个 cdylib 就是一个插件。
+
+<Cards>
+  <Card
+    title="使用文档"
+    href="/docs/usage/"
+    description="下载安装、配置文件、运行、回放、实例管理与排错"
+  />
+  <Card
+    title="插件开发"
+    href="/docs/plugin/"
+    description="Rust / C / C++ / Python / JS / TS 插件、事件、TDLib 调用与 ABI"
+  />
+  <Card
+    title="开发文档"
+    href="/docs/dev/"
+    description="改框架本身：架构、构建测试、常见陷阱、发布"
+  />
+  <Card
+    title="CLI 文档"
+    href="/docs/cli/"
+    description="fuyubot 与 fuyubot-sdk 的完整命令参考"
+  />
+</Cards>
+
+## 两个 CLI，职责严格分离 [#两个-cli职责严格分离]
+
+| CLI | 干什么 | 子命令 |
+| --- | --- | --- |
+| `fuyubot` | 跑框架 | `init` / `run` / `status` / `stop` / `plugin` |
+| `fuyubot-sdk` | 写插件 | `init` / `codegen` / `check` / `abi-version` / `td-methods` / `td-method` |
+
+两个都**不编译、不打包插件**——编译是插件作者用自己语言工具链（`cargo build`、`cl /LD`、`gcc -shared`）完成的事，
+`fuyubot plugin install` 只负责把编好的产物**复制**进插件目录。
+
+## 现在能验证到什么程度 [#现在能验证到什么程度]
+
+<Callout type="info">
+  离线回放（`--replay`）与实例三件套（单实例锁 / 后台运行 / `status` / `stop`）是端到端跑过的。
+  真实账号登录 `run` 会接上 TDLib 走授权状态机，但**没有拿真账号端到端验过**「收真更新 → 插件回一条」。
+</Callout>
+
+- 内核、插件 ABI、加载器、更新管线、四大机制：有测试，全绿
+- 真 TDLib（真 `tdjson` + 真 `td_api.tl`）：`getMe` 往返、同步 `execute`、插件调 TDLib 收响应，都在 `-- --ignored` 自检里验过
+- `td_api.tl` 在**编译期**被转成元数据烤进二进制，运行时不读文件、不解析
+- `tdjson` **运行时动态加载**，构建期会把它拷到可执行文件同级目录
+
+## 下一步 [#下一步]
+
+- **普通用户**：到 [Releases](https://github.com/CatMoeCircle/Fuyu-Bot/releases) 下对应平台的包，解压就跑 ——
+  见 [下载与安装](./usage/index.mdx)
+- 要自己编：见 [从源码构建](./usage/build.mdx)
+- 要写插件：看 [插件总览](./plugin/index.mdx)
+- 想改框架：看 [开发文档](./dev/index.mdx)
+- 卡住了：看 [常见问题](./usage/troubleshooting.mdx)
+
+
+# ABI 契约 (/docs/plugin/abi)
+
+这是**唯一**的跨语言契约：形状只有 `fuyubot-abi/src/lib.rs` 一份实现，C 头文件
+`fuyubot_plugin.h` 由 cbindgen 从它生成（**产物，不是源码**，别手改）。宿主侧所有桥在
+`fuyubot-loader/src/runtime.rs`。**改 ABI = 改那个文件 + 加版本号。**
+
+## 插件必须导出的四个符号 [#插件必须导出的四个符号]
+
+| 符号 | 类型 | 必须吗 | 说明 |
+| --- | --- | --- | --- |
+| `plugin_init` | `unsafe extern "C" fn(*const HostApiVTable) -> PluginHandle` | **必须** | 校验 VTable、构造状态；返回失败句柄（`abi_version == 0`）= 拒绝加载 |
+| `plugin_start` | `unsafe extern "C" fn(PluginHandle, *const c_char) -> i32` | 可选 | 拿到配置 JSON，注册订阅 / 工具 / 中间件；返回 `0` 成功 |
+| `plugin_stop` | `unsafe extern "C" fn(PluginHandle)` | 可选 | 卸载前调一次，回收自己的状态 |
+| `plugin_free_string` | `unsafe extern "C" fn(*mut c_char)` | **必须** | 释放**插件自己**分配的字符串（宿主从不 free 插件的指针） |
+
+符号名由常量钉住（`SYM_PLUGIN_INIT` / `SYM_PLUGIN_START` / `SYM_PLUGIN_STOP` /
+`SYM_PLUGIN_FREE_STRING`），`PluginLoader::load_with_config` 按这些名字 `lib.get(...)`。
+C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 dlsym 不到。
+
+`PluginHandle` = `{ abi_version: u32, size: u32, context: *mut c_void, name: *const c_char }`；
+`is_valid()` 的判据是「`abi_version != 0` **且** `context` 非空」，所以插件的 `context` 不能是
+`NULL`。`PluginHandle::FAILED` 是全零版本号，`const _` 里有
+`assert!(PluginHandle::FAILED.abi_version == 0)`。
+
+## HostApiVTable：18 个字段 [#hostapivtable18-个字段]
+
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 15 个是函数指针，全是 `Option<...>`；
+总大小 = `2 * size_of::<u32>() + 16 * size_of::<*const c_void>()`，由 `const _` 里的
+`offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
+
+下表签名省略第一个参数 `host`：
+
+| # | 字段 | 签名 | 宿主实现 | 说明 |
+| --- | --- | --- | --- | --- |
+| — | `version` | `u32` | `ABI_VERSION` | 必须等于 `ABI_VERSION`；首个字段，插件能在读其它任何字段之前先比一次 |
+| — | `size` | `u32` | `size_of::<HostApiVTable>()` | 老宿主 + 新插件时先比 `size` 再读尾部字段，读越界就是 UB |
+| — | `host_ctx` | `*mut c_void` | `&HostRuntime` | 每个函数都原样回传；插件作者看不见它（`HostApi` 自动带上） |
+| 1 | `on` | `(update_type, filter_json, callback, user_data) -> SubscriptionHandle` | `api_on` | 订阅；`filter_json` 里的 `event_type` 选通道，其余键做负载匹配；`NULL` / 空串 / `"null"` = 收全部 |
+| 2 | `off` | `(handle) -> ()` | `api_off` | 退订；句柄 drop 时宿主也会整批回滚 |
+| 3 | `emit` | `(event_type, payload_json) -> i32` | `api_emit` | 发自定义事件；对插件而言是 `emit_scoped(自己, …)`，只送自己 + 全局订阅者 |
+| 4 | `register_tool` | `(descriptor_json) -> ToolHandle` | `api_register_tool` | 只登记元数据；本版 ABI 没有处理器指针，登记出来的一律是 `handler: None` 的声明型工具 |
+| 5 | `call_tool` | `(name, input_json) -> RequestId` | `api_call_tool` | 走 `ToolRegistry::call_tool`（查表 → 权限门 → schema → 处理器）；没有处理器就返回无效请求号 |
+| 6 | `list_tools` | `() -> *const c_char` | `api_list_tools` | 全部工具的元数据 JSON 数组。**宿主线程局部缓冲**，读完即弃 |
+| 7 | `provide_service` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service` | 注册命名服务；`vtable` 必须活到注销为止 |
+| 8 | `get_service` | `(name) -> *const ServiceVTable` | `api_get_service` | 取回同一个指针；没有就是 `NULL` |
+| 9 | `td_invoke` | `(method_json) -> RequestId` | `api_td_invoke` | 发完整 TDLib 请求 JSON（含 `@type`） |
+| 10 | `td_invoke_simplified` | `(method_name, params_json) -> RequestId` | `api_td_invoke_simplified` | 给参数补上 `@type = method_name`；参数不是对象就整份替换成 `{"@type": …}` |
+| 11 | `td_execute` | `(request_json) -> *const c_char` | `api_td_execute` | **同步**执行不碰网络的方法（`td_json_client_execute`），当场返回响应 JSON。**不发请求号、不进请求留档、不等响应通道**——所以能在事件回调里用；宿主没接 TDLib 时返回 `NULL` |
+| 12 | `use_middleware` | `(stage: u32, callback, user_data) -> MiddlewareHandle` | `api_use_middleware` | 挂在某个阶段；回调返回非 0 → 本阶段中断 |
+| 13 | `wait_for_update` | `(filter_json, timeout_ms: u64) -> WaitHandle` | `api_wait_for_update` | **阻塞**当前线程；`timeout_ms == 0` 表示只检查当前状态 |
+| 14 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
+| 15 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
+
+两条形状上的硬要求：
+
+- **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
+  不给显式上下文就只能靠进程级全局，那样一个进程只能有一个宿主、测试也没法并行。
+- **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
+  Rust 侧 `HostApi::from_raw` 一次解包校验全部 15 个，之后调用路径上没有 `Option`、也没有 panic 分支。
+
+句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
+都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；
+`LogLevel` = 1..5（`Error` / `Warn` / `Info` / `Debug` / `Trace`），`Stage` = 0..5；
+`WaitHandle` = `{ id: u64, matched: u32, _reserved: u32, payload_json: *const c_char }`。
+
+## 内存所有权：三条硬规矩 [#内存所有权三条硬规矩]
+
+1. **谁分配谁释放**。插件通过 `plugin_init` 返回的 `name`、以及插件自己分配的任何字符串，
+   都由插件持有；宿主**绝不** free 它们。插件要给宿主一个需要接管的临时字符串，只能走
+   `plugin_free_string` 那套约定。
+2. **宿主返回的字符串是线程局部缓冲**。`list_tools`、`get_service`、`WaitHandle::payload_json`
+   指向宿主的一块复用缓冲（`thread_local! HOST_STRING`），**只在下一次调用宿主函数之前有效**。
+   要留着就当场拷走，并且**不要试图释放它**——VTable 里没有 host 侧的 free 函数，这是设计不是遗漏。
+3. **`ServiceMethodFn` 的返回值由提供方持有**，调用方读完即弃。
+
+## 版本协商 [#版本协商]
+
+| 位置 | 谁比 | 不匹配的后果 |
+| --- | --- | --- |
+| `ABI_VERSION`（当前 `2`） | 编译期常量，两侧共同引用 | — |
+| `HostApiVTable::version` | 插件侧 `HostApi::from_raw` | `AbiError::VersionMismatch` |
+| `HostApiVTable::size` | 同上 | `AbiError::VTableTooSmall` |
+| 某个函数指针是 `NULL` | 同上 | `AbiError::MissingFunction("<字段名>")` |
+| `PluginHandle::abi_version` | 宿主侧 `PluginLoader` | `AbiMismatch`：**拒绝加载** |
+
+版本不兼容时宿主**不能**调 `plugin_stop`——那是对一个不认识的 ABI 下手，所以插件在 `init` 里
+分配的状态这一版回收不了。字段只增不改，新增一律追加在尾部。
+
+**版本 2 的改动**：尾部追加了 `td_execute`（同步执行，见上表第 11 项）。追加字段本身不破坏老插件
+（它们先比 `size`），但按契约「改 ABI 就加版本号」，`ABI_VERSION` 一起从 1 跳到 2——**用版本 1
+编出来的插件会被宿主拒绝加载**，重新编一次即可（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
+
+## 为什么本 ABI 一个可变参数函数指针都没有 [#为什么本-abi-一个可变参数函数指针都没有]
+
+Rust 的 `extern "C" fn(.., ...)` 确实稳定（能写、cbindgen 也能生成），但**本 ABI 一个都没用**，
+理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 15 个函数的参数都是固定的，
+用 `...` 只会让 C 侧传错参数从编译错误降级成运行期 UB。
+
+将来真要加，正确的声明形状是（C 侧）：
+
+```c
+typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
+// Rust 侧对应：unsafe extern "C" fn(level: u32, format: *const c_char, ...)
+```
+
+两条必须知道的事：
+
+- 变参部分**不能**是唯一的参数——C 要求 `...` 之前至少有一个具名参数。
+- **变参函数指针跨不了 ABI 的 `Option` 优化**：`Option<fn(..., ...)>` 不是 niche 优化，占**两个指针宽**，
+  必须显式判空。本 crate 里那条
+  `size_of::<Option<unsafe extern "C" fn()>>() == size_of::<*const c_void>()` 断言只对**非变参**函数指针
+  成立；普通函数指针字段能享受 niche 优化（`NULL` 就是 `None`），这也是「整个 VTable 所有字段都能是
+  `Option<...>` 且不撑大布局」的前提之一。
+
+## 五种语言各自声明的兼容 ABI 版本 [#五种语言各自声明的兼容-abi-版本]
+
+| 语言 | 声明在哪 | 值 | 怎么生效 |
+| --- | --- | --- | --- |
+| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 2` | 2 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
+| C++ | 同一份 `fuyubot_plugin.h` | 2 | 同上（四个符号放 `extern "C"`） |
+| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 2 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
+| Python | **没有自己的常量** | — | 走同一条 Rust 桥：`.py` 由 `fuyubot-sdk-script` 编出的 cdylib 驱动，`abi_version` 由那个 cdylib 填 |
+| JS / TS | **没有自己的常量** | — | 同上，与 Python 共用 `fuyubot-sdk-script` 这一份实现 |
+
+脚本侧 SDK（`fuyubot_plugin.py` / `fuyubot_plugin.js` 与它们的类型声明）声明的是**「一行一个 JSON」
+的协议**，不是 ABI 版本；ABI 版本永远由承载它的那份 Rust cdylib 声明。Python 与 JS 共用同一份桥，
+所以「两个 SDK 对 ABI 的理解」不可能漂移。
+
+## 回调为什么是 `C-unwind` [#回调为什么是-c-unwind]
+
+`EventCallbackFn` 与 `MiddlewareCallbackFn` 都是 `unsafe extern "C-unwind" fn(...)`。
+`extern "C"` 边界上逃出去的 panic 会直接 **abort 整个进程**，宿主来不及 `catch_unwind`；
+`C-unwind` 允许 unwind 穿过边界，宿主就能接住、记一条日志、继续跑下一条更新。
+对 C/C++ 而言两者 ABI 完全一致；C++ 异常同样会穿过这个边界，**请自己在回调内处理完**。
+
+`define_plugin!` 生成的三个导出函数还会把插件代码包在 `catch_unwind` 里——两层都要。
+
+<Callout type="warn">
+  版本不兼容时宿主**不会**调 `plugin_stop`：那是对一个不认识的 ABI 下手。字段只增不改，
+  新增一律追加在尾部；改动必须同时抬 `ABI_VERSION`。
+</Callout>
+
+```bash
+fuyubot-sdk abi-version   # 打印 2
+```
+
+
+# 订阅与事件 (/docs/plugin/events)
+
+事件总线是插件拿到 TDLib 更新的唯一入口，也是插件之间说话的方式。三个动作：
+`on` 订阅（返回句柄）、`off` 退订（或让句柄 drop）、`emit` 发自定义事件。
+
+## 双通道：具体 `@type` 与兜底 `update` [#双通道具体-type-与兜底-update]
+
+每条更新会被**同时**发到两条通道上：
+
+| 通道 | 谁收 | 什么时候用 |
+| --- | --- | --- |
+| 具体的 `@type`（`updateNewMessage` 等） | 精确订阅了它的监听器 | 你只关心一种更新 |
+| `"update"` | 订阅兜底通道的所有监听器 | 你要看全部，或不想追 TDLib 的类型名 |
+| `"response"` | **只发给发起那个请求的插件** | 收 `td_invoke*` 的结果 |
+
+`"update"` 与 `"response"` 是 ABI 常量（`UPDATE_EVENT` / `RESPONSE_EVENT`），别自己拼字符串。
+
+## 过滤器 [#过滤器]
+
+`on` 的第三个参数是一份过滤器 JSON：**点分路径 → 期望值**。
+
+```json
+{ "message.chat_id": -1001234567890 }
+```
+
+| 规则 | 说明 |
+| --- | --- |
+| `event_type` 键只用来**选通道** | `{"event_type":"response","request_id":5}` 表示等 5 号响应；它**不参与负载匹配** |
+| 其余键做负载字段相等匹配 | 字段位置随更新类型变：`updateNewMessage` 的 `chat_id` 在 `message.chat_id` |
+| 空 / `null` / 不传 | 该通道全收 |
+
+同一个事件可以订阅**多次**、各带各的过滤器。脚本侧按订阅号 `handle` 分发，所以不该响的回调不会响。
+
+## 归属：`emit` 不是广播 [#归属emit-不是广播]
+
+插件里调 `emit` 走的是 `emit_scoped(自己, …)`：只送给**该插件自己 + 全局订阅者**。
+归属的语义是「**额外定向**」而不是「排除广播」——宿主 `emit` 的更新照旧发给所有订阅者，
+`emit_scoped(owner, …)` 只是在那份收件人之外**再加**上 `owner` 自己的订阅。
+
+| 谁发 | 谁收得到 |
+| --- | --- |
+| 宿主发更新 / `emit` | 所有匹配的订阅者 |
+| 插件 `emit("x", …)` | 该插件自己的订阅者 + 全局订阅者 |
+| 宿主的响应 | `emit_scoped(发起者, "response", …)`：全局 + 发起者 |
+
+要让别的插件收到你的事件，**让对方订阅全局事件**，不要指望你的 `emit` 是一次广播。
+
+<Callout type="warn">
+  订阅句柄必须活着。Rust 侧 `HostExt::subscribe_json` 返回的是 `#[must_use]` 的
+  `Subscription`，**drop 就是退订**；`let _ = …` 会立刻退订。插件卸载时宿主还会整批回滚，
+  但那已经是另一回事了。
+</Callout>
+
+## Rust [#rust]
+
+```rust
+use fuyubot_plugin_api::{HostApi, HostExt, Subscription};
+use serde_json::json;
+
+struct MyPlugin {
+    host: HostApi,
+    _all: Option<Subscription>,
+    _mine: Option<Subscription>,
+}
+
+fn start(&mut self, _config_json: &str) -> Result<(), String> {
+    // 兜底通道 + 无条件
+    self._all = self.host.subscribe_json("update", None, on_any, std::ptr::null_mut());
+
+    // 具体 @type + 字段过滤
+    let filter = json!({ "message.chat_id": -1001234567890 });
+    self._mine = self.host.subscribe_json(
+        "updateNewMessage", Some(filter), on_mine, std::ptr::null_mut(),
+    );
+    Ok(())
+}
+
+fn emit_job_done(&self) {
+    // 只有「自己 + 全局订阅者」收得到
+    let _ = self.host.emit("job_done", &json!({ "ok": true }).to_string());
+}
+```
+
+回调用 `extern "C-unwind" fn(user_data, payload) -> i32`，返回 `0` 表示成功；`payload` 是宿主临时的
+NUL 结尾字符串，要留就当场拷走（`parse_payload` 已经替你解析成 `serde_json::Value`）。
+
+## Python / JS [#python--js]
+
+```python
+@host.on("updateNewMessage", filter={"message.content.text.text": "/hello"})
+def on_hello(payload):
+    host.log("有人说 /hello")
+
+host.emit("job_done", {"ok": True})
+```
+
+```js
+host.on("updateNewMessage", (payload) => {
+  host.log("有人说 /hello");
+}, { "message.content.text.text": "/hello" });
+```
+
+脚本侧的 `off(event, handler)` 只从脚本自己的分发表里摘掉回调；宿主的订阅随插件 `stop` 一起撤。
+
+要按固定次数等一条更新（阻塞式），用 `wait_for_update`，见 [调用 TDLib](./tdlib.mdx)。
+要改流经管线的负载，用中间件，见 [工具与中间件](./tools.mdx)。
+
+
+# Go 插件 (/docs/plugin/go)
+
+Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态库，宿主只要看到四个导出符号
+就认它。完整可跑的示例在 [`examples/go-ping`](https://github.com/CatMoeCircle/FuyuBot-SDK/tree/main/examples/go-ping)。
+
+<Callout type="info">
+  目前**没有** `fuyubot-sdk init --lang go` 模板——Go 这条路线是「自己搭工程」：
+  抄 `examples/go-ping`，或者照下面这两段写。C 头文件仍然用
+  `fuyubot-sdk codegen --lang c --dir <工程目录>` 生成，不要手抄。
+</Callout>
+
+## 结构：Go 写逻辑，C 写壳 [#结构go-写逻辑c-写壳]
+
+| 文件 | 作用 |
+| --- | --- |
+| `main.go` | 逻辑：解析更新 JSON、拼 `sendMessage`、打日志 |
+| `plugin.c` | 四个 ABI 符号：`plugin_init` / `plugin_start` / `plugin_stop` / `plugin_free_string` |
+| `fuyubot_plugin.h` | 生成物（`codegen --lang c` 落的），**不提交** |
+
+为什么不直接 `//export plugin_init`：`PluginHandle` 是**按值返回**的结构体，由 C 侧构造最稳；
+也避免把宿主 VTable 的函数指针搬进 Go。C 侧只做转发：
+
+```c
+static int32_t on_update(void *user_data, const char *payload) {
+    return (int32_t)go_on_update(user_data, (char *)payload);
+}
+
+FUYUBOT_EXPORT PluginHandle plugin_init(const HostApiVTable *host) {
+    PluginHandle failed = {0, 0, NULL, NULL};
+    if (host == NULL || host->version != ABI_VERSION) return failed;
+    g_host = host;
+    return (PluginHandle){ABI_VERSION, (uint32_t)sizeof(PluginHandle), &g_state,
+                          "fuyubot.example.go-ping"};
+}
+```
+
+Go 侧通过两个 C 小桥访问宿主（这样 Go 里不用碰函数指针）：
+
+```go
+//export go_on_update
+func go_on_update(_ unsafe.Pointer, payload *C.char) C.int {
+    var u update                      // updateNewMessage → message.content.text.text
+    if json.Unmarshal([]byte(C.GoString(payload)), &u) != nil { return 0 }
+    if u.Message.IsOutgoing || u.Message.Content.Text.Text != "/ping" { return 0 }
+    // …拼 sendMessage（input_message_content!）→ C.fy_invoke("sendMessage", body)
+    return 0
+}
+```
+
+`fy_log` / `fy_invoke` 在 `plugin.c` 里实现，就是 `g_host->log` / `g_host->td_invoke_simplified` 的转发。
+
+## 编译 [#编译]
+
+cgo 需要 C 编译器：Linux / macOS 用 `cc`，Windows 用 mingw-w64（如
+[w64devkit](https://github.com/skeeto/w64devkit)）。
+
+```powershell
+fuyubot-sdk codegen --lang c --dir examples\go-ping   # 先落 ABI 头
+
+$env:CGO_ENABLED = "1"
+$env:CC = "gcc"                                       # Linux/macOS：cc
+go build -buildmode=c-shared -o ping.dll .             # Linux: ping.so / macOS: ping.dylib
+fuyubot plugin install ping.dll --plugin-dir demo\plugins
+```
+
+<Callout type="warn">
+  Windows 上没装 mingw 时报 `gcc: executable file not found` 或
+  `cannot open file 'mingwex.lib'`——那是缺 C 工具链，不是插件代码的问题。
+  MSVC 的 `cl` 不能直接给 cgo 用（Go 的 Windows 外部链接器要 GCC 那一套）。
+</Callout>
+
+## 一个宿主行为要记住：Go 库不会被卸载 [#一个宿主行为要记住go-库不会被卸载]
+
+Go 的 `c-shared` 运行时有线程与信号处理器，`FreeLibrary` / `dlclose` 之后进程会直接
+access violation（`0xC0000005`）。
+
+所以 `fuyubot-loader` 会识别 Go 产物（文件里的 `\xff Go buildinf:` 魔数），
+**故意不卸载**这类库：`plugin_stop` 照跑、注册照回滚，只是那几 MB 库内存留到进程退出。
+普通 Rust / C / C++ 插件不受影响，仍是 drop 即卸载。
+
+这也意味着：**别在同一个进程里反复加载同一个 Go 插件**（热重载路径别指望它）。
+先 `fuyubot stop` 再 `run`，行为是干净的。
+
+## 验证 [#验证]
+
+```powershell
+fuyubot-sdk check ping.dll                                   # 静态读导出符号
+fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录>
+```
+
+回放输出里应能看到 `go-ping 插件：回了 pong` 和一条
+`sendMessage {"chat_id":…,"input_message_content":{"@type":"inputMessageText",…}}`。
+
+## 相关 [#相关]
+
+- ABI 细节（17 个字段、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
+- C / C++ 的写法（同一份头文件）：[C 与 C++ 插件](./native.mdx)
+- 订阅与过滤器：[订阅与事件](./events.mdx)
+
+
+# 插件总览 (/docs/plugin)
+
+**一个插件 = 一个 cdylib**（`.dll` / `.so` / `.dylib`）。宿主 `dlopen` 它，只认四个导出符号，
+其余全部能力都经 `HostApiVTable` 回调宿主。插件不认识 Rust 内核，也不需要认识。
+
+| 符号 | 必须吗 | 干什么 |
+| --- | --- | --- |
+| `plugin_init` | **必须** | 校验 VTable、构造插件状态；返回失败句柄（`abi_version == 0`）= 拒绝加载 |
+| `plugin_start` | 可选 | 拿到配置 JSON，注册订阅 / 工具 / 中间件 |
+| `plugin_stop` | 可选 | 卸载前调一次，回收自己的状态 |
+| `plugin_free_string` | **必须** | 释放**插件自己**分配的字符串（宿主从不 free 插件的指针） |
+
+契约细节（字段布局、内存所有权、版本协商）见 [ABI 契约](./abi.mdx)。
+
+## 两种形态 [#两种形态]
+
+| | 原生插件 | 脚本插件 |
+| --- | --- | --- |
+| 语言 | Rust / C / C++ | Python / JS / TS，外加一层 Rust 胶水 cdylib |
+| 边界 | 与宿主同进程，C ABI 函数调用 | 一个插件一个解释器子进程，一行一个 JSON |
+| 崩溃 | 拖垮宿主 | 只有子进程死，宿主记一条错 |
+| 起步 | `fuyubot-sdk init demo --lang rust` | `fuyubot-sdk init demo --lang python` / `js` |
+
+脚本插件的 cdylib 里只有一行 `script_plugin!`，逻辑全在脚本里——它**不改变**「一个 cdylib 一个插件」这个结构。
+
+## 最小闭环 [#最小闭环]
+
+```bash
+fuyubot init --name mybot --api-id 12345   # 建项目：fuyubot.toml + plugins/
+fuyubot-sdk init demo --lang rust          # 生成 plugins/demo/（含 Cargo.toml）
+cd plugins/demo && cargo build --release   # 用**你自己的**工具链编译
+cd ../.. && fuyubot plugin install plugins/demo
+fuyubot run                                # 加载插件目录里的所有 cdylib
+```
+
+- `fuyubot init` 重复执行会被挡住（不覆盖你改过的配置）；三个键都有默认值，最简可以只有 `[bot]`。
+- 插件名只允许字母、数字和 `.` `_` `-`（会拼进源码与 TOML）；目录名里的 `.` / `-` 换成 `_` 当 crate 名
+  （`fuyubot.weather` → `fuyubot_weather`）。
+- **产物落在哪**：`plugin install <工程目录>` 只看 `<工程>/target/{release,debug}` 与工程目录本身。
+  插件若是**当前 workspace 的成员**，`cargo build -p <crate>` 默认把产物放在仓库根的 `target/`，于是它找不到
+  ——加 `--target-dir <工程目录>/target`，或直接指着产物装（脚本插件必须用前者，否则脚本不会被拷）。
+- **SDK 走源码开发时**设 `FUYUBOT_SDK_PATH` 指向 FuyuBot-SDK 仓库的 `crates/`，生成的插件会写 `path = "…"`；
+  不设就写 crates.io 版本号。
+
+<Callout type="info">
+  `fuyubot` 管运行，`fuyubot-sdk` 管开发，**两个都不编译插件**：编译是作者自己语言工具链的事
+  （`cargo build` / `cl /LD` / `gcc -shared`）。`fuyubot plugin install` 只**复制**已编好的产物。
+</Callout>
+
+## 写插件要知道的六件事 [#写插件要知道的六件事]
+
+| 事 | 说明 |
+| --- | --- |
+| 回调是 `extern "C-unwind"` | 用 `extern "C"` 的话，逃出去的 panic 直接 abort 整个进程，宿主来不及 `catch_unwind` |
+| 一个 crate 只展开一次 `define_plugin!` | 四个符号名是 ABI 定死的，展开两次就是重复定义 |
+| ABI 版本目前是 `2` | 不匹配时宿主**拒绝加载**，而且**不能**调 `plugin_stop` 收状态 |
+| 订阅句柄必须活着 | Rust 侧是 `#[must_use]` 的守卫，drop 就是退订 |
+| 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
+| 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
+
+## 按语言看 [#按语言看]
+
+<Cards>
+  <Card title="Rust 插件" href="/docs/plugin/rust/" />
+  <Card title="C 与 C++ 插件" href="/docs/plugin/native/" />
+  <Card title="Go 插件" href="/docs/plugin/go/" />
+  <Card title="Python 插件" href="/docs/plugin/python/" />
+  <Card title="JS 与 TypeScript 插件" href="/docs/plugin/js-ts/" />
+</Cards>
+
+## 按能力看 [#按能力看]
+
+<Cards>
+  <Card title="订阅与事件" href="/docs/plugin/events/" />
+  <Card title="调用 TDLib" href="/docs/plugin/tdlib/" />
+  <Card title="工具与中间件" href="/docs/plugin/tools/" />
+  <Card title="ABI 契约" href="/docs/plugin/abi/" />
+  <Card title="调试与安装" href="/docs/plugin/testing/" />
+</Cards>
+
+## 插件名与目录 [#插件名与目录]
+
+- 插件名只允许字母、数字和 `.` `_` `-`（它会拼进源码和 TOML）；目录名里的 `.` / `-` 换成 `_` 当 crate 名
+  （`fuyubot.weather` → `fuyubot_weather`）。
+- **插件名只有 dlopen 之后才知道**：它来自 `plugin_init` 返回的 `PluginHandle`，所以
+  `fuyubot plugin list` 会真的加载一次再看名字。
+- 脚本插件必须让脚本与 cdylib **同名同目录**（`weather.dll` ↔ `weather.py`），细节见
+  [Python 插件](./python.mdx) 与 [JS 与 TypeScript 插件](./js-ts.mdx)。
+
+
+# JS 与 TypeScript 插件 (/docs/plugin/js-ts)
+
+JS 与 Python 走的是**同一份 Rust 桥**（`fuyubot-sdk-script`），也共用同一套「一行一个 JSON」协议，
+差别只在解释器和你写脚本的语言。TypeScript **不需要 `tsc`**：宿主起的是 `node demo.ts`，
+靠 Node 自带的**类型剥离**直接跑。
+
+## 胶水 crate [#胶水-crate]
+
+```toml
+[workspace]
+
+[package]
+name = "fuyubot_counter"
+version = "0.1.0"
+edition = "2024"
+
+# ⚠️ 名字必须与脚本同名：宿主按动态库文件名去找同名脚本
+[lib]
+name = "counter"
+crate-type = ["cdylib"]
+
+[dependencies]
+fuyubot-sdk-script = "0.1.0"        # crates.io；对 SDK 源码开发时换成 path = "…/crates/fuyubot-sdk-script"
+```
+
+```rust
+// src/lib.rs —— 全部 Rust 代码
+fuyubot_sdk_script::script_plugin!("fuyubot.js.counter", js, "counter.js");
+```
+
+`js` 这一档同时服务 `.js` 与 `.ts`：宿主按文件名找脚本，找到 `.ts` 就直接把它交给 Node。
+
+## JS 脚本 [#js-脚本]
+
+```js
+const host = require("./fuyubot_plugin.js");
+
+host.on("updateNewMessage", (payload) => {
+  host.log("demo 收到一条更新");
+});
+
+host.on("updateNewMessage", (payload) => {
+  host.log("有人说 /hello");
+}, { "message.content.text.text": "/hello" });
+
+host.run();
+```
+
+| 函数 | 签名 | 说明 |
+| --- | --- | --- |
+| `log` | `log(message, level = "info")` | `error` / `warn` / `info` / `debug` / `trace` |
+| `on` | `on(event, handler, filter)` | `filter` 可省；同一个事件可以订阅多次 |
+| `off` | `off(event, handler)` | 只影响脚本内的分发表 |
+| `invoke` | `invoke(method, params, onResponse)` | 给了 `onResponse` 就按 `request_id` 自动配对 |
+| `emit` | `emit(event, payload)` | **只送自己 + 全局订阅者**，不是广播 |
+| `registerTool` | `registerTool(name, description = "", inputSchema)` | 只登记元数据 |
+| `config` | `config()` | 宿主传给 `plugin_start` 的配置 JSON |
+| `run` | `run()` | **必须是最后一行** |
+
+类型声明在 `fuyubot_plugin.d.ts`，`node fuyubot_plugin.js` 会跑桥自带的自检。
+
+## TypeScript [#typescript]
+
+绑定文件与 JS 那份逐字相同，TS 只是多了一份 `fuyubot_plugin.d.ts` 可供补全：
+
+```bash
+fuyubot-sdk codegen --lang js --dir <工程目录>   # 落 fuyubot_plugin.js + fuyubot_plugin.d.ts
+```
+
+`examples/ts-counter/counter.ts` 的写法（按聊天计数然后回一条）：
+
+```ts
+import * as host from "./fuyubot_plugin.js";
+
+const counts = new Map<number, number>();
+
+host.on("updateNewMessage", (payload) => {
+  const message = object(object(payload)["message"]);
+  if (message["is_outgoing"] === true) return;      // 别回自己发的，否则自激
+
+  const content = object(message["content"]);
+  if (content["@type"] !== "messageText") return;
+  const body = text(object(content["text"])["text"]);
+  if (body === "") return;
+
+  const chatId = message["chat_id"];
+  if (typeof chatId !== "number") return;
+
+  const count = (counts.get(chatId) ?? 0) + 1;
+  counts.set(chatId, count);
+  host.invoke("sendMessage", {
     chat_id: chatId,
     input_message_content: {
-      _: "inputMessageText",
-      text: {
-        _: "formattedText",
-        text: "hello world",
-      },
+      "@type": "inputMessageText",
+      text: { "@type": "formattedText", text: `本聊天第 ${count} 条消息`, entities: [] },
     },
   });
-  ```
-
-* **问：找不到 `@fuyu-tdbot/plugin-api`？**
-  * 答：在框架根目录执行 `pnpm install`，并确认插件 `package.json` 的 `dependencies` 含 `"@fuyu-tdbot/plugin-api": "workspace:*"`。独立仓库开发时改用 `file:` / `link:` / 发布版本号。
-
-* **问：我想看更多示例或扩展插件框架，有建议吗？**
-  * 答： 示例中有若干示例，阅读这些示例可以快速上手；如有功能建议或补充示例，欢迎在 [文档仓库](https://github.com/CatMoeCircle/FuyuBot-docs) 提交 PR 和 [主仓库](https://github.com/CatMoeCircle/Fuyu_TDBot) 提交 issue，我们会持续完善文档和示例库。
-
-
-# 插件迁移指南 (/docs/plugin/Migration)
-
-# 插件迁移指南
-
-FuyuBot 插件系统已支持：
-
-* **包插件**：复用 `package.json` 的 `name`/`version`/`description`，用 `pluginType` / `pluginDependencies` 声明插件专有字段；
-* **类型包**：通过 `@fuyu-tdbot/plugin-api` 导入 `Plugin`、`PluginAPI` 等完整类型；
-* **依赖加载**：按 `pluginDependencies` 拓扑排序，依赖先加载；
-* **禁用预过滤**：读取包名阶段即排除已禁用插件，不执行 `import`；
-* **单文件兼容**：顶层 `.ts` 插件保持原样，**最后加载**。
-
-本页说明如何从旧格式迁到新格式。
-
-## 两种插件形态
-
-| 形态          | 位置               | 元数据                           | 契约导入                         | 加载顺序          |
-| ----------- | ---------------- | ----------------------------- | ---------------------------- | ------------- |
-| **单文件插件**   | `plugins/*.ts`   | 类字段 `name` / `type` / …       | 亦建议 `@fuyu-tdbot/plugin-api` | **最后加载**      |
-| **包插件（推荐）** | `plugins/<dir>/` | `package.json` 的 `pluginType` | `@fuyu-tdbot/plugin-api`     | **先加载**，可声明依赖 |
-
-<Callout title="迁移范围" type="info">
-  **目录插件**建议迁到包插件格式。**单文件插件**可继续使用类字段，无需强制迁移。
-</Callout>
-
-## 何时需要迁移
-
-出现以下情况时，建议迁移：
-
-* 插件是多文件目录，希望元数据与依赖可被框架在 **import 之前**读取；
-* 需要声明「先加载另一个插件」的依赖关系；
-* 希望在**独立仓库 / 独立 IDE 窗口**中开发，仍能解析 `Plugin` / `PluginAPI` 等类型；
-* 需要在禁用时**完全不加载模块**，避免占用内存。
-
-## 迁移步骤（目录插件）
-
-### 1. 补齐 / 修改 `package.json`
-
-在插件目录根添加（或更新）`package.json`：
-
-```json title="plugins/my-plugin/package.json"
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "我的插件",
-  "main": "index.ts",
-  "type": "module",
-  "pluginType": "general",
-  "dependencies": {
-    "@fuyu-tdbot/plugin-api": "workspace:*"
-  },
-  "peerDependencies": {
-    "tdl": "^8.0.0",
-    "tdlib-types": "*"
-  },
-  "devDependencies": {
-    "tdl": "^8.0.2",
-    "tdlib-types": "*"
-  }
-}
-```
-
-#### package.json 插件字段说明
-
-| 字段                   | 必填 | 说明                                 |
-| -------------------- | -- | ---------------------------------- |
-| `name`               | 是  | **运行时插件 id**：禁用列表、依赖声明、注册表键都用它     |
-| `pluginType`         | 是  | `"user"` \| `"bot"` \| `"general"` |
-| `version`            | 是  | 版本号                                |
-| `description`        | 是  | 简短描述（可为空字符串，但不能缺字段）                |
-| `pluginDependencies` | 否  | **其他插件的 `name` 数组**，依赖会先加载         |
-
-<Callout title="name 必须稳定" type="warn">
-  禁用配置里写的是 package.json 的 <code>name</code>（例如 <code>adblock</code>）。改 <code>name</code> 会打断已有禁用列表与依赖声明。
-</Callout>
-
-#### 依赖其他插件
-
-```json
-{
-  "name": "ppx114514",
-  "version": "1.0.0",
-  "description": "…",
-  "pluginType": "general",
-  "pluginDependencies": ["puppeteer"]
-}
-```
-
-* 框架会按拓扑顺序加载：**依赖在前**；
-* 依赖缺失或被禁用时会告警，插件仍尝试加载；
-* 循环依赖会告警并跳过环上重复访问。
-
-### 2. 修改入口导入
-
-**旧：**
-
-```ts
-import { Plugin } from "@plugin/BasePlugin.ts";
-```
-
-**新：**
-
-```ts
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-// 需要时：
-import type { PluginAPI, PluginInfo, CommandDef } from "@fuyu-tdbot/plugin-api";
-```
-
-### 3. 删除类上的元数据字段
-
-包插件的 `name` / `type` / `version` / `description` **全部由 `package.json` 注入**，类里不要再写一份。
-
-**旧 `index.ts`：**
-
-```ts
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-
-export default class MyPlugin extends Plugin {
-  name = "我的插件";
-  type = "general";
-  version = "1.0.0";
-  description = "简短描述";
-
-  constructor(client: Client) {
-    super(client);
-    // ...
-  }
-}
-```
-
-**新 `index.ts`：**
-
-```ts
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-
-export default class MyPlugin extends Plugin {
-  // name/version/description/pluginType 由 package.json 注入
-
-  constructor(client: Client) {
-    super(client);
-    // ...
-  }
-}
-```
-
-### 4. （推荐）添加 `tsconfig.json`
-
-便于单独打开插件目录做类型检查：
-
-```json title="plugins/my-plugin/tsconfig.json"
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "noEmit": true
-  },
-  "include": ["./**/*.ts"]
-}
-```
-
-### 5. 安装依赖
-
-在**框架仓库根目录**执行：
-
-```bash
-pnpm install
-```
-
-会把 `@fuyu-tdbot/plugin-api` 以 workspace 链到插件的 `node_modules`。
-
-### 6. 验证加载
-
-启动后日志中应出现插件名；也可用扫描校验脚本（若仓库提供）：
-
-```bash
-node --experimental-strip-types scripts/verify-plugin-scan.ts
-```
-
-期望：该插件出现在 **package plugins** 列表，而不是 legacy / single files。
-
-## 单文件插件：保持原样
-
-单文件插件**不需要** `package.json`，继续：
-
-```ts
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-
-export default class ExamplePlugin extends Plugin {
-  name = "权限示例插件";
-  type = "general";
-  version = "1.0.0";
-  description = "演示命令权限和场景控制功能";
-
-  constructor(client: Client) {
-    super(client);
-    // ...
-  }
-}
-```
-
-加载时：
-
-1. 先加载全部**包插件**（按依赖拓扑）；
-2. 再加载无 `pluginType` 的旧目录（若有）；
-3. **最后**加载顶层单文件插件。
-
-## 禁用插件
-
-在配置的 `plugins.disabled` 数组中写入 **`name`（package.json）**（或单文件类字段的 `name`）：
-
-```json
-{
-  "plugins": {
-    "type": "plugins",
-    "disabled": ["adblock", "fuyu-plugins"]
-  }
-}
-```
-
-* **包插件**：扫描读到清单名后即跳过，**不会 `import`**，减少内存占用；
-* **单文件插件**：仍会在导入并实例化后根据 `name` 跳过注册（无法在读文件名时知道显示名）。
-
-## 加载顺序一览
-
-```text
-1. 包插件（package.json 含 pluginType）
-     └─ 按 pluginDependencies 拓扑排序，依赖在前
-2. 旧目录插件（有目录但无 pluginType）
-3. 单文件插件（plugins/*.ts）—— 最后
-```
-
-## 检查清单
-
-迁移完成后自检：
-
-* [ ] `package.json` 含 `name` / `version` / `description` / `pluginType`
-* [ ] `pluginDependencies` 使用的是其他插件的 `name`
-* [ ] 入口 `import { Plugin } from "@fuyu-tdbot/plugin-api"`
-* [ ] 类中**没有**重复的 name / version / description / pluginType
-* [ ] 框架根目录已 `pnpm install`
-* [ ] 启动日志中插件元数据正确
-* [ ] （可选）独立打开插件目录，`tsc` 能解析 `@fuyu-tdbot/plugin-api`
-
-## 仍依赖框架路径别名的部分
-
-`@fuyu-tdbot/plugin-api` 解决的是**插件契约类型**。以下别名仍由框架根 `tsconfig` / loader 提供，插件在**框架仓库内**运行时可继续使用：
-
-| 别名            | 用途                        |
-| ------------- | ------------------------- |
-| `@log/*`      | 日志                        |
-| `@TDLib/*`    | TDLib 封装                  |
-| `@db/*`       | 配置 / 数据库                  |
-| `@function/*` | 通用函数                      |
-| `@utils/*`    | 工具                        |
-| `@plugin/*`   | 框架内部插件工具（如 `inlineTools`） |
-
-将插件**整包拷出仓库**独立运行前，还需要框架提供对应的宿主 SDK 包；当前契约层（plugin-api）已按仓库外格式设计。
-
-## 常见问题
-
-**迁移后插件名变了 / 禁用失效？**\
-检查禁用列表是否仍使用旧 `name`；新 id 以 `name`（package.json） 为准。
-
-**报缺少 `@fuyu-tdbot/plugin-api`？**\
-在框架根执行 `pnpm install`，确认插件 `dependencies` 中有 `"@fuyu-tdbot/plugin-api": "workspace:*"`。
-
-**依赖插件没先加载？**\
-确认依赖方的 `name`（package.json） 拼写完全一致，且依赖未被禁用。
-
-**单文件还需要改成 package.json 吗？**\
-不需要。单文件继续用类字段即可；只有目录 / 多文件插件推荐包格式。
-
-更多示例见[快速模板](/docs/plugin/Examples/1)与[插件开发约定](/docs/plugin)。
-
-
-# 插件开发约定 (/docs/plugin)
-
-# 插件规则
-
-* 明白插件被 `PluginManager` 识别的规则；
-* 实现必需的接口与生命周期；
-* 注册命令、更新处理器以及可选的定时/手动运行任务；
-* 借助项目提供的 TDLib 封装函数提升开发效率。
-
-插件分两种形态：**包插件**（目录 + `package.json` 清单，推荐）与**单文件插件**（顶层 `.ts`，元数据写在类上）。从旧格式升级请看[插件迁移指南](/docs/plugin/Migration)。
-
-## 1. 插件加载约定
-
-* **默认目录**：`PluginManager` 扫描 `./plugins` 顶层条目。
-* **导出要求**：默认导出一个继承自 `Plugin` 的类。
-* **入口格式**：
-  * 单文件：`plugins/foo.ts`
-  * 目录：`plugins/bar/index.ts`（或 `package.json` 的 `main`）
-
-### 1.1 加载顺序
-
-```text
-1. 包插件（package.json 含 pluginType）→ 按 pluginDependencies 拓扑，依赖在前
-2. 旧目录插件（无 pluginType）
-3. 顶层单文件插件 → 最后加载
-```
-
-**禁用**：包插件在读取 `package.json` 的 `name` 后即排除，**不会 import**；配置里的禁用名与此一致。
-
-### 1.2 包插件（推荐）
-
-目录需带 `package.json`，复用 `name`/`version`/`description`，并用 `pluginType` / `pluginDependencies` 声明插件专有字段：
-
-```json title="plugins/my-plugin/package.json"
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "简短描述",
-  "main": "index.ts",
-  "type": "module",
-  "pluginType": "general",
-  "dependencies": {
-    "@fuyu-tdbot/plugin-api": "workspace:*"
-  }
-}
-```
-
-入口通过包名获取契约类型：
-
-```ts
-import { Plugin, type PluginAPI } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-
-export default class MyPlugin extends Plugin {
-  // name/version/description/pluginType 由 package.json 注入，类中不要再写
-
-  constructor(client: Client, api: PluginAPI) {
-    super(client);
-  }
-}
-```
-
-* `name`：运行时 id（禁用列表、依赖声明、注册键）。
-* `pluginDependencies`：填写**其他插件的** `name`，框架保证依赖先加载。
-* 契约包：`@fuyu-tdbot/plugin-api`（`Plugin`、`PluginAPI`、`PluginInfo`、`CommandDef` 等）。
-
-### 1.3 单文件插件
-
-无需 `package.json`，元数据写在类字段上，**最后加载**：
-
-```ts
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-
-export default class MyPlugin extends Plugin {
-  name = "我的插件";
-  type = "general";
-  version = "1.0.0";
-  description = "简短描述";
-
-  constructor(client: Client) {
-    super(client);
-  }
-}
-```
-
-构造函数签名：`constructor(client: Client, api?: PluginAPI)`。
-
-### 1.4 路径别名导入
-
-框架仓库内可用下列别名（由根 `tsconfig` 与 `node/loader.ts` 解析）：
-
-| 别名            | 实际路径             | 用途说明              |
-| ------------- | ---------------- | ----------------- |
-| `@log/*`      | `src/log/*`      | 日志                |
-| `@plugin/*`   | `src/plugin/*`   | 框架插件内部工具（单文件契约亦可） |
-| `@TDLib/*`    | `src/TDLib/*`    | TDLib 封装和接口       |
-| `@type/*`     | `src/types/*`    | 共享类型              |
-| `@function/*` | `src/function/*` | 通用函数              |
-| `@db/*`       | `src/Database/*` | 数据库 / 配置          |
-| `@utils/*`    | `src/utils/*`    | 工具                |
-
-**插件契约**（`Plugin` 等）优先使用包名 `@fuyu-tdbot/plugin-api`，便于日后独立仓库开发。
-
-#### 使用示例
-
-```ts
-import logger from "@log/index.ts";
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import { sendMessage } from "@TDLib/function/message.ts";
-import { getDatabase } from "@db/index.ts";
-```
-
-***
-
-
-# 介绍 (/docs/start)
-
-<GithubInfo owner="CatMoeCircle" repo="Fuyu_TDBot" />
-
-## 介绍
-
-Fuyu-TDBot 是一个使用 TypeScript 编写的 TG 机器人框架，使用 [TDLib](https://core.telegram.org/tdlib) 与 Telegram 进行交互。
-[TDLib](https://core.telegram.org/tdlib) 提供了几乎完整的 Telegram API 功能，且方便开发，
-因此本框架可以登录 `普通账号` 和 `Bot 账号`
-
-## 特性
-
-* 使用 TypeScript 编写，类型安全，开发体验良好
-* 基于 TDLib，支持普通账号和 Bot 账号
-* 支持 插件化扩展，方便添加新功能
-* 提供TDLib 的 API 封装，简化开发流程
-* 内置多种实用功能插件，如自动回复、群管理等
-
-<Callout title="注意" type="warn">
-  本项目使用了 Node.js 实验性功能 `--experimental-loader`，其行为可能随 Node
-  版本更改。
-</Callout>
-
-## Telegram Database Library
-
-[TDLib](https://core.telegram.org/tdlib)（Telegram 数据库库）是一个跨平台、功能齐全的 Telegram 客户端实例。
-
-* **跨平台**。TDLib 可在 Android、iOS、Windows、macOS、Linux、WebAssembly、FreeBSD、Windows Phone、watchOS、tvOS、Tizen、Cygwin 上使用。它还应该在其他 \*nix 系统上工作，无论是否付出最小的努力。
-* **多语言**。TDLib 可以轻松地与任何能够执行 C 函数的编程语言一起使用。此外，它还具有与 Java（使用 JNI）和 C#（使用 C++/CLI）的本机绑定。
-* **易于使用**\*。TDLib 负责所有网络实施细节、加密和本地数据存储。
-* **高性能**。在 Telegram Bot API 中，每个 TDLib 实例同时处理超过 24,000 个活跃的机器人。
-* **有据可查**。所有 TDLib API 方法和公共接口都有完整的文档。
-* **一致**。TDLib 保证所有更新都将按正确的顺序交付。
-* **可靠**。TDLib 在缓慢且不可靠的互联网连接上保持稳定。
-* **安全**。所有本地数据都使用用户提供的加密密钥进行加密。
-* **完全异步**。对 TDLib 的请求不会相互阻止或其他任何内容，响应将在可用时发
-
-<Callout title="注意" type="warn">
-  本部分内容摘自 [TDLib 官方文档](https://core.telegram.org/tdlib)，如有翻译不准确之处请以官方文档为准。
-</Callout>
-
-## MongoDB
-
-Fuyu-TDBot 使用 MongoDB 作为默认的数据存储解决方案。MongoDB 是一个基于文档的 NoSQL 数据库，具有高性能、可扩展性和灵活的数据模型，适合存储和管理大量的非结构化数据。
-
-## 社区与支持
-
-如果您在使用 Fuyu-TDBot 时遇到任何问题，或者有任何建议和反馈，欢迎加入我们的社区进行交流和讨论：
-
-* [GitHub 讨论区](https://github.com/CatMoeCircle/Fuyu_TDBot/discussions)
-* [Telegram 频道](https://t.me/CatMoeCircle)
-
-我们期待您的参与，共同推动 Fuyu-TDBot 的发展！
-
-
-# 快速开始 (/docs/start/quickstart)
-
-## 快速开始
-
-<Callout title="前提条件" type="success">
-  * 熟悉命令行
-  * 已安装 `Git`
-  * 已安装 [Node.js](https://nodejs.org/) `v22.6.0` 或更高版本
-  * 已安装 [MongoDB](https://www.mongodb.com/) 并正在运行 / 或使用远程的 MongoDB 服务
-  * 已创建 Telegram 账号（普通账号或 Bot 账号均可）
-  * 已获取 Telegram API ID 和 API Hash，获取方法请参考 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)
-
-  你可以查看 `准备指南` 来安装这些前置条件。
-</Callout>
-
-在本节中，我们将介绍如何在本地搭建 Fuyu-TDBot，并运行一个简单的机器人实例。
-
-确保你安装了最新版本的 Node.js，并且你的当前工作目录正是打算创建项目的目录。
-
-首先你需要安装 pnpm（如果你还没有安装的话）：
-
-<Tabs defaultValue="npm">
-  <TabsList>
-    <TabsTrigger value="npm">
-      <svg viewBox="0 0 27.23 27.23" aria-hidden="true">
-        <rect fill="#333333" width="27.23" height="27.23" rx="2" />
-
-        <polygon fill="#fff" points="5.8 21.75 13.66 21.75 13.67 9.98 17.59 9.98 17.58 21.76 21.51 21.76 21.52 6.06 5.82 6.04 5.8 21.75" />
-      </svg>
-
-      npm
-    </TabsTrigger>
-  </TabsList>
-
-  <TabsContent value="npm">
-    npm install -g pnpm
-  </TabsContent>
-</Tabs>
-
-接下来，使用 git 克隆 Fuyu-TDBot 仓库：
-
-```bash
-git clone https://github.com/CatMoeCircle/Fuyu_TDBot.git
-cd Fuyu_TDBot
-
-# 然后，安装项目依赖
-pnpm install -P
-
-# 接下来，运行bot初始化
-pnpm start
-```
-
-第一次启动后，会初始化配置文件，并提示你输入必要的信息：
-
-```bash
-✔ 请输入 TG_API_ID <your_api_id>
-✔ 请输入 TG_API_HASH <your_api_hash>
-# 在MONGODB_URL的结尾中添加数据库名称，
-# [!code word:fuyu-tdbot]
-# 例如：mongodb://localhost:27017/fuyu-tdbot 可以指定数据库名称为 fuyu-tdbot
-# 默认情况下没有则为 fuyubot
-✔ 请输入 MONGODB_URL <your_mongodb_url>
-
-✔ 请选择登录的账户类型 Bot | User
-✔ 请输入 Bot Token <your_bot_token>
-
-[2025-10-21 16:27:41] INFO: Bot 已登录: Bot名称 (@BotUsername - ID: BotID)
-
-```
-
-## 通过 PM2 后台运行
-
-### PM2 进程守护
-
-如果你希望在后台运行 Fuyu-TDBot，可以使用 PM2 进行进程守护。
-
-<Callout title="注意" type="warn">
-  使用前请确保你已经完成了上述的初始化步骤，并登录了账户
-</Callout>
-
-```bash
-# 启动
-pnpm pm2:start
-# 停止
-pnpm pm2:stop
-# 重启
-pnpm pm2:restart
-# 查看日志
-pnpm pm2:logs
-
-```
-
-
-# 快速模板 (/docs/plugin/Examples/1)
-
-### 快速开始（包插件 · 推荐）
-
-目录插件在 `package.json` 中声明元数据与依赖，入口从 `@fuyu-tdbot/plugin-api` 导入契约：
-
-```json title="plugins/my-plugin/package.json"
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "插件简短描述",
-  "main": "index.ts",
-  "type": "module",
-  "pluginType": "general",
-  "dependencies": {
-    "@fuyu-tdbot/plugin-api": "workspace:*"
-  }
-}
-```
-
-```ts title="plugins/my-plugin/index.ts"
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-
-export default class LifePlugin extends Plugin {
-  // name/version/description/pluginType 由 package.json 注入，类中勿重复声明
-  constructor(client: Client) {
-    super(client);
-    this.cmdHandlers = {
-      // 命令注册名称
-      hello: {
-        description: "问候用户", // 命令的简短描述
-        scope: "private", // 命令的运行环境 "all" | "private" | "group" | "channel" 可数组表示多个环境
-        permission: "owner", // 命令的调用权限 "owner" | "admin" | "all"
-        showInHelp: true,
-        handler: async (updateNewMessage, _args) => {
-          console.log(updateNewMessage);
-        },
-      },
-    };
-  }
-}
-```
-
-在框架根目录执行 `pnpm install` 后启动即可加载。需要依赖其他插件时，把对方的 `name` 写进 `pluginDependencies`。
-
-### 单文件模板（兼容旧版）
-
-顶层 `.ts` 无需 `package.json`，元数据写在类上，**最后加载**：
-
-```ts title="plugins/example.ts"
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-
-export default class LifePlugin extends Plugin {
-  type = "general"; // 插件类型可选 "general" 或 "bot" , "user"
-  name = "插件唯一名称"; // 插件唯一名称
-  version = "1.0.0"; // 插件版本号
-  description = "插件简短描述"; // 插件简短描述
-  constructor(client: Client) {
-    super(client);
-    this.cmdHandlers = {
-      hello: {
-        description: "问候用户",
-        scope: "private",
-        permission: "owner",
-        showInHelp: true,
-        handler: async (updateNewMessage, _args) => {
-          console.log(updateNewMessage);
-        },
-      },
-    };
-  }
-}
-```
-
-从单文件 / 旧类字段迁到包插件，见[插件迁移指南](/docs/plugin/Migration)。
-
-
-# 多命令 (/docs/plugin/Examples/2)
-
-### 多命令
-
-```ts
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-
-export default class BgmPlugin extends Plugin {
-  // 包插件：元数据在 package.json（含 pluginType）
-  // 单文件插件可写：type / name / version / description 类字段
-  constructor(client: Client) {
-    super(client);
-    this.cmdHandlers = {
-      命令1: {
-        description: "详细的插件介绍",
-        handler: async (update, _args) => {
-          const mod = await import("对应方法目录");
-          return mod.default(this.client, update.message, _args);
-        },
-      },
-      命令2: {
-        description: "详细的插件介绍",
-        handler: async (update, _args) => {
-          const mod = await import("对应方法目录");
-          return mod.default(this.client, update.message, _args);
-        },
-      },
-      //以此类推
-    };
-  }
-}
-```
-
-
-# 完整示例 (/docs/plugin/Examples/3)
-
-## 3. 示例插件
-
-```ts
-import type { Client } from "tdl";
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import logger from "@log/index.ts";
-
-export default class HelloPlugin extends Plugin {
-	// 包插件：元数据在 package.json（含 pluginType）
-	// 单文件插件可在类字段上声明这些元数据
-    // [!code highlight]
-    // 定时任务
-	runHandlers = {
-		heartbeat: {
-			description: "每 30 秒输出心跳日志",
-			intervalMs: 30_000,
-			immediate: true,
-			handler: () => {
-				logger.info("[HelloPlugin] heartbeat");
-			},
-		},
-	};
-
-	constructor(client: Client) {
-		super(client);
-        // [!code highlight]
-        // 命令注册
-		this.cmdHandlers = {
-			hello: {
-				description: "回复 '你好，世界！'",
-				scope: "all",
-				permission: "all",
-				handler: async (updateNewMessage, _args) => {
-					try {
-						await this.client.invoke({
-							_: "sendMessage",
-							chat_id: updateNewMessage.message.chat_id,
-							input_message_content: {
-								_: "inputMessageText",
-								text: { _: "formattedText", text: "你好，世界！" },
-							},
-						});
-					} catch (e) {
-						logger.error("发送消息失败", e);
-					}
-				},
-			},
-		};
-    // [!code highlight]
-    // 接收更新
-		this.updateHandlers = {
-			updateNewMessage: {
-				handler: async () => {
-					// 处理新消息逻辑
-				},
-			},
-		};
-	}
-    // [!code highlight]
-    // 初始化
-	async onLoad() {
-		logger.info("HelloPlugin 已加载，执行一次性初始化");
-	}
-    // [!code highlight]
-    // 资源清理
-	async destroy() {
-		// 清理资源或定时器
-	}
-}
-```
-
-
-# 命令注册 (/docs/plugin/Sample/1)
-
-#### 命令注册
-
-* `cmdHandlers: Record<string, CommandDef>`：命令路由表，仅在需要响应命令时赋值。单个命令可进一步声明 `description`、`handler`、`scope` 与 `permission`。                                                                                                                  |
-
-<TypeTable
-  type={{
-  "description": {
-    description: "命令的简短描述",
-    required: true,
-    type: "string",
-  },
-  "scope": {
-    description: '命令的运行环境',
-    type: <code>string | string[]</code>,
-    default: <code>"all"</code>,
-    parameters: [
-      { name: 'all', description: <span>所有场景都能使用<code>"all"</code></span> },
-      { name: 'private', description: <span>只能在私聊中使用<code>"private"</code></span> },
-      { name: 'group', description: <span>只能在群组中使用<code>"group"</code></span> },
-      { name: 'channel', description: <span>只能在频道中使用<code>"channel"</code></span> },
-    ],
-
-  },
-  "permission": {
-    description: '命令的调用权限',
-    type: <code>"all" | "admin" | "owner"</code>,
-    default: <code>"all"</code>,
-    parameters: [
-      { name: 'owner', description: <span>只有超级管理员能使用<code>"owner"</code></span> },
-      { name: 'admin', description: <span>管理员和超级管理员都能使用<code>"admin"</code></span> },
-      { name: 'all', description: <span>所有人都能使用<code>"all"</code> （注:如果为<code>user</code>账户 即使为<code>"all"</code> 的情况下也只会回应 <code>主人</code> 和 <code>管理员</code> 以及 <code>自身</code> 的命令请求）</span> },
-    ],
-  },
-  "showInHelp":{
-  	description: "该命令是否在帮助列表中显示",
-    type: "boolean",
-    default: <code>true</code>,
-  },
-  "handler": {
-    description: "命令处理器",
-    required: true,
-    type: <code>(updateNewMessage: updateNewMessage, args: string[]) =&gt; Promise&lt;void&gt;</code>,		
-  }
-}}
-/>
-
-可以使用我们 TDLib 封装方法或者 TDLib 的原始调用方法来调用 [TDLib 方法 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_function.html)。
-
-<Callout title="元数据写在哪" type="info">
-  **包插件**：复用 `package.json` 的 `name` / `version` / `description`，插件类型写在 `pluginType`。<br />
-  **单文件插件**：写在类字段上。见[插件迁移指南](/docs/plugin/Migration)。
-</Callout>
-
-```ts title="Examples.ts"
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
-import type { updateNewMessage } from "tdlib-types";
-
-export default class LifePlugin extends Plugin {
-  // 包插件：元数据由 package.json 注入
-  // 单文件插件可改为：
-  // name = "插件唯一名称";
-  // type = "general";
-  // version = "1.0.0";
-  // description = "简短描述";
-
-  constructor(client: Client) {
-    super(client);
-
-	this.cmdHandlers = {
-			// hello为命令  [!code word:hello]
-			hello: {// [!code highlight]
-				description: "回复 '你好，世界！'",// [!code highlight]
-				scope: ["all"],// [!code highlight]
-				permission: "all",// [!code highlight]
-				showInHelp: true,// [!code highlight]
-				handler: async (updateNewMessage, _args) => {// [!code highlight]
-					try {
-						await this.client.invoke({
-							_: "sendMessage",
-							chat_id: updateNewMessage.message.chat_id,
-							input_message_content: {
-								_: "inputMessageText",
-								text: {
-									_: "formattedText",
-									text: "你好，世界！",
-								},
-							},
-						});
-					} catch (e) {
-						console.error(e);
-					}
-				},// [!code highlight]
-			},// [!code highlight]
-	};
-  }
-}
-```
-
-
-# 更新事件注册 (/docs/plugin/Sample/2)
-
-#### 更新事件注册
-
-* `updateHandlers: Record<string, UpdateDef>`：TDLib 更新处理表，仅在需要接收更新时运行处理器
-
-所有的更新都可以在[TDLib Update 文档](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1_update.html)。中查找到
-
-```ts
-import type { Client } from "tdl";
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-
-export default class HelloPlugin extends Plugin {
-  // 包插件：元数据在 package.json（含 pluginType）
-  // 单文件插件可在类字段上声明这些元数据
-
-  constructor(client: Client) {
-    super(client);
-
-    this.updateHandlers = {
-      // updateNewMessage 为需要接收的更新
-      // [!code word:updateNewMessage]
-      // [!code highlight]
-      updateNewMessage: {
-        // update 为收到的更新内容   // [!code highlight]
-        // [!code word:update]
-        // [!code highlight]
-        handler: async (update) => {
-          // [!code highlight]
-          console.log(update);
-        }, // [!code highlight]
-      }, // [!code highlight]
-    };
-  }
-}
-```
-
-
-# 插件初始化 (/docs/plugin/Sample/3)
-
-### 被注册时立即执行
-
-```ts
-	async onLoad() {
-		logger.info("HelloPlugin 已加载，执行一次性初始化");
-	}
-
-```
-
-
-# 定时任务 (/docs/plugin/Sample/4)
-
-### 定时任务
-
-```ts
-runHandlers = {
-  heartbeat: {
-    description: "每 30 秒输出心跳日志",
-    intervalMs: 30_000,
-    immediate: true,
-    handler: () => {
-      logger.info("[HelloPlugin] heartbeat");
-    },
-  },
-};
-```
-
-
-# 图片生成 (/docs/plugin/Sample/5)
-
-## 介绍
-
-图片生成主要依靠 `satori` 进行生成图片
-
-可以将 Vue 模板渲染成图片
-
-## 须知事项
-
-* x-satori 负责把最终的静态 HTML 渲染为图片，它不会执行或运行 Vue 组件中的 JavaScript（例如 `<script>` 内的逻辑、响应式状态或生命周期钩子），也不会处理组件范围内的 `<style>`（包括 scoped/style modules）。因此，仅依赖组件内脚本或样式来生成最终效果通常不会生效。
-
-* 由于 satori 并不完整地应用组件级样式，单纯依靠 `class` 引入的样式通常不可预期。satori 对部分 Tailwind CSS 类有内置支持，但支持范围有限且可能随版本变化，使用前请务必自行测试。如果你在 `class` 中使用 Tailwind，请在目标环境中验证样式是否生效。
-
-* 要保证样式在图片中生效，推荐将关键样式写为内联样式（例如 `style="..."`），或者在渲染前把模板预渲染为包含最终样式的静态 HTML 再交给 satori。可以参考 satori 的 CSS 支持列表来确认哪些 CSS 属性被支持
-
-<Callout title="satori 支持的 CSS 列表（参考）">
-  [https://github.com/vercel/satori?tab=readme-ov-file#css](https://github.com/vercel/satori?tab=readme-ov-file#css)
-</Callout>
-
-```vue title="template.vue"
-<template>
-  <!-- 不生效部分  -->
-  <!-- [!code word:box] -->
-  <div class="box" style="display: flex;">
-    {{ title }}
-  </div>
-  <div style="display: flex;">
-  <!-- 不生效部分 -->
-  <!-- [!code highlight] -->
-    {{ newtitle }}
-  </div>
-  <div v-for="value in fortest" :key="value" style="display: flex;">
-    <p>value: {{ value }}</p>
-  </div>
-  <div v-if="show" style="display: flex;">隐藏内容</div>
-</template>
-<script setup lang="ts">
-// 不生效部分
-// [!code highlight]
-import { ref } from "vue";
-
-// 这里是传递参数部分
-defineProps<{
-  title?: string;
-  fortest?: number;
-  show?: boolean;
-}>();
-
-// 不生效部分
-// [!code highlight]
-const newtitle = ref("新标题");
-</script>
-
-// 不生效部分
-{/* [!code highlight] */}
-<style scoped>
-/* [!code highlight] */
-.box {
-  /* [!code highlight] */
-  width: 100px; /* [!code highlight] */
-  height: 100px; /* [!code highlight] */
-  background-color: red; /* [!code highlight] */
-} /* [!code highlight] */
-/* [!code highlight] */
-</style>
-```
-
-## 使用方法
-
-在 @function/genImg.ts 中 我们包装了一个 generateImage 方法用于图片生成
-
-下面是 `generateImage` 方法的类型表，使用项目内置的 `TypeTable` 组件展示参数说明与返回值：
-
-<TypeTable
-  type={{
-  "options": {
-    description: "图片生成选项对象",
-    type: <code>{`{ width: number | 'auto'; height: number | 'auto'; fonts?: FontOptions[]; debug?: boolean; quality?: number; imgname?: string; format?: 'png' | 'jpg' | 'jpeg'; jpegQuality?: number }`}</code>,
-    parameters: [
-      { name: 'width', description: <span>图片宽度，数字或字符串 <code>"auto"</code></span> },
-      { name: 'height', description: <span>图片高度，数字或字符串 <code>"auto"</code></span> },
-      { name: 'fonts', description: <span>字体配置数组，详见 <code>FontOptions</code></span> },
-      { name: 'debug', description: '是否打开调试模式，调试模式下会保留中间文件' },
-      { name: 'quality', description: '输出质量 (0-100)，仅对某些格式生效' },
-      { name: 'imgname', description: '生成文件名（可选），不含扩展名' },
-      { name: 'format', description: "图片格式：'png' | 'jpg' | 'jpeg'" },
-      { name: 'jpegQuality', description: '当 format 为 jpeg/jpg 时使用的质量设置 (0-100)' },
-    ],
-  },
-  "vuetemplateStr": {
-    description: 'Vue 模板字符串，用于渲染图片的静态 HTML',
-    type: <code>string</code>,
-  },
-  "props": {
-    description: '传入 Vue 模板的属性对象（可选）',
-    type: <code>Record&lt;string, any&gt;</code>,
-    default: <code>{`{}`}</code>,
-  },
-}}
-/>
-
-示例：
-
-<Files>
-  <File name="test.ts" />
-
-  <File name="template.vue" />
-</Files>
-
-```ts title="test.ts"
-import template from "./template.vue?raw";
-import { generateImage } from "@function/genImg.ts";
-// 调用示例
-const result = await generateImage(
-  {
-    width: 1200,
-    height: 630,
-    format: 'png',
-    imgname: 'og-image',
-  },
-  template
-  { title: '示例标题' },
-);
-
-```
-
-## 返回处理
-
-`generateImage` 方法返回一个包含生成图片信息的对象：
-
-```ts
-{
-  path: '/tmp/og-image.png',
-  width: 1200,
-  height: 630,
-  hash: 'abcd1234',
-  file_id: 'file_5678'
-}
-```
-
-<TypeTable
-  type={{
-  path: {
-    description:
-      '图片的绝对路径 (如何没有路径就是有缓存使用 file_id 发送图片，避免重复上传)',
-    type: 'string',
-  },
-  width: {
-    description: '图片宽度，单位像素',
-    type: 'number',
-  },
-  height: {
-    description: '图片高度，单位像素',
-    type: 'number',
-  },
-  hash: {
-    description: '图片内容的哈希值',
-    type: 'string',
-  },
-  file_id: {
-    description: '上传到 Telegram 后的文件 ID(当有 path 时表示该参数有缓存图片)',
-    type: 'string',
-  },
-}}
-/>
-
-```ts
-import { sendMessage } from "@TDLib/function/message.ts";
-import { generateImage } from "@function/genImg.ts";
-import { updateImgCache } from "@db/update.ts";
-import fs from "fs";
-
-
-const imagePath = await generateImage(
-  {
-    width: 1200,
-    height: "auto",
-  },
-  templateStr,
-  props
-);
-// 当有路径时表示图片生成成功并且没有缓存需要进行上传
-if (imagePath.path) {
-  const result = await sendMessage(client, message.message.chat_id, {
-    media: {
-      photo: {
-        path: imagePath.path,
-      },
-    },
-  });
-  // 保存 file_id 到缓存
-  if (result && result.content._ === "messagePhoto" && imagePath.hash) {
-    const file_id = result.content.photo.sizes.slice(-1)[0].photo.remote.id;
-    try {
-      await updateImgCache(imagePath.hash, file_id);
-    } catch (err) {
-      logger.warn("保存 file_id 缓存失败", err);
-    }
-  }
-  // 可选删除临时文件
-  await fs.promises.unlink(imagePath.path);
-  return;
-}
-
-// 当有缓存时path会为空，file_id 进行发送
-if ((imagePath.hash, imagePath.file_id)) {
-  await sendMessage(client, message.message.chat_id, {
-    media: {
-      photo: {
-        id: imagePath.file_id,
-      },
-    },
-  });
-  return;
-}
-// 图片生成失败错误处理
-await sendMessage(client, message.message.chat_id, {
-  text: "图片生成失败",
 });
+
+host.run();
 ```
 
+`object()` / `text()` 是示例里的两个窄化小函数（JS 侧没有 schema，取字段前先窄化成对象）。
+`sendMessage` 的参数形状以 TDLib 为准，见 [调用 TDLib](./tdlib.mdx)。
 
-# 插件开发帮助 (/docs/plugin/Sample)
+<Callout type="warn">
+  类型剥离只认**能剥掉**的语法：注解、`interface` / `type`、`as`。
+  **不能用** `enum` / `namespace` / 构造器参数属性——那些需要真正的编译。
+  Node 要 ≥ 23.6（默认开）；22.6+ 得加 `--experimental-strip-types`。你本机的 Node 太老就自己
+  `tsc` 编成 `.js`：**编译与打包是作者自己的工具链**。
+</Callout>
 
-## 插件接口一览
+## 脚本约定（与 Python 完全一致） [#脚本约定与-python-完全一致]
 
-### 1 元数据字段
+| 约定 | 说明 |
+| --- | --- |
+| 同名同目录 | `counter.dll` ↔ `counter.js`（或 `.ts`）；宿主依次试 `.py` / `.js` / `.ts` |
+| `run()` 最后一行 | 宿主收到 `{"op":"ready"}` 才算加载完成，`plugin_start` 等它（上限 10 秒） |
+| UTF-8 | 桥把 stdio 钉成 UTF-8；脚本自己的输出一律按 UTF-8 走 |
+| 起不来就失败 | 解释器缺失、脚本语法错都会让 `plugin_start` 返回错误，不会静默变成空插件 |
 
-元数据的**写在哪**取决于插件形态：
+解释器依次试 `node` / `bun`。`[lib] name` 必须与脚本同名，否则默认的
+`fuyubot_example_counter.dll` 找不到 `counter.ts`。
 
-| 形态                         | `name` / `type` / `version` / `description`                               |
-| -------------------------- | ------------------------------------------------------------------------- |
-| **包插件**（目录 + `pluginType`） | 复用 `package.json` 的 `name`/`version`/`description`，另加 `pluginType`，框架注入实例 |
-| **单文件插件**                  | 写在类字段上                                                                    |
 
-<TypeTable
-  type={{
-  name: {
-    description: '插件唯一名称（运行时 id；禁用与依赖声明用它）',
-    required: true,
-    type: 'string',
-  },
-  type: {
-    description: '插件适用的运行主体',
-    type: <code>"user" | "bot" | "general"</code>,
-    default: <code>"general"</code>,
-  },
-  version: {
-    description: '插件版本号',
-    required: true,
-    type: 'string',
-  },
-  description: {
-    description: '简短描述',
-    required: true,
-    type: 'string',
-  },
-  longDescription: {
-    description: '可选的长描述',
-    type: 'string',
-  },
-}}
-/>
+# C 与 C++ 插件 (/docs/plugin/native)
 
-#### 包插件：元数据在 package.json
+C 与 C++ 用**同一份头文件** `fuyubot_plugin.h`，差别只有两条：导出符号要不要放进 `extern "C"`，
+以及用什么拼 JSON。头文件是**产物**，不是源码——它由 cbindgen 从 Rust 定义生成，
+用 `fuyubot-sdk codegen` 落盘，别手改（改了下次就被覆盖）。
 
-```json title="package.json"
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "description": "简短描述",
-  "main": "index.ts",
-  "type": "module",
-  "pluginType": "general",
-  "dependencies": {
-    "@fuyu-tdbot/plugin-api": "workspace:*"
-  }
+```bash
+fuyubot-sdk init ping --lang c --dir .        # 生成 ping.c + fuyubot_plugin.h
+fuyubot-sdk init ping --lang cpp --dir .      # 生成 plugin.cpp + fuyubot_plugin.h
+fuyubot-sdk codegen --lang c --dir <工程目录>   # 只刷新头文件（C++ 用 --lang cpp，同一份）
+```
+
+## 四个符号 [#四个符号]
+
+| 符号 | 必须吗 | 说明 |
+| --- | --- | --- |
+| `plugin_init` | **必须** | 比 `host->version != ABI_VERSION`，存下 VTable，返回 `PluginHandle` |
+| `plugin_start` | 可选 | 订阅/注册；返回 `0` 表示成功 |
+| `plugin_stop` | 可选 | 清状态；只登记元数据的插件可以不写 |
+| `plugin_free_string` | **必须** | 本插件不往外送字符串时也得有个空实现（宿主可能调它） |
+
+`PluginHandle` 的判据是「`abi_version != 0` **且** `context` 非空」，所以 `context` 不能给 `NULL`。
+版本不对就返回全零句柄，宿主会把它当成拒绝加载。
+
+## C [#c]
+
+```c
+#include "fuyubot_plugin.h"
+
+static const HostApiVTable *g_host = NULL;
+static int g_state = 0;              /* PluginHandle::context 必须非空 */
+
+/* 回调与宿主在同一根线程上跑；ABI 是能 unwind 的那种（对 C 而言就是普通 C 调用）。 */
+static int32_t on_update(void *user_data, const char *payload) {
+    (void)user_data;
+    /* 判正文 == "/ping"，然后： */
+    g_host->td_invoke_simplified(g_host->host_ctx, "sendMessage", params);
+    g_host->log(g_host->host_ctx, 3, "ping 插件：回了 pong");
+    return 0;
+}
+
+FUYUBOT_EXPORT PluginHandle plugin_init(const HostApiVTable *host) {
+    PluginHandle failed = {0, 0, NULL, NULL};
+    if (host == NULL || host->version != ABI_VERSION) return failed;
+    g_host = host;
+    PluginHandle handle = { ABI_VERSION, (uint32_t)sizeof(PluginHandle), &g_state, "ping" };
+    return handle;
+}
+
+FUYUBOT_EXPORT int32_t plugin_start(PluginHandle handle, const char *config_json) {
+    (void)config_json;
+    if (handle.context == NULL || g_host == NULL) return -1;
+    SubscriptionHandle s =
+        g_host->on(g_host->host_ctx, "updateNewMessage", NULL, on_update, NULL);
+    return s.id == 0 ? -1 : 0;
+}
+
+FUYUBOT_EXPORT void plugin_stop(PluginHandle handle) { (void)handle; g_host = NULL; }
+FUYUBOT_EXPORT void plugin_free_string(char *ptr) { (void)ptr; }
+```
+
+`ABI_VERSION` 与 `FUYUBOT_EXPORT` 都来自头文件，不要自己写死。
+
+## C++ [#c-1]
+
+同 C，**唯一的硬差别**是四个导出符号必须在 `extern "C"` 里——C++ 会改函数名（mangling），
+宿主按 ABI 定死的名字 `dlsym`，改了就找不到。
+
+```cpp
+extern "C" {
+
+FUYUBOT_EXPORT PluginHandle plugin_init(const HostApiVTable *host) {
+    PluginHandle failed{0, 0, nullptr, nullptr};
+    if (host == nullptr || host->version != ABI_VERSION) return failed;
+    g_host = host;
+    return PluginHandle{ ABI_VERSION, (uint32_t)sizeof(PluginHandle), &g_state, "ping" };
+}
+
+FUYUBOT_EXPORT int32_t plugin_start(PluginHandle handle, const char *config_json);
+FUYUBOT_EXPORT void plugin_stop(PluginHandle handle);
+FUYUBOT_EXPORT void plugin_free_string(char *ptr);
+
+}  // extern "C"
+```
+
+<Callout type="warn">
+  `C-unwind` 对 C/C++ 而言与普通 C 调用**ABI 一致**，但 C++ 的异常照样能穿过这个边界——
+  逃到宿主那边的异常是未定义行为。**在回调内部把异常处理完再返回**。
+</Callout>
+
+## 编译（你自己的工具链） [#编译你自己的工具链]
+
+```bash
+# MSVC：先 call vcvars64.bat；/utf-8 不能省（源码与头文件都是 UTF-8）
+cl /nologo /utf-8 /LD /I <工程目录> <工程目录>/ping.c /Fe:<工程目录>/target/debug/ping.dll
+
+# gcc / clang
+cc -shared -fPIC -I <工程目录> <工程目录>/ping.c -o <工程目录>/target/debug/ping.dll
+g++ -shared -fPIC -I <工程目录> <工程目录>/plugin.cpp -o <工程目录>/target/debug/ping.dll
+```
+
+`/utf-8` 省掉的后果很难看：中文注释被按系统代码页拆坏，编译器报的是「注释提前结束、后面全是语法错误」。
+
+编完装进插件目录：
+
+```bash
+fuyubot plugin install <工程目录>
+```
+
+## 注意 [#注意]
+
+- 模板里的 JSON 取值是**朴素查找**（`strstr`），不处理转义、不处理同名嵌套键；认真写就引一个 JSON 库。
+- 宿主返回的字符串是**线程局部缓冲**，只在下一次宿主调用之前有效——当场拷走，并且**不要试图释放它**。
+- 想少拼 JSON，可以只发 `td_invoke_simplified` 需要的参数对象（`@type` 由宿主补），见 [调用 TDLib](./tdlib.mdx)。
+
+
+# Python 插件 (/docs/plugin/python)
+
+Python 插件的逻辑全写在 `.py` 里，cdylib 只是一层胶水：宿主加载它，它在 `plugin_start` 时
+启动解释器执行脚本，两边用**一行一个 JSON** 说话（见 [ABI 契约](./abi.mdx) 里的脚本形态）。
+
+## 胶水 crate [#胶水-crate]
+
+```toml
+[workspace]
+
+[package]
+name = "fuyubot_weather"
+version = "0.1.0"
+edition = "2024"
+
+# ⚠️ 名字必须与脚本同名：宿主是按**动态库文件名**去找同名脚本的
+[lib]
+name = "weather"
+crate-type = ["cdylib"]
+
+[dependencies]
+fuyubot-sdk-script = "0.1.0"        # crates.io；对 SDK 源码开发时换成 path = "…/crates/fuyubot-sdk-script"
+```
+
+```rust
+// src/lib.rs —— 这个插件的全部 Rust 代码
+fuyubot_sdk_script::script_plugin!("fuyubot.python.weather", python, "weather.py");
+```
+
+这一行展开出 `Plugin` 实现和四个 C ABI 导出符号；插件只依赖 `fuyubot-sdk-script` 一个 crate。
+
+## 脚本 [#脚本]
+
+`fuyubot-sdk init demo --lang python` 生成的 `demo.py`：
+
+```python
+import fuyubot_plugin as host
+
+@host.on("updateNewMessage")
+def on_message(payload):
+    host.log("demo 收到一条更新")
+
+@host.on("updateNewMessage", filter={"message.content.text.text": "/hello"})
+def on_hello(payload):
+    host.log("有人说 /hello")
+
+host.run()
+```
+
+| 函数 | 签名 | 说明 |
+| --- | --- | --- |
+| `log` | `log(message, level="info")` | `level`：`error` / `warn` / `info` / `debug` / `trace` |
+| `on` | `on(event, handler=None, filter=None)` | 给了 `handler` 就是普通调用，没给就能当装饰器 |
+| `off` | `off(event, handler)` | 只影响脚本内的分发表；宿主订阅随插件停止一起撤 |
+| `invoke` | `invoke(method, params=None, on_response=None)` | 发 TDLib 请求；`on_response` 按 `request_id` 自动配对 |
+| `emit` | `emit(event, payload=None)` | 发自定义事件（**只送自己 + 全局订阅者**） |
+| `register_tool` | `register_tool(name, description="", input_schema=None)` | 只登记元数据 |
+| `config` | `config()` | 宿主传给 `plugin_start` 的配置 JSON，没给就是 `{}` |
+| `run` | `run()` | **必须是最后一行** |
+
+## 一行一个 JSON [#一行一个-json]
+
+脚本 → 宿主（`op` 是动作名，`tag` 是脚本自己用的配对号，宿主原样带回）：
+
+| 行 | 宿主回什么 |
+| --- | --- |
+| `{"op":"ready"}` | 无 |
+| `{"op":"log","level":"info","message":"…"}` | 无 |
+| `{"op":"on","tag":1,"event":"updateNewMessage","filter":{…}}` | `{"op":"on","tag":1,"handle":N}` |
+| `{"op":"off","handle":N}` | 无 |
+| `{"op":"invoke","tag":2,"method":"sendMessage","params":{…}}` | `{"op":"invoked","tag":2,"request_id":R}` |
+| `{"op":"emit","event":"x","payload":{…}}` | 无 |
+| `{"op":"tool","descriptor":{…}}` | `{"op":"tool","tag":n,"handle":N}` |
+
+宿主 → 脚本：`{"op":"event","event":"…","payload":{…}}` 外加上面那几种回执。
+**事件带的是订阅号 `handle`，不是事件名**——同一个事件可以有多条带不同过滤器的订阅，
+按事件名分发会让不该响的回调也响。
+
+## 四条硬约定 [#四条硬约定]
+
+1. **脚本与 cdylib 同名、同目录**：`weather.dll` ↔ `weather.py`。宿主按动态库文件名去找，
+   依次试 `.py` / `.js` / `.ts`（cargo 在类 Unix 上加的 `lib` 前缀会被去掉），
+   把**绝对路径**写进配置 JSON（`{"script": "…"}`）——cdylib 自己不知道自己在哪。
+   所以 `[lib] name` 不能省。
+2. **`host.run()` 必须是最后一行**：宿主收到 `{"op":"ready"}` 才算加载完成，
+   `plugin_start` 会等它（上限 10 秒）。脚本早退 = 加载失败。
+3. **两侧 stdio 钉成 UTF-8**：Windows 上 Python 默认按系统代码页读管道，`上海` 会变成 `涓婃捣`。
+   桥自己会 reconfigure 三个流，脚本不用管。
+4. **解释器起不来 / 脚本早退要让 `plugin_start` 报错**，不能留一个「加载成功但什么都不干」的插件——
+   这条桥已经替你做了。
+
+## 调试 [#调试]
+
+```bash
+python demo.py            # 能跑，只是没有宿主可说话
+python fuyubot_plugin.py  # 桥自带自检：打印 fuyubot_plugin: self-test ok
+```
+
+`fuyubot_plugin.py` 与 `fuyubot_plugin.pyi`（桥 + 类型声明）由 `fuyubot-sdk init` 一起放进目录，
+与 `fuyubot-sdk-script` 里那份**逐字相同**——别自己改，改了就漂移。
+
+<Callout type="info">
+  解释器依次试 `python` / `python3` / `py`。`plugin_start` 起不来解释器会直接失败，
+  Python 的报错经脚本 stderr 原样透传到宿主控制台。
+</Callout>
+
+
+# Rust 插件 (/docs/plugin/rust)
+
+Rust 插件只依赖一个 crate：`fuyubot-plugin-api`。它把 `fuyubot-abi` 的形状转成用着不疼的样子——
+`HostApi`（已解包、调用路径上没有 `Option` 和 panic 分支）、`HostExt` 便利方法、
+drop 即退订的 `Subscription`、以及 `define_plugin!` 宏。
+
+## 依赖 [#依赖]
+
+```toml
+# 由 `fuyubot-sdk init` 生成：独立插件 crate，不属于任何 workspace
+[workspace]
+
+[package]
+name = "fuyubot_demo"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[lib]
+crate-type = ["cdylib"]          # 宿主 dlopen 的就是它
+
+[dependencies]
+fuyubot-plugin-api = "0.1.0"        # crates.io；对 SDK 源码开发时换成 path = "…/crates/fuyubot-plugin-api"
+```
+
+那个空的 `[workspace]` 不是多余的：没有它，cargo 会一路往上找父目录的 workspace 声明然后报错。
+
+## 最小可用插件 [#最小可用插件]
+
+这就是 `fuyubot-sdk init demo --lang rust` 生成的模板：
+
+```rust
+use fuyubot_plugin_api::{HostApi, HostExt, Plugin, Subscription, define_plugin};
+
+struct MyPlugin {
+    host: HostApi,
+    /// 订阅句柄**必须活着**：它 drop 的那一刻就退订了。
+    _updates: Option<Subscription>,
+}
+
+impl Plugin for MyPlugin {
+    fn init(host: HostApi) -> Result<Self, String> {
+        host.info("demo: init");
+        Ok(Self { host, _updates: None })
+    }
+
+    fn start(&mut self, config_json: &str) -> Result<(), String> {
+        self.host.info(&format!("demo: start({config_json})"));
+        // 兜底通道 "update" 收全部；要精确就换成 "updateNewMessage" 之类具体的 @type。
+        self._updates = self
+            .host
+            .subscribe_json("update", None, on_update, std::ptr::null_mut());
+        Ok(())
+    }
+}
+
+/// 回调没有捕获环境；要状态就放进插件字段、经 `user_data` 传进来。
+extern "C-unwind" fn on_update(
+    _user: *mut std::ffi::c_void,
+    payload: *const std::ffi::c_char,
+) -> i32 {
+    // SAFETY: 宿主按 ABI 契约传的是临时 NUL 结尾字符串。
+    let update = unsafe { fuyubot_plugin_api::parse_payload(payload) };
+    let update_type = update.get("@type").and_then(|v| v.as_str()).unwrap_or("?");
+    println!("demo: 收到 {update_type}");
+    0
+}
+
+define_plugin!(MyPlugin, "demo");
+```
+
+## `Plugin` trait [#plugin-trait]
+
+| 方法 | 对应符号 | 说明 |
+| --- | --- | --- |
+| `init(host) -> Result<Self, String>` | `plugin_init` | 构造状态；返回 `Err` = 加载失败 |
+| `start(&mut self, config_json) -> Result<(), String>` | `plugin_start` | 宿主已把 VTable、插件目录都准备好；订阅/注册都写在这里 |
+| `stop(&mut self)` | `plugin_stop` | 可选；宏随后把状态收回 `Box` 释放 |
+
+`define_plugin!` 还会把插件代码包在 `catch_unwind` 里——和 `C-unwind` 是两层，
+**两层都要**：一层防 panic 逃出 ABI，一层防 panic 把宿主线程带走。
+
+## 回调里带状态 [#回调里带状态]
+
+回调是裸函数指针，没有捕获环境。状态要么放插件字段、经 `user_data` 传进去，要么像
+`examples/rust-echo` 那样把 `Box<HostApi>` 的地址当 `user_data`：
+
+```rust
+// 结构体里另加一个 state: usize 字段，stop 时清零。
+fn start(&mut self, _config_json: &str) -> Result<(), String> {
+    let state = Box::into_raw(Box::new(self.host));
+    self.state = state as usize;
+    self._updates = self.host.subscribe_json(
+        "updateNewMessage", None, on_message, state as *mut std::ffi::c_void,
+    );
+    Ok(())
 }
 ```
 
-```ts title="index.ts"
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
+`stop` 里用 `Box::from_raw` 收回，只收一次；否则就是内存泄漏（或重复释放）。
 
-export default class MyPlugin extends Plugin {
-  // 不要在类里再写 name/version/description/pluginType
+<Callout type="warn">
+  `Subscription` 是 `#[must_use]`：`let _ = host.subscribe_json(…)` 会**立刻退订**。
+  一定要存进插件字段。插件卸载时宿主还会整批回滚，但那时插件自己的状态已经漏了。
+</Callout>
 
-  constructor(client: Client) {
-    super(client);
-  }
-}
+## 编译与安装 [#编译与安装]
+
+```bash
+cargo build --release
+fuyubot plugin install target/release/fuyubot_demo.dll
 ```
 
-#### 单文件插件：元数据在类字段
+<Callout type="error">
+  `define_plugin!` **一个 crate 只能展开一次**。一个 cdylib 就是一个插件——这不是限制，是设计：
+  四个导出符号名由 ABI 定死，展开两次就是重复定义。
+</Callout>
 
-```ts title="Examples.ts"
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import type { Client } from "tdl";
+要发消息、调 TDLib、等响应，见 [调用 TDLib](./tdlib.mdx)；要按字段过滤更新，见
+[订阅与事件](./events.mdx)；契约本身见 [ABI 契约](./abi.mdx)。
 
-export default class LifePlugin extends Plugin {
-  name = "插件唯一名称"; // [!code highlight]
-  type = "general"; // [!code highlight]
-  version = "插件版本号"; // [!code highlight]
-  description = "简短描述"; // [!code highlight]
 
-  constructor(client: Client) {
-    super(client);
-  }
-}
+# 调用 TDLib (/docs/plugin/tdlib)
+
+插件不直接碰 `tdjson` 库，只把请求交给宿主：
+
+| VTable 函数 | 输入 | 用途 |
+| --- | --- | --- |
+| `td_invoke` | 完整请求 JSON（**含 `@type`**） | 手写整份请求 |
+| `td_invoke_simplified` | 方法名 + 参数 JSON | 宿主把参数补上 `@type = 方法名`（参数不是对象就整份换成 `{"@type": …}`） |
+| `td_execute` | 完整请求 JSON，**同步**返回响应 | 只给「不碰服务器」的方法用（`parseTextEntities` / `getTextEntities` 之类）。当场有结果、不发请求号 |
+
+前两个返回**请求号**（`RequestId`），不是结果。结果从响应通道回来。
+
+## 请求号与 response 通道 [#请求号与-response-通道]
+
+```text
+插件 ──td_invoke*──► 宿主 ──► TDLib
+ ▲                             │
+ └── "response" 通道 ◄─────────┘   只发给**发起这个请求**的插件
 ```
 
-`pluginType` 用来指明插件运行的环境
+- 响应负载是 TDLib 原始 JSON，宿主额外挂一个**数值型** `request_id`（来自它注入的字符串 `@extra`，
+  别自己设这个字段）。
+- 要等某条响应：过滤器写 `{"event_type":"response","request_id":5}`。`event_type` 键只选通道，
+  不参与负载匹配（见 [订阅与事件](./events.mdx)）。
+- **没接 TDLib 时**（`--replay` / `--no-tdlib`）请求只留档并返回**合成请求号**（从 `1 << 48` 起），
+  链路照样能测通，但永远不会真的到达 TDLib。
 
-* `user`：插件中包含只能使用 user 账户能使用的功能（如删除 48 小时前消息）。
-* `bot`：依赖 Bot API 特性（如内联按钮）。
-* `general`：两侧均可使用。
+```rust
+// 发出去
+let request = host.invoke_value("getMe", json!({}))?;
+host.info(&format!("请求号 {}", request.id));
 
-包插件写在 `pluginType`：
-
-```json title="pluginType 字段"
-// [!code word:"general"]
-"pluginType": "general"
+// 单独订阅这条响应（阻塞等也行：wait_for_update）
+let filter = json!({ "event_type": "response", "request_id": request.id });
 ```
 
-从旧类字段迁到 package.json 清单 见[插件迁移指南](/docs/plugin/Migration)。
+`wait_for_update` **阻塞当前线程**，`timeout_ms == 0` 表示只检查当前状态；
+返回的 `payload_json` 是宿主线程局部缓冲，只在下一次宿主调用前有效——要留就当场拷走。
 
-### 2 可选生命周期 & 运行任务
+## 方法名以 TDLib 为准 [#方法名以-tdlib-为准]
 
-| 字段/方法         | 作用                                                                     |
-| ------------- | ---------------------------------------------------------------------- |
-| `onLoad()`    | 插件被实例化并注册后立即调用，用于一次性初始化。                                               |
-| `runHandlers` | 注册可直接触发或定时执行的任务。支持 `cron` 表达式或 `intervalMs` 轮询，`immediate` 可在加载时先运行一次。 |
-| `destroy()`   | 卸载前调用，用于清理资源、关闭定时器等。                                                   |
+⚠️ **TDLib 的方法名 ≠ Telegram Bot API 的方法名**。TDLib 里所有发送都是 `sendMessage`，
+内容类型靠 `input_message_content` 区分；`sendPhoto` / `sendDocument` / `sendLocation`
+（HTTP Bot API）**在 TDLib 里不存在**。
 
-`runHandlers` 的定义：
+| 你在 Bot API 里习惯的 | 在 TDLib 里这么写 |
+| --- | --- |
+| `sendPhoto` / `sendDocument` / `sendLocation` | `sendMessage` + `input_message_content.@type` = `inputMessagePhoto` / `inputMessageDocument` / `inputMessageLocation` |
+| `message_thread_id` | `topic_id`（`{"@type":"messageTopicThread","message_thread_id":N}`） |
+| `reply_to_message_id` | `reply_to`（`{"@type":"inputMessageReplyToMessage","message_id":N}`） |
+| 顶层 `disable_notification` / `protect_content` | `options`（`@type: messageSendOptions`）里 |
+| 顶层 `caption` | 在内容类型里（`inputMessageText` / `inputMessagePhoto` …） |
+| `parse_mode` | 没有这个字段；`formattedText` 只有 `text` + `entities`（要标记先走 `parseTextEntities`） |
+| `file_id`（`updateFile`） | 在 **`file.id`**，不是顶层 |
 
-```ts
-type RunDef = {
-  description?: string;
-  handler: () => Promise<void> | void;
-  cron?: string; // 优先使用 cron，依赖 cron 包，支持秒级表达式
-  intervalMs?: number; // 毫秒级轮询
-  immediate?: boolean; // 加载后立即执行一次
+`sendMessage` 的真签名（来自 `td_api.tl`）：
+
+```text
+sendMessage chat_id:int53 topic_id:MessageTopic reply_to:InputMessageReplyTo
+            options:messageSendOptions reply_markup:ReplyMarkup
+            input_message_content:InputMessageContent = Message
+```
+
+```rust
+host.invoke_value("sendMessage", json!({
+    "chat_id": chat_id,
+    "input_message_content": {
+        "@type": "inputMessageText",
+        "text": { "@type": "formattedText", "text": "你好", "entities": [] },
+    },
+}))?;
+```
+
+查方法名最快的办法是问 SDK（它读的是真 `td_api.tl`）：
+
+```bash
+fuyubot-sdk td-methods --filter sendMessage
+fuyubot-sdk td-method sendMessage
+```
+
+## 便捷封装：`fuyubot-simplify` [#便捷封装fuyubot-simplify]
+
+`Simplify` 只简化**输入**，不改变输出：每个方法都经 `td_invoke*` 发出，原始更新照旧对插件可见。
+参数形状是**一个方法一个结构体 + 短字段名**，调用方不用拼 TDLib 的嵌套 JSON；
+文本格式（Markdown / HTML）**不自己解析**，经同步的 `td_execute` 问 TDLib 的 `parseTextEntities`。
+
+方法名与参数名由 `every_request_simplify_builds_passes_the_real_schema` 拿真 `td_api.tl` 烤出来的元数据
+（`TdApiSchema::compiled()`）逐条校验，离线就能跑。
+
+### 公开方法 [#公开方法]
+
+| 方法 | 发出的 `@type` | 参数结构体字段 | 返回 |
+| --- | --- | --- | --- |
+| `send_message(chat_id, &SendMessageParams)` | `sendMessage` | `text` / `media` / `reply_to_message_id` / `topic_id` / `reply_markup` / `link_preview` / `timeout_ms` | `RequestId`（不阻塞） |
+| `send_message_wait_success(chat_id, &SendMessageParams)` | 同上，再等 `updateMessageSendSucceeded` | 同上（`timeout_ms` 是等待上限） | `SendConfirmation`（⚠️ **阻塞**） |
+| `send_message_album(chat_id, &SendAlbumParams)` | `sendMessageAlbum` | `medias`（2–10 项）/ `caption` / `reply_to_message_id` / `topic_id` | `RequestId`；项数不对返回 `SimplifyError::AlbumSize`。⚠️ **相册没有 `reply_markup`**（真签名里就没有这个参数）：想给相册挂键盘用 `editMessageReplyMarkup` |
+| `edit_message_text(chat_id, message_id, &EditTextParams)` | `editMessageText` | `text` / `link_preview` / `reply_markup` | `RequestId` |
+| `edit_message_caption(chat_id, message_id, &EditCaptionParams)` | `editMessageCaption` | `text` / `reply_markup` | `RequestId` |
+| `edit_message_media(chat_id, message_id, &EditMediaParams)` | `editMessageMedia` | `text`（新内容标题）/ `media` / `reply_markup` | `RequestId` |
+| `delete_message(chat_id, ids, revoke)` | `deleteMessages` | `message_ids` / `revoke` | `RequestId` |
+| `answer_callback_query(query_id, text, show_alert)` | `answerCallbackQuery` | `text`（`None` → `""`）/ `show_alert` / `url=""` / `cache_time=0` | `RequestId` |
+| `formatted(&Text)` | **`parseTextEntities`（同步 `td_execute`）** | `text` / `parse_mode` | `formattedText` 的 `Value` |
+| `wait_for_update` / `wait_for_update_json` | 不发方法（纯订阅） | `UpdateFilter` + `timeout_ms` | `WaitHandle` / `Option<Value>`（⚠️ 阻塞） |
+| `wait_response(request, timeout_ms)` | 不发方法（等 `"response"` 通道） | `RequestId` | `Option<Value>`（⚠️ 阻塞） |
+| `resolve_entities(ids, timeout_ms)` | `getChat` / `getUser` | `Vec<EntityId>` | `EntitiesResolution`（⚠️ 阻塞） |
+| `download_file(file_id, priority, timeout_ms)` | `downloadFile` | — | `FileDownload`（⚠️ 阻塞） |
+| `cancel_wait(handle)` | 不发 | `WaitHandle` | `()` |
+
+**编辑的结果去哪了**：编辑后的 `Message`、以及 `Message is not modified` 这类错误都是**响应**
+（`"response"` 通道，`@type == "error"` 表示失败）。要拿就 `wait_response(request, timeout)`。
+封装层**刻意不重试**——限流等多久是调用方的事。
+
+**`send_message` 不阻塞、`send_message_wait_success` 阻塞**：等更新要靠**投递线程**送回来，
+而插件通常正是在更新回调里发消息，在回调里等就是自己卡自己，等到的是超时。
+
+### 内容与按钮 [#内容与按钮]
+
+`Media`（对应 TDLib 的 `inputMessage*`，形状只有一份实现 `content_json`）：
+
+| 变体 | 内容类型 | 必需 / 常用字段 |
+| --- | --- | --- |
+| `Media::photo(file)` | `inputMessagePhoto` | `caption` / `width` / `height` / `has_spoiler` |
+| `Media::Video { .. }` | `inputMessageVideo` | `duration` / `width` / `height` / `supports_streaming` / `has_spoiler` |
+| `Media::Audio { .. }` | `inputMessageAudio` | `duration` / `title` / `performer` |
+| `Media::document(file)` | `inputMessageDocument` | `caption` |
+| `Media::Animation { .. }` | `inputMessageAnimation` | `duration` / `width` / `height` / `has_spoiler` |
+| `Media::Sticker { .. }` | `inputMessageSticker` | `emoji`（**没有 caption**）/ `width` / `height` |
+| `Media::location(lat, lng)` | `inputMessageLocation` | — |
+
+- `file` 一律是 `InputFile`：`InputFile::local(path)` → `inputFileLocal`，
+  `InputFile::remote(id)` → `inputFileRemote`。`&str` / `String` 会被当成**本地路径**。
+- `.caption(text)` 给媒体挂标题；`SendMessageParams.text` 优先于媒体自带的 caption。
+- 尺寸 / 时长填 `0` 也行（TDLib 自己读真实值）。
+
+`ReplyButton`（`reply_markup` 是 `Vec<Vec<ReplyButton>>`，空 = 不带键盘）：
+
+| 构造 | 按钮类型 |
+| --- | --- |
+| `ReplyButton::callback(text, data)` | `inlineKeyboardButtonTypeCallback`（`data` 自动 base64） |
+| `ReplyButton::url(text, url)` | `inlineKeyboardButtonTypeUrl` |
+| `ReplyButton::user(text, user_id)` | `inlineKeyboardButtonTypeUser` |
+| `ReplyButton::web_app(text, url)` | `inlineKeyboardButtonTypeWebApp` |
+
+链式修饰：`.emoji(custom_emoji_id)`（`icon_custom_emoji_id`）、
+`.style(ButtonStyle::{Default,Primary,Danger,Success})`。
+
+### 文本格式（Markdown / HTML）→ entities [#文本格式markdown--html-entities]
+
+**没有第二套解析器**。带标记的文本经 TDLib 的 `parseTextEntities` 换成
+`formattedText { text, entities }`——语法以 TDLib 为准，我们只负责把请求送进去。
+
+| `ParseMode` | 发出的 `parse_mode` |
+| --- | --- |
+| `Plain`（默认） | **不发请求**，直接 `formattedText { text, entities: [] }` |
+| `Markdown` | `{"@type":"textParseModeMarkdown","version":1}` |
+| `MarkdownV2` | `{"@type":"textParseModeMarkdown","version":2}` |
+| `Html` | `{"@type":"textParseModeHTML"}` |
+
+快捷方式：`Text::plain/markdown/markdown_v2/html`，`&str` / `String` → 纯文本。
+
+⚠️ **真库实测（TDLib 1.8.68，1.8.66 同结论）：MarkdownV2 的粗体是 `*x*`，不是 `**x**`。**
+`**bold**` 会被吞成 `bold` 并且**不给** bold entity，`__x__` 出来是下划线。别按 CommonMark 的直觉写
+——这正是「不自己实现解析」的理由。
+
+**为什么走同步的 `td_execute`**：`parseTextEntities` 不碰服务器，TDLib 允许同步跑它。等响应那套会把
+**投递线程**卡住（插件通常正是在更新回调里发消息，响应又要靠同一个线程投递），同步调用没有这个问题。
+拿不到结果（没接 TDLib、TDLib 报错）就退回纯文本并打一条 `Warn` 日志。
+
+### 参数名为什么是这几个 [#参数名为什么是这几个]
+
+真 `td_api.tl`：`sendMessage chat_id topic_id reply_to options reply_markup input_message_content`
+——**没有** `message_thread_id` / `reply_to_message_id` / 顶层 `disable_notification`（那是 Bot API
+的名字），也**没有**顶层 `caption`（它在内容类型里）。短名字到 TDLib 字段的映射只有一处实现：
+
+| 参数结构体的字段 | 落到的 TDLib 字段 |
+| --- | --- |
+| `topic_id: i64` | `topic_id` = `{"@type":"messageTopicThread","message_thread_id":…}` |
+| `reply_to_message_id: i64` | `reply_to` = `{"@type":"inputMessageReplyToMessage","message_id":…}` |
+| `reply_markup: Vec<Vec<ReplyButton>>` | `reply_markup` = `{"@type":"replyMarkupInlineKeyboard","rows":…}` |
+| `link_preview: Some(false)` | `inputMessageText.link_preview_options.is_disabled = true` |
+| `text` / `media.caption` | `formattedText`（经 `parseTextEntities`） |
+
+### 不挂在 `Simplify` 上的公开函数 [#不挂在-simplify-上的公开函数]
+
+| 函数 | 作用 |
+| --- | --- |
+| `send_params` / `album_params` / `edit_text_params` / `edit_caption_params` / `edit_media_params` | 组装参数，**不含 `@type`**（那是宿主补的） |
+| `content_json(&Media, render)` | 媒体 → `InputMessageContent` |
+| `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
+| `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(...)` | 响应 → `formattedText`；拿不到退回纯文本 |
+| `plain_text(&Text)` | 纯文本 → `formattedText`（不花往返），也是默认渲染器 |
+| `command_of(&Value)` → `Command` | 从 `updateNewMessage` 解出 `chat_id` / `message_id` / `name` / `args` / `text`；跳过自己发的、非文本消息 |
+| `on_command(host, 闭包)` → `CommandSubscription` | 订阅 `updateNewMessage`，每条命令调一次闭包；**drop 即退订** |
+
+### 返回值与简化事件 [#返回值与简化事件]
+
+| 类型 | 字段 |
+| --- | --- |
+| `SendConfirmation` | `request_id`、`confirmed`、`update`（`update.message` 就是最终消息；超时是 `Null`） |
+| `FileDownload` | `request_id`、`file_id`、`completed`、`last_update`（取自 `file.local.is_downloading_completed`） |
+| `EntitiesResolution` | `request_id`、`entities: Vec<EntityResult>`；`to_json()` 给出 `{"request_id":…,"entities":[…]}` |
+| `EntityResult` | `id`、`request`、`value`（超时是 `Null`） |
+| `SimplifyError` | `Abi(AbiError)`、`BadString`（参数串含 NUL）、`AlbumSize(usize)`（相册不是 2–10 项） |
+
+`Simplify` 顺带推两条简化事件（不想用就订阅原始 `@type`，两者不冲突）：
+
+| 事件 | 谁发 | 负载 |
+| --- | --- | --- |
+| `entities_resolved` | `resolve_entities` 末尾 | `EntitiesResolution::to_json()` |
+| `file_progress` | `download_file` 每收到一条 `updateFile` | `{"file_id":…,"completed":…,"downloaded_size":…,"expected_size":…}` |
+
+### 用法 [#用法]
+
+```rust
+use fuyubot_simplify::{
+    EditTextParams, Media, ReplyButton, SendMessageParams, Simplify, Text,
 };
+
+let simplify = Simplify::new(self.host);          // HostApi 是 Copy
+
+// 纯文本：不花任何往返
+simplify.send_message(chat_id, &SendMessageParams::text("你好"))?;
+
+// Markdown + 回复 + 内联键盘
+simplify.send_message(
+    chat_id,
+    &SendMessageParams {
+        text: Some(Text::markdown("*粗体*")),
+        reply_to_message_id: Some(message_id),
+        reply_markup: vec![vec![ReplyButton::callback("确认", "ok")]],
+        ..SendMessageParams::default()
+    },
+)?;
+
+// 图片 + 标题
+let photo = Media::photo("/tmp/a.jpg").caption(Text::plain("标题"));
+simplify.send_message(chat_id, &SendMessageParams::media(photo))?;
+
+// 编辑：结果从响应通道回来
+let request = simplify.edit_message_text(
+    chat_id,
+    message_id,
+    &EditTextParams { text: Some(Text::markdown_v2("*改了*")), ..Default::default() },
+)?;
+let edited = simplify.wait_response(request, 5_000);
+
+// 删除（对所有人撤回）
+simplify.delete_message(chat_id, [message_id], true)?;
+```
+
+<Callout type="info">
+  便捷封装的方法名 / 字段路径是按真 `td_api.tl` 拼的，并有离线测试拿
+  `TdApiSchema::check_request` 逐条校验；Markdown → entities 的真库行为另有一条 `-- --ignored` 测试。
+  但「真 Telegram 认不认这些值」要真账号才验得了。
+</Callout>
+
+## 两条时间线 [#两条时间线]
+
+1. `td_invoke*` 返回的是**请求号**，真正的 JSON 从 `"response"` 通道回来
+   （事件类型 `RESPONSE_EVENT`，只发给发起请求的那个插件）。
+2. `WaitHandle::payload_json` / `td_execute` 的返回串都是宿主临时的**线程局部缓冲**，
+   只在下一次宿主调用之前有效。要拿数据就立刻读，或者用 `*_json` / `wait_response`（它们已经替你拷好了）。
+
+`HostRuntime::td_send` 在**没接 TDLib** 时只留档 + 发合成请求号（从 `1 << 48` 起），`td_execute` 在同样
+情况下返回 `None`——所以本文的每个方法在离线状态下都能被跑通、但不会真的到达 TDLib（Markdown 会退回纯文本）。
+
+## Python / JS [#python--js]
+
+脚本里的 `invoke` 有第三参数 `on_response`，按 `request_id` 自动配对，脚本不用自己记请求号：
+
+```python
+def on_sent(payload):
+    host.log("发出去了：" + str(payload.get("request_id")))
+
+host.invoke("sendMessage", {
+    "chat_id": chat_id,
+    "input_message_content": {
+        "@type": "inputMessageText",
+        "text": {"@type": "formattedText", "text": "你好", "entities": []},
+    },
+}, on_sent)
 ```
 
 
-# 获取对话的基本信息 (/docs/plugin/function/getChat)
+# 调试与安装 (/docs/plugin/testing)
 
-<TypeTable
-  type={{
-  client: {
-    description:
-      'TDLib 客户端实例',
-    type: 'Client',
-  },
-  chat_id: {
-    description: '要获取信息的对话 ID',
-    type: 'number',
-  },
-}}
-/>
+插件出问题通常不是「代码写得不对」，而是「没被加载」「加载了但没订阅上」「订阅了但请求拼错」。
+这三步各有对应的工具，全都不需要 Telegram 账号。
 
-#### 获取对话信息
+| 命令 | 干什么 | 需要账号吗 |
+| --- | --- | --- |
+| `fuyubot-sdk check <产物>` | **静态**读导出符号，不 dlopen | 否 |
+| `fuyubot run --replay <文件>` | 把一批更新灌进管线后退出，不接 TDLib | 否 |
+| `fuyubot plugin install <路径>` | 复制产物（＋脚本同伴）进插件目录 | 否 |
+| `fuyubot plugin list` | 真的加载一次，看插件名与 ABI 版本 | 否 |
+| `fuyubot run` | 真登录、真更新 | 是 |
 
-可以使用 TDLib 的 `getChat` 方法来获取对话的基本信息。以下是一个示例代码，展示如何在插件中实现这一功能：
+## 静态检查：`fuyubot-sdk check` [#静态检查fuyubot-sdk-check]
 
-```ts title="ChatInfo.ts"
-import { getChat } from "@TDLib/function/get.ts";
-
-const chat = await getChat(client, chat_id);
+```bash
+fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
 ```
 
-#### 返回内容
-
-[chat Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1chat.html)
-
-
-# 获取超级群组的基本信息 (/docs/plugin/function/getSupergroup)
-
-<TypeTable
-  type={{
-  client: {
-    description:
-      'TDLib 客户端实例',
-    type: 'Client',
-  },
-  supergroup_id: {
-    description: '要获取信息的超级群组 ID',
-    type: 'number',
-  },
-}}
-/>
-
-#### 获取超级群组信息
-
-可以使用 TDLib 的 `getSupergroup` 方法来获取超级群组的基本信息。以下是一个示例代码，展示如何在插件中实现这一功能：
-
-```ts title="SupergroupInfo.ts"
-import { getSupergroup } from "@TDLib/function/get.ts";
-
-const supergroup = await getSupergroup(client, supergroup_id);
+```text
+文件：target\debug\fuyubot_plugin_demo.dll
+格式：Pe / X86_64 / Dynamic
+导出符号：
+  [ok] plugin_init          必需
+  [ok] plugin_start
+  [ok] plugin_stop
+  [ok] plugin_free_string
+ABI 版本：宿主是 2。插件报的版本**只能运行时判定**——它在 `PluginHandle.abi_version`
+     里，是 `plugin_init` 的返回值，不是静态符号（见 [ABI 契约](./abi.mdx)）。
+结论：可以加载。
 ```
 
-#### 返回内容
+- **非零退出 = 宿主会拒绝加载**（缺必需的 `plugin_init`，或根本不是动态库），可以进 CI。
+- 它**不加载、不运行**：走 `object` 解析 PE / ELF / Mach-O 的导出表，不碰 `dlopen`
+  （`dlopen` 会在宿主进程里跑插件的初始化代码，那已经算「加载」了）。
+- 因此它**看不到 ABI 版本**——版本是 `plugin_init` 的**返回值**，不是符号。它只会如实报
+  「只能运行时判定」，不编一个看起来可信的结论。
 
-[supergroup Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1supergroup.html)
+## 回放：不接账号也能验插件 [#回放不接账号也能验插件]
 
-
-# 获取用户信息 (/docs/plugin/function/getUser)
-
-<TypeTable
-  type={{
-  client: {
-    description:
-      'TDLib 客户端实例',
-    type: 'Client',
-  },
-  user_id: {
-    description: '要获取信息的用户 ID',
-    type: 'number',
-  },
-}}
-/>
-
-#### 获取用户信息
-
-可以使用 TDLib 的 `getUser` 方法来获取用户的详细信息。以下是一个示例代码，展示如何在插件中实现这一功能：
-
-```ts title="UserInfo.ts"
-import { getUser } from "@TDLib/function/get.ts";
-
-const user = await getUser(client, user_id);
+```bash
+fuyubot run --replay examples\replay\new_message.json --plugin-dir <插件目录>
 ```
 
-#### 返回内容
+回放把文件里的更新（单个对象或对象数组）灌进六阶段管线后退出：**不接 TDLib、不用账号**，
+插件发出的请求只留档不发。输出三样东西：
 
-[user Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1user.html)
+1. 每条更新的 `UpdateOutcome`：
 
-
-# 获取用户的完整信息 (/docs/plugin/function/getUserFullInfo)
-
-<TypeTable
-  type={{
-  client: {
-    description:
-      'TDLib 客户端实例',
-    type: 'Client',
-  },
-  user_id: {
-    description: '要获取信息的用户 ID',
-    type: 'number',
-  },
-}}
-/>
-
-#### 获取用户信息
-
-可以使用 TDLib 的 `getUserFullInfo` 方法来获取用户的详细信息。以下是一个示例代码，展示如何在插件中实现这一功能：
-
-```ts title="UserInfo.ts"
-import { getUserFullInfo } from "@TDLib/function/get.ts";
-
-const user = await getUserFullInfo(client, user_id);
+```text
+回放 updateNewMessage → UpdateOutcome { update_type: "updateNewMessage", listeners: 1, warnings: [] }
 ```
 
-#### 返回内容
+2. 插件打的日志（`HostRuntime::log_lines`，上限 256 行）；
+3. 插件发出去的请求：`#请求号 方法名 参数`。
 
-[userFullInfo Class Reference](https://core.telegram.org/tdlib/docs/classtd_1_1td__api_1_1user_full_info.html)
+| 参数 | 说明 |
+| --- | --- |
+| `--replay <文件>` | 要回放的更新；对象或对象数组 |
+| `--plugin-dir <目录>` | 覆盖插件目录（默认取 `fuyubot.toml` 的 `plugins.dir`） |
+| `--replay-wait <MS>` | 回放后的静默窗口；不填时脚本插件 2000ms、纯原生插件 150ms（上限 60 秒） |
 
+脚本插件在**另一个进程**里跑，反应要经管道回来，还可能捎带网络请求——窗口太短会把最终答复漏掉。
 
-# 封装函数 (/docs/plugin/function)
+<Callout type="info">
+  回放**故意不接 TDLib**（`AGENTS.md` 约束 38）：它要在任何机器上离线可跑，接了就要账号与网络。
+  所以回放能证明「插件收到更新后做出了正确判断、发出了正确请求」，**不能**证明真 Telegram 认这些参数。
+</Callout>
 
-## `@TDLib/function` 速查
+## 安装 [#安装]
 
-项目在 `src/TDLib/function` 下封装了常见操作，可直接导入使用：
-
-### 用户 / 聊天 / 消息
-
-* `getUser(client, user_id)`
-* `getUserFullInfo(client, user_id)`
-* `getChat(client, chat_id)`
-* `getSupergroup(client, supergroup_id)` / `getSupergroupFullInfo`
-* `getMessage(client, chat_id, message_id)`
-
-```ts
-import { getUser, getChat } from "@TDLib/function";
-
-const user = await getUser(client, 123456);
-const chat = await getChat(client, 987654);
+```bash
+fuyubot init --dir . --name demo                        # 生成 fuyubot.toml + plugins/
+fuyubot plugin install plugins/demo --config fuyubot.toml
+fuyubot plugin list
 ```
 
-### 消息发送与编辑
-
-* `sendMessage` / `sendMessageAlbum`
-* `editMessageText` / `editMessageCaption` / `editMessageMedia`
-* `deleteMessage`
-
-```ts
-import { sendMessage, editMessageText } from "@TDLib/function";
-
-const msg = await sendMessage(client, chatId, { text: "Hello *world*" });
-await editMessageText(client, chatId, msg.id, { text: "Edited text" });
+```text
+已安装 F:\…\plugins\demo.dll
 ```
 
-### 权限与管理
+- 传**工程目录**时会把旁边的 `.py` / `.js` / `.ts` / `.pyi` 一起拷；传单个 dll 时看不到脚本在哪，
+  **脚本插件请传工程目录**。
+- `plugin install <工程目录>` 只看 `<工程>/target/{release,debug}` 与工程目录本身。若插件是**当前
+  workspace 的成员**（本仓的 `examples/*`），`cargo build -p <crate>` 的产物默认落在仓库根 `target/`，
+  于是它找不到——加 `--target-dir <工程目录>/target`，或直接指着产物装。
 
-* `restrictUser`
-* `setUserAsMember`
-* `setUserRestricted`
-* `banUser`
-* `isMeAdmin` / `isUserAdmin`
+## 装完还是不响？ [#装完还是不响]
 
-### 文件与代理
+| 症状 | 先看 |
+| --- | --- |
+| `check` 报 `[缺] plugin_init` | crate 是不是 `crate-type = ["cdylib"]`；C++ 的四个符号在不在 `extern "C"` 里 |
+| 日志里有「跳过 xxx」 | ABI 版本不匹配，或 `dlopen` 失败（缺兄弟 DLL：把依赖放在插件旁边，加载器会先查库自己的目录） |
+| 加载了但一条事件都没收到 | 订阅句柄是不是被 drop 了（Rust 侧 `let _ =` 会立刻退订） |
+| 脚本插件 `plugin_start` 报错 | 脚本与 cdylib 是否**同名同目录**；`host.run()` 是不是最后一行；解释器在不在 PATH |
+| 请求发出去了但没收到响应 | 回放里本来就不会有响应（请求只留档）；真环境下等的是 `"response"` 通道，见 [调用 TDLib](./tdlib.mdx) |
 
-* `downloadFile`
-* `getProxies` / `addProxy` / `removeProxy`
-* `enableProxy` / `disableProxy`
-* `pingProxy` / `testProxy` / `getProxyLink`
+要查 TDLib 的方法名与参数名，用 `fuyubot-sdk td-methods --filter <片段>` / `td-method <名字>`；
+契约与所有权规则见 [ABI 契约](./abi.mdx)。
 
-### 其他工具
 
-* `answerCallbackQuery`
-* `getLinkPreview`
-* `getMessageLink` / `getMessageLinkInfo`
-* `chatoruserMdown`
+# 工具与中间件 (/docs/plugin/tools)
 
-示例：
+工具（tool）是「有名字、有 schema、可被别的插件或宿主调用」的能力；中间件（middleware）
+是流经更新管线时的洋葱式拦截点。两者的注册都记在**当前插件的作用域**下：
+插件卸载（或加载失败）时宿主一次性回滚这批注册。
 
-```ts
-import { Plugin } from "@fuyu-tdbot/plugin-api";
-import { sendMessage, getUser } from "@TDLib/function";
+## 注册工具：只登记元数据 [#注册工具只登记元数据]
 
-export default class MyPlugin extends Plugin {
-  // 包插件：元数据在 package.json（含 pluginType）
-  async onSomeEvent(update) {
-    const user = await getUser(this.client, update.sender_user_id);
-    await sendMessage(this.client, update.chat_id, {
-      text: `Hello ${user.first_name}`,
-    });
-  }
+<Callout type="warn">
+  本版 ABI **只登记元数据**：`register_tool` 收的是一份 JSON 描述，里面没有函数指针的位置，
+  登记出来的工具一律是 `handler: None` 的**声明型工具**。插件无法让宿主回调进自己来执行工具。
+</Callout>
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `name` | string | 全局唯一，建议 `插件名.工具名` |
+| `version` | string | semver，默认 `0.1.0` |
+| `description` | string | 给人看的一句话 |
+| `input_schema` | JSON Schema | 描述入参 |
+| `output_schema` | JSON Schema | `null` / `{}` 表示不校验 |
+| `required_permissions` | string[] | 调用前要过的权限门 |
+| `idempotent` | bool | 默认 `false` |
+| `timeout_ms` | number | 默认 `30000` |
+| `is_async` | bool | 默认 `false` |
+| `callable` | bool | **读出时才有**：本进程里有没有可调处理器 |
+
+```rust
+let handle = host.register_tool(&json!({
+    "name": "demo.echo",
+    "version": "0.1.0",
+    "description": "把入参原样回出去",
+    "input_schema": {
+        "type": "object",
+        "properties": { "text": { "type": "string" } },
+        "required": ["text"]
+    },
+}).to_string());
+```
+
+`handle` 无效（`id == 0`）表示登记被拒（重名、schema 不合法等）。
+
+## 调用工具：走注册表 [#调用工具走注册表]
+
+`call_tool(name, input_json)` 返回**请求号**（和 `td_invoke*` 一样，不是结果）。宿主把它交给
+`ToolRegistry::call_tool`，顺序是：
+
+```text
+查表 → 权限门 → input_schema 校验 → 处理器 → output_schema 校验
+```
+
+本版 ABI 登记的工具没有处理器，所以对**这类**工具调 `call_tool` 只会拿到**无效请求号**
+（`id == 0`）——声明型工具的用途是「让它出现在 `list_tools` 里、被别人发现」，不是被真的执行。
+
+`list_tools()` 返回全部工具的元数据 JSON 数组。**宿主线程局部缓冲**：读完即弃，
+要留就当场拷走，**不要试图释放它**。
+
+脚本侧的名字不同：Python 是 `host.register_tool(...)`，JS 是 `host.registerTool(...)`，
+都只收 `name` / `description` / `input_schema`。
+
+## 中间件：六阶段洋葱 [#中间件六阶段洋葱]
+
+```text
+PreUpdate → 解析 @type → PreRoute → InPlugin → 分发监听器 → PostResponse
+```
+
+| 阶段 | 数值 | 谁跑它 |
+| --- | --- | --- |
+| `PreUpdate` | 0 | 收到更新、还没解析 |
+| `PreRoute` | 1 | 已解析 `@type`，路由前 |
+| `InPlugin` | 2 | 分发给监听器之前；**一条更新只跑一遍** |
+| `PostResponse` | 3 | 响应发出之后 |
+| `PreToolCall` | 4 | 工具调用之前（**目前没有生产调用方**） |
+| `PostToolCall` | 5 | 工具调用之后（同上） |
+
+数值就是 ABI 里的 `stage` 参数，与 `fuyubot-middleware::Stage` 一一对应。
+
+```rust
+use fuyubot_plugin_api::Stage;
+
+extern "C-unwind" fn drop_outgoing(
+    _user: *mut std::ffi::c_void,
+    _stage: u32,
+    payload: *const std::ffi::c_char,
+) -> i32 {
+    let update = unsafe { fuyubot_plugin_api::parse_payload(payload) };
+    let outgoing = update
+        .pointer("/message/is_outgoing")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if outgoing { 1 } else { 0 }   // 1 = 中断本阶段；0 = 继续往下走
 }
+
+// 返回的句柄必须活着：drop 即摘除
+let _mw = self.host.use_middleware(Stage::PreRoute, drop_outgoing, std::ptr::null_mut());
 ```
 
-> 提示：封装函数出错时会抛出异常，请使用 `try/catch` 处理。
+要点：
+
+- **回调是 `C-unwind` 的** `fn(user_data, stage: u32, payload_json) -> i32`：返回 `0` 继续、**非 0 中断本阶段**。
+  中断只影响**本阶段剩下的层**，管线继续走下一阶段（已经改过的负载照样往下传），宿主记一条 warning。
+- **中间件一条更新跑一遍，不是每个监听器跑一遍**：`InPlugin` 的产出就是所有监听器看到的版本。
+  按监听器各跑一遍的话，第 N 个会看到被改过 N 次的负载。
+- 洋葱模型：进入段在「继续往下」之前，退出段在之后。不往下走就是中断。
+- Rust 侧注册返回的 `MiddlewareHandle` 也是 `#[must_use]`，drop 即摘除。
+- 阶段号非法或回调为空会让 `use_middleware` 直接返回无效句柄（不会静默挂个空层）。
+
+<Callout type="info">
+  想看订阅与双通道怎么配合，见 [订阅与事件](./events.mdx)；工具调用的格式最终由宿主层决定，
+  契约本身见 [ABI 契约](./abi.mdx)。
+</Callout>
 
 
-# 可用命令 (/docs/start/cmd)
+# 从源码构建 (/docs/usage/build)
 
-## 触发方式
+普通用户请走 [下载与安装](./index.mdx)——发布包里有可执行文件和 `tdjson`，不用编译。
+这一页是给要改代码、或者平台没有发布包（比如 Intel Mac）的人。
 
-Fuyu-TDBot 支持通过以下消息开头触发命令：
+## 前置 [#前置]
 
-在消息开头默认使用`/` `!` `！` `.` `#` 作为前缀，例如 `/start` 或 `!help`。
+| 前置 | 要求 |
+| --- | --- |
+| Rust | 1.99+（`edition 2024`） |
+| Windows | MSVC 工具链（Rust / C / C++ 插件都用它链接） |
+| 构建输入 | 一份 `td_api.tl`（下面说明） |
+| 运行期 | `tdjson` 动态库（构建期会被拷到可执行文件同级） |
 
-### 修改前缀
+## 构建 [#构建]
 
-您可以通过config命令修改前缀：
-使用 空格 分隔多个前缀
-
-```plaintext
-/config set PREFIXES / ! . 
+```bash
+git clone https://github.com/CatMoeCircle/Fuyu-Bot
+cd Fuyu-Bot
+cargo build --workspace --offline
 ```
 
-## 自带命令
+<Callout type="info">
+  `td_api.tl` 是**构建的必需输入**：`fuyubot-tdlib-sys/build.rs` 无条件去拿它——`TDLIB_TD_API_TL`（显式指定，优先级最高）→ 缓存 → 从 GitHub Releases 下载，拿不到就让**构建失败**。缓存根顺序：`FUYUBOT_TDLIB_VENDORED_CACHE` → `$CARGO_HOME/fuyubot-tdlib-vendored` → 项目本地 `<工作区>/.tdlib-cache`。仓里的 `.cargo/config.toml` 已把最后一档指好，在仓库里敲命令不用先 export。
 
-Fuyu-TDBot-plugin 支持以下命令：
-
-| 命令        | 描述            | 权限   | 可回应场景 |
-| --------- | ------------- | ---- | ----- |
-| `/start`  | start命令       | 所有用户 | 全部    |
-| `/help`   | 帮助命令 列出所有可用命令 | 所有用户 | 全部    |
-| `/log`    | 获取日志文件        | 管理员  | 私聊    |
-| `/config` | 配置管理          | 管理员  | 私聊    |
-| `/plugin` | 插件管理命令        | 管理员  | 全部    |
-| `/admin`  | 设置管理员         | 主人   | 全部    |
-
-## 注意事项
-
-<Callout type="warning" title="注意">
-  如果你使用的 `User` 账户登录 即使命令权限为 `所有用户` 的情况下,也只会回应 `主人` 和 `管理员` 以及 `自身` 的命令请求,其他用户的命令请求会被忽略,防止回复他人命令刷屏。使用命令 /setadmin add `<用户ID>` 可以添加管理员。
-
-  如果你使用的 `Bot` 账户登录 则不会有此限制。
+  转换在**编译期**完成，构建日志里只有一条 `已转换 …\td_api.tl：共 N 条`。条数取决于构建时用的那份文件（本机三千多条），**不是常量**，别当断言用。
 </Callout>
 
+<Callout type="info">
+  `tdjson` 是**运行时**动态加载的，编译期不依赖它存在——所以构建成功不代表运行找得到。构建期 `fuyubot-tdlib/build.rs` 会把它（连同那个目录里的兄弟 DLL）拷到可执行文件同级目录，`target/debug/fuyubot.exe` 拷走就能跑。唯一例外是 `cargo install` 装出来的二进制：安装目录不受构建脚本管，tdjson 得自己放。
+</Callout>
 
-# MongoDB 安装与配置 (/docs/start/install/Mongdb)
+## 编出来的东西在哪 [#编出来的东西在哪]
 
-## 1.安装 MongoDB
+| 命令 | 产物 | 说明 |
+| --- | --- | --- |
+| `cargo build -p fuyubot-cli` | `target\debug\fuyubot.exe` | 开发用 |
+| `cargo package-bot` | `target\release\fuyubot.exe` | 本地打包（tdjson 已在同级目录） |
+| `cargo package-sdk` | `target\release\fuyubot-sdk.exe` | 给插件作者，**不需要** tdjson |
+| `cargo bot` | — | 一键 `fuyubot run` 当前目录 |
 
-### Windows
+本文档其余页面里的 `fuyubot` / `fuyubot.exe` 指的就是这些产物；从发布包安装的用户手里就是解压出来的那个。
 
-1. 请访问 [MongoDB 官方下载页面](https://www.mongodb.com/try/download/community) 找到 `MongoDB Community Server` 点击 `Select package` 选择适合你系统的安装包（通常是 MSI 安装包），然后点击 `Download` 下载。
-2. 运行安装程序，选择“完整”安装类型
-3. 安装完成后，MongoDB 会默认启动为 Windows 服务。
+## 发布包是怎么出的 [#发布包是怎么出的]
 
-额外工具：MongoDB Shell
+`.github/workflows/release-bot.yml` 在 `v*` tag 上按平台编 `fuyubot`、三个内置插件与 `fuyubot-sdk`，
+**分开**打三份中间包（本体 / 插件 / SDK），`publish` 再把本体 + 内置插件叠成各平台一个 zip：
+解压得到 `<资产名>/`，里面有可执行文件、该平台的 `tdjson`（从 `TDLib-v<版本>` 那个 Release 取）
+和 `plugins/`。SDK 是单独的 `fuyubot-sdk-<系统>-<架构>.zip`。
+名字与 `crates/fuyubot-tdlib/src/loader/vendored.rs` 的 `ASSETS` 表同一套口径（`x86_64` / `aarch64`），
+加平台时两边一起加。
 
-* mongosh（MongoDB Shell）：如果你使用较新的 MongoDB 版本，推荐使用 `mongosh`。可以从官方页面的 "Tools" 或单独下载页面获取
+## 自检 [#自检]
 
-### macOS
-
-1. 使用 Homebrew 安装 MongoDB：
-
-   ```bash
-   brew tap mongodb/brew
-   brew install mongodb-community
-   ```
-
-2. 启动 MongoDB 服务：
-
-   ```bash
-   brew services start mongodb/brew/mongodb-community
-   ```
-
-额外工具：mongosh
-
-* 使用 Homebrew 安装 mongosh：
-
-  ```bash
-  brew install mongosh
-  ```
-
-### Linux
-
-1. 使用以下命令安装 MongoDB：
-
-   ```bash
-   sudo apt update
-   sudo apt install -y mongodb
-   ```
-
-2. 启动 MongoDB 服务：
-
-   ```bash
-   sudo systemctl start mongodb
-   ```
-
-额外工具：mongosh
-
-* Ubuntu/Debian（推荐使用官方 apt 源安装最新的 mongosh 和 tools）：
-
-  ```bash
-  # 添加 MongoDB 官方源之后安装 mongosh
-  sudo apt install -y mongosh
-  ```
-
-* 如果使用社区包，可能需要单独下载并安装 `mongosh`的 deb 包。
-
-## 2.配置 MongoDB
-
-默认情况下，MongoDB 会监听本地的 `27017` 端口，并且只能本地访问。如果你需要更改配置，可以编辑 MongoDB 的配置文件（通常位于 `/etc/mongod.conf` 或 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）。
-
-确保 MongoDB 服务正在运行，然后你可以使用以下连接字符串连接到本地的 MongoDB 实例：
-
-```plaintext
-mongodb://localhost:27017
+```bash
+cargo build --workspace --offline   # 0 warning
+cargo test  --workspace --offline   # 全绿
+cargo fmt --all --check             # 0 diff
 ```
 
-### 设置账户和密码
+真 TDLib 的端到端自检（要本机的 `tdjson`）：
 
-MongoDB 默认安装后没有启用账户密码认证。建议在生产环境开启认证并设置管理员账户。
-
-#### 1. 创建管理员账户
-
-1. 打开命令行，连接到 MongoDB：
-   ```powershell
-   mongo
-   ```
-2. 切换到 `admin` 数据库：
-   ```js
-   use admin
-   ```
-3. 创建管理员用户（请替换用户名和密码）：
-   ```js
-   db.createUser({
-     user: "名称",
-     pwd: "你的密码",
-     roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
-   })
-   ```
-
-#### 2. 启用认证
-
-1. 编辑配置文件（Windows 通常在 `<安装目录>\MongoDB\Server\<version>\bin\mongod.cfg`）：
-   ```yaml
-   security:
-     authorization: enabled
-   ```
-2. 重启 MongoDB 服务。
-
-#### 3. 修改密码
-
-<Callout>
-  如果你创建了管理员账户后无法登录，可以通过以下步骤修改密码：
-</Callout>
-
-1. 关闭认证，编辑配置文件，注释掉 \`authorization: enabled
-   ```yaml
-   security:
-    # authorization: enabled
-   ```
-   重启 MongoDB 服务。
-
-2. 连接到 MongoDB 并切换到 `admin` 数据库：
-   ```js
-   use admin
-   ```
-
-3. 修改密码（将 `名称` 和 `新密码` 替换为你的用户名和新密码）：
-   ```js
-   db.changeUserPassword("名称", "新密码")
-   ```
-
-<Callout>
-  记得重新启用认证，编辑配置文件，取消注释 `authorization: enabled`，然后重启 MongoDB 服务。
-</Callout>
-
-### 3.启用认证后常用的连接字符串示例
-
-启用认证后，客户端需要使用带凭证的连接字符串。其中常见形式包括：
-
-```plaintext
-mongodb://<username>:<password>@localhost:27017/?authSource=admin
+```powershell
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.66\windows-x86_64"
+cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 ```
 
-* 带有数据库名称的连接字符串：
 
-```plaintext
-mongodb://<username>:<password>@localhost:27017/<database>?authSource=admin
+# 配置文件 (/docs/usage/config)
+
+`fuyubot run` 读 `fuyubot.toml`，**所有键都有默认值**。缺这个文件时 `run` 会按模板自动生成一份（等价于先跑一次 `fuyubot init`）——`--replay` 是例外，它不会为了回放在你的目录里留配置。
+
+一个项目目录长这样：
+
+```text
+demo/
+  fuyubot.toml        ← 配置
+  plugins/            ← [plugins].dir，run 从这里加载动态库
+  data/               ← [telegram].data_dir，TDLib 的 database 与 files 都指它
+  logs/fuyubot.log    ← --background 的日志
+  .fuyubot/           ← 实例状态（lock / status / stop），别手工编辑
 ```
 
-参数说明（常用）：
+## 字段 [#字段]
 
-* `<username>`：连接数据库的用户名。
-* `<password>`：连接数据库的密码。
-* `<database>`：要连接的数据库名称。
-* `authSource`：指定用于认证的数据库（通常为 `admin`）。
+| 键 | 默认值 | 它决定什么 |
+| --- | --- | --- |
+| `[bot].name` | `fuyubot` | 显示名（启动那行、`status` 里的「名字」） |
+| `[bot].api_id` | `0` | **旧位置**；`[telegram].api_id` 优先。新配置写进 `[telegram]` |
+| `[telegram].account_type` | `bot` | 登录走哪条路：`bot` → Bot Token；`user` → 手机号 / 扫码。**写错报错**，不会静默当 bot |
+| `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
+| `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
+| `[plugins].dir` | `plugins` | `run` 从这里加载所有动态库；`--plugin-dir` 覆盖它 |
+| `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
+| `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
 
-***
+模板（`fuyubot init` 生成的就是它）：
 
-## 公开 MongoDB 到公网
+```toml
+[bot]
+name = "mybot"
 
-默认情况下，MongoDB 只监听本地 `127.0.0.1`。如需让外部设备访问，需要修改绑定地址。
+[telegram]
+account_type = "bot"
+api_id = 12345
+data_dir = "data"
 
-### 步骤
+[plugins]
+dir = "plugins"
 
-1. 编辑配置文件`mongod.conf`，找到 `net` 配置项并修改`bindIp`：
-   ```yaml
-   net:
-     port: 27017 # 你可以根据需要更改端口
-     bindIp: 0.0.0.0
-   ```
-   这样会允许所有 IP 访问 MongoDB。
-2. 重启 MongoDB 服务。
-3. 确保防火墙已开放 27017 端口，并设置安全规则，避免暴露数据库到不可信网络。
+[tdlib]
+path = ""          # 留空 = 按加载优先级自动找 tdjson
+log_verbosity = 1
+```
 
-<Callout title="注意" type="error">
-  **安全提示**：强烈建议开启认证、设置强密码，并限制访问来源 IP。
+<Callout type="warn">
+  **凭据一律不落盘**：`api_hash`、Bot Token、手机号、验证码、两步验证密码都不许写进配置文件（连日志也不行）。`api_hash` 在配置里**根本没有字段**，写了也会被 serde 忽略——它只认环境变量 `TG_API_HASH` 或 `fuyubot run` 的交互式输入。session 由 TDLib 自己落在 `data_dir`，配置里不记任何登录态。
 </Callout>
 
-## GUI 工具
+## 几条约定 [#几条约定]
 
-以下是一些常用的 MongoDB GUI 管理工具：
+- **相对路径相对配置文件所在目录**（也就是项目根）：`plugins`、`data`、日志目录都按它解析。
+- **自动 init 只认默认文件名**：缺 `fuyubot.toml` 时 `run` 会生成一份；但用 `--config 别的名字` 时不会凭空造，直接报错。
+- `status` / `stop` **不替你造配置**：找不到 `fuyubot.toml` 就报「先 `fuyubot init` 建一个」——面对的是已经存在的实例，凭空建一个只会更迷惑。
+- `--plugin-dir` 覆盖 `[plugins].dir`，`--config` 换配置文件本身。
+- 想知道**某一行到底生效成了什么**（含默认值）：`fuyubot config` 直接打出来，见 [`fuyubot` 命令参考](../cli/fuyubot.mdx)。
+- 字段读出来后，运行参数（凭据来源、加载顺序）见 [运行与实例管理](./run.mdx)；`account_type` 之外没有别的自定义登录入口。
 
-### 1. MongoDB Compass
+## 改了配置怎么生效 [#改了配置怎么生效]
 
-<GithubInfo owner="mongodb-js" repo="compass" />
+配置在 `run` 启动时读一次。改完要重启实例：
 
-MongoDB 官方提供的 GUI 工具，功能强大，适合大多数用户使用
-支持数据可视化、查询构建等功能。
+```powershell
+.\fuyubot.exe stop   --config demo\fuyubot.toml
+.\fuyubot.exe run    --config demo\fuyubot.toml --background
+```
 
-平台：Windows、macOS、Linux
+`--replay` 不占单实例锁，所以它可以和跑着的实例并存、跑完就退，适合改插件期间反复试。
 
-* 下载地址：[https://www.mongodb.com/products/compass](https://www.mongodb.com/products/compass)
-
-截图：
-<img alt="MongoDB Compass" src="https://github.com/mongodb-js/compass/blob/main/packages/compass/compass-screenshot.png?raw=true" width="3554" height="2172" />
-
-### 2. Mondroid
-
-<GithubInfo owner="vedfi" repo="mondroid" />
-
-一款适用于 Android 的 MongoDB 客户端，界面简洁，易于使用。
-
-* 下载地址：[https://github.com/vedfi/mondroid](https://github.com/vedfi/mondroid)
+改完先别急着重启：`fuyubot config --config demo\fuyubot.toml` 会打印生效值，`account_type` 之类写错时当场就能看出来（那一行是 `⚠️` 开头，而 `run` 要走到登录才报）。
 
 
-# Node.js 安装 (/docs/start/install/nodejs)
+# 环境变量 (/docs/usage/env)
 
-## 安装 Node.js
+| 变量 | 谁读 | 作用 |
+| --- | --- | --- |
+| `TDLIB_TD_API_TL` | `fuyubot-tdlib-sys/build.rs`（**构建期**） | 显式指定 `td_api.tl`，优先级最高（完全离线构建就这么干） |
+| `FUYUBOT_TDLIB_VENDORED_CACHE` | 两个 `build.rs`（**构建期**） | 缓存根：`td_api.tl` 与 vendored 动态库都放这儿。**必须绝对路径**（build.rs 的 CWD 是各自的 crate 根） |
+| `FUYUBOT_TDLIB_RELEASES_REPO` | `build.rs`（**构建期**） | 覆盖 `[package.metadata.fuyubot] releases-repo`（默认 `CatMoeCircle/Fuyu-Bot`） |
+| `TDLIB_TDJSON_PATH` | 加载器（**运行期**） | tdjson 的目录或文件，查找优先级 1；嫌四级排查麻烦就直接设它 |
+| `TG_API_ID` | `fuyubot run` | TDLib api_id（**不是**秘密）。也顺手带进自动生成的配置 |
+| `TG_API_HASH` | `fuyubot run` / 集成测试 | api_hash，**凭据**。只认环境变量或交互式输入 |
+| `TG_BOT_TOKEN` | `fuyubot run` / 集成测试 | bot 账号的 token；有值就不问 Bot Token，后台运行也能登 |
+| `FUYUBOT_NAME` | `fuyubot run` 的自动 init | 自动生成配置时的 `[bot].name`（默认 `fuyubot`） |
+| `FUYUBOT_SDK_PATH` | `fuyubot-sdk init` | **可选**：指向 SDK 仓库里放着 crate 的目录（`crates/`）。设了生成的插件用 `path = …` 对着源码开发；不设就写 crates.io 版本号（`fuyubot-plugin-api = "0.1.0"`） |
 
-### Windows
+## 构建期 vs 运行期 [#构建期-vs-运行期]
 
-1. 访问 [Node.js 官方下载页面](https://nodejs.org/zh-cn/download)。
-2. 点击 Windows Installer (.msi) 下载适用于 Windows 的安装包。
-3. 运行下载的安装程序，按照提示完成安装。
-
-### macOS & Linux
-
-前往 [Node.js 官方网站](https://nodejs.org/zh-cn/download) 下载适用于你操作系统的安装包。
-
-或者，你也可以使用包管理器安装 Node.js：
-
-* **macOS**（使用 Homebrew）：
-
-  ```bash
-  brew install node
-  ```
-* **Ubuntu/Debian**：
-
-  ```bash
-  sudo apt update
-  sudo apt install -y nodejs npm
-  ```
-
-
-# Telegram API 获取 (/docs/start/install/tgapi)
-
-## 获取 Telegram API ID 和 API Hash
-
-要使用 Fuyu-TDBot，您需要从 Telegram 获取 `API ID` 和 `API Hash`。以下是获取这些信息的步骤：
-
-内容来源于 [Telegram 官方文档](https://core.telegram.org/api/obtaining_api_id#obtaining-api-id)。
-
-### 获取api\_id
-
-为了获取 `API ID` 并使用 Telegram API 开发您自己的应用程序，您需要执行以下作：
-
-* 使用官方应用程序注册 Telegram。
-* 登录您的 Telegram 核心：[https://my.telegram.org。](https://my.telegram.org。)
-* 转到 `API development tools` 并填写表格。
-* 您将获得基本地址以及用户授权所需的`api_id`和`api_hash`参数。
-* 目前，每个号码只能注册一个`api_id`。
-
-TG将向您在此过程中使用的电话号码发送重要的开发者通知，因此请使用连接到您活动 Telegram 帐户的最新号码。
-
-### 使用 api\_id
-
-在使用 MTProto Telegram API 之前，请注意以下事项：
-Telegram
-
-* 所有 API 客户端库都受到严格监控，以防止滥用。
-
-* 如果你使用 Telegram API 进行刷屏、垃圾信息、伪造频道的订阅数或观看数，你将被永久封禁。
-
-* 由于 Telegram API 滥用严重，所有使用非官方 Telegram API 客户端登录的账户都会被自动置于观察状态，以防止违反服务条款。
-
-* 如果你没有违反服务条款，但在使用 API 后你的账户被封禁，请发邮件至 [recover@telegram.org](mailto:recover@telegram.org)，解释你使用 API 的意图，请求解封。
-
-请注意，邮件需要人工审核，因此自动生成的邮件可能会被检测并封禁。
-
-
-# 添加插件 (/docs/start/plugin/addPlugins)
-
-## 插件加载
-
-Fuyu-TDBot 支持插件化扩展，您可以通过编写插件来添加新功能。插件放在 `plugins` 目录下，由 `PluginManager` 在启动时扫描加载。
-
-### 插件类型
-
-目前支持两种类型的插件：
-
-* **单文件插件**：一个 TypeScript 文件，通常命名为 `examplePlugin.ts`，元数据写在类字段上，**最后加载**。
-* **包插件（多文件，推荐）**：子目录包含 `index.ts` 入口和带 `pluginType` 的 `package.json`，元数据在 `package.json` 中声明，可配置插件依赖并按序加载。
-
-<Files>
-  <Folder name="src">
-    <File name="index.ts" />
-  </Folder>
-
-  <Folder name="plugins" defaultOpen>
-    <File name="examplePlugin.ts (单文件插件)" />
-
-    <Folder name="anotherPlugin (包插件)" defaultOpen>
-      <File name="index.ts (入口文件)" />
-
-      <File name="package.json（pluginType 清单）" />
-
-      <File name="tsconfig.json (可选)" />
-    </Folder>
-  </Folder>
-
-  <File name="package.json" />
-</Files>
-
-<Callout title="添加插件" type="success">
-  * **单文件插件**：将 `examplePlugin.ts` 文件放置在 `plugins` 目录下。
-  * **包插件**：将整个插件文件夹放置在 `plugins` 目录下，并确保 `package.json` 含 `pluginType` 字段。
+<Callout type="info">
+  **`FUYUBOT_TDLIB_VENDORED_CACHE` 只在构建期读。** 运行期用的是构建时烤进二进制的路径（`cargo:rustc-env` 写进去的 `FUYUBOT_TDLIB_VENDORED_DIR`——那是构建产物，不是让你设的变量）。运行时动态库最终由加载器的四级优先级决定，**不读** `FUYUBOT_TDLIB_VENDORED_CACHE`。
 </Callout>
 
-### 加载顺序
+缓存根是一串候选，顺序即优先级：
 
-1. **包插件**（`package.json` 含 `pluginType`）— 按 `pluginDependencies` 拓扑排序，依赖在前
-2. 旧目录插件（无 `pluginType`）
-3. **单文件插件** — 最后加载
+```text
+FUYUBOT_TDLIB_VENDORED_CACHE
+  → $CARGO_HOME/fuyubot-tdlib-vendored
+  → 项目本地 <工作区根>/.tdlib-cache
+```
 
-包插件禁用后在读取清单名时即跳过，不会执行 `import`。详见[插件迁移指南](/docs/plugin/Migration)。
+前两档写不进去时会退到项目本地那档；**全都写不进去**才退到 `$OUT_DIR`——那个目录每次重跑构建脚本都会被清空，于是下次构建会重新下载（构建脚本会明确警告）。仓里的 `.cargo/config.toml` 已经把项目本地那档指好了。
 
+```powershell
+# 要临时换缓存位置才手写；必须绝对路径
+$env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
+```
 
-# 插件仓库 (/docs/start/plugin/plugins)
+## 凭据 [#凭据]
 
-## 插件仓库
-
-<GithubInfo owner="CatMoeCircle" repo="FuyuBot-plugins" />
-
-Fuyu-TDBot 官方插件仓库，包含多个实用插件，方便用户根据需求进行安装和使用。
-
-插件功能介绍请查看[插件仓库 README](https://github.com/CatMoeCircle/FuyuBot-plugins?tab=readme-ov-file#fuyubot-plugins)
-
-### 仓库目录结构
-
-<Files>
-  <Folder name="plugins (插件目录)" defaultOpen>
-    <File name="examplePlugin.ts (单文件插件)" />
-
-    <Folder name="anotherPlugin (包插件)" defaultOpen>
-      <File name="index.ts (入口文件)" />
-
-      <File name="package.json（pluginType 清单）" />
-
-      <File name="tsconfig.json (可选)" />
-    </Folder>
-  </Folder>
-
-  <Folder name="scripts">
-    <File name="termux.sh" />
-  </Folder>
-</Files>
-
-* **单文件插件**：顶层 `.ts`，元数据在类字段，最后加载。
-* **包插件**：目录 + `package.json`（`pluginType`），可声明依赖顺序，推荐新插件使用。
-
-<Callout title="添加插件" type="success">
-  - **单文件插件**：将 `examplePlugin.ts` 文件放置在 `plugins` 目录下。
-  - **包插件**：将整个插件文件夹放置在 `plugins` 目录下，根目录执行 `pnpm install`。
+<Callout type="warn">
+  **凭据一律不落盘**（`AGENTS.md` 约束 41）：`api_hash`、Bot Token、手机号、验证码、两步验证密码不得写进仓库任何文件、`fuyubot.toml`、测试夹具或日志。只允许两个来源——**环境变量**（上表那几个）与**交互式输入**（`fuyubot run` 问）。
 </Callout>
 
-迁移与开发约定见[插件开发约定](/docs/plugin)与[插件迁移指南](/docs/plugin/Migration)。
+- `api_id` **不是**凭据，写进配置没问题（`[telegram].api_id`）。
+- `api_hash` 在配置里根本没有字段；写了也被忽略，运行时会改用 `TG_API_HASH` 或提问。
+- 后台运行没有 stdin：没有 session、也没 `TG_BOT_TOKEN` 时会直接失败，先把前台 `run` 登一次。
+
+## 只在自动 init 那一次生效 [#只在自动-init-那一次生效]
+
+`FUYUBOT_NAME` 与 `TG_API_ID` 只在 `run` **自动生成配置**时被读（缺 `fuyubot.toml`，或 `--config` 指向默认文件名而它不存在）。配置已存在就不参与——否则每次跑都会覆盖你手写的名字。
+
+
+# 下载与安装 (/docs/usage)
+
+不用装 Rust、不用编译：到 [Releases](https://github.com/CatMoeCircle/Fuyu-Bot/releases) 下对应平台的 zip，
+解压后里面就是可执行文件，**TDLib 动态库已经和它放在同一个目录**（运行时按「可执行文件所在目录」
+自动找到，不用配环境变量、不用单独装 TDLib），内置插件在同级的 `plugins/`。
+
+## 下载哪个包 [#下载哪个包]
+
+| 系统 | 下载 | 包里有什么 |
+| --- | --- | --- |
+| Windows 10/11（x64） | `fuyubot-windows-x86_64.zip` | `fuyubot.exe` + `tdjson.dll` + `plugins/` + `README.txt` |
+| Windows 11（ARM64） | `fuyubot-windows-aarch64.zip` | `fuyubot.exe` + `tdjson.dll` + `plugins/` + `README.txt` |
+| Linux（x86_64） | `fuyubot-linux-x86_64.zip` | `fuyubot` + `libtdjson.so` + `plugins/` + `README.txt` |
+| Linux（ARM64） | `fuyubot-linux-aarch64.zip` | `fuyubot` + `libtdjson.so` + `plugins/` + `README.txt` |
+| macOS（Apple Silicon） | `fuyubot-macos-aarch64.zip` | `fuyubot` + `libtdjson.dylib` + `plugins/` + `README.txt` |
+
+- 资产名里的 `<系统>-<架构>` 用 cargo 那套口径（`x86_64` / `aarch64`），和 TDLib 自己的资产同名同序。
+- 归档一律 `.zip`（Windows 资源管理器双击就能解，Linux / macOS 用 `unzip`）。
+- **上面没有的平台**（Intel Mac 等）暂时没有包，自己编：见 [从源码构建](./build.mdx)。
+- 插件开发 CLI（`fuyubot-sdk`）在**另一个仓库**的 Release 里：
+  [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK/releases) 的 `fuyubot-sdk-<系统>-<架构>.zip`，
+  它**不需要** `tdjson`。
+
+## 解压、验证 [#解压验证]
+
+Windows（PowerShell）：
+
+```powershell
+Expand-Archive -Path fuyubot-windows-x86_64.zip -DestinationPath .
+cd fuyubot-windows-x86_64
+.\fuyubot.exe --version
+```
+
+Linux / macOS：
+
+```bash
+unzip fuyubot-linux-x86_64.zip
+cd fuyubot-linux-x86_64
+chmod +x fuyubot        # 从网盘 / 别的机器转手后可能丢执行位
+./fuyubot --version
+```
+
+macOS 从网上下载的二进制会被 Gatekeeper 拦住，解一次隔离属性：
+
+```bash
+xattr -d com.apple.quarantine ./fuyubot ./libtdjson.dylib
+```
+
+```text
+fuyubot 0.1.0
+```
+
+`--version` 能打印版本号，说明这个可执行文件本身没坏；真正加载 TDLib 是在 `run` 的时候
+（日志里会有一行 `TDLib 1.8.66 命中「可执行文件所在目录」`）。加载失败按
+[常见问题](./troubleshooting.mdx) 排查。
+
+## 起一个 bot 项目 [#起一个-bot-项目]
+
+```powershell
+.\fuyubot.exe init --dir demo --name mybot --api-id 12345
+```
+
+```text
+已生成 demo\fuyubot.toml
+插件目录：demo\plugins
+下一步：fuyubot-sdk init demo --lang rust（插件脚手架由开发 CLI 生成）
+```
+
+`api_id` 到 [my.telegram.org](https://my.telegram.org) 申请，**它不是秘密**，可以直接写进配置；`api_hash` 是凭据，
+不落盘——只认环境变量 `TG_API_HASH` 或运行时的交互式输入（见 [配置文件](./config.mdx)）。
+
+## 跑起来 [#跑起来]
+
+```powershell
+# 前台：会问 api_id / api_hash（或读 TG_API_ID / TG_API_HASH），然后走登录
+.\fuyubot.exe run --config demo\fuyubot.toml
+```
+
+<Callout type="warn">
+  真账号的最后一环**没有端到端验过**：`run` 会问凭据、驱动授权状态机、`getMe` 打印账户，然后才开分发；
+  真库上的登录与 session 复用是在 `fuyubot-tdlib` 的 `-- --ignored` 自检里验的，但「收真更新 → 插件回一条」
+  还没有真账号证据。想先确认插件行为，用下面的 `--replay` 或 `--no-login`。
+</Callout>
+
+**没有插件也能起**（「插件 0 个」），插件是后装的：拿到编好的 `.dll` / `.so` / `.dylib` 之后
+
+```powershell
+.\fuyubot.exe plugin install path\to\myplugin.dll --plugin-dir demo\plugins
+.\fuyubot.exe plugin list --plugin-dir demo\plugins
+```
+
+插件怎么编见 [插件总览](../plugin/index.mdx)。
+
+## 不接账号先验一遍 [#不接账号先验一遍]
+
+回放是**离线**的：把一批更新 JSON 灌进整条管线，请求只留档、不发到 Telegram。先写一条最小的回放文件：
+
+```powershell
+@'
+{"@type":"updateNewMessage","message":{"@type":"message","id":1,"chat_id":-1001234567890,
+ "is_outgoing":false,"content":{"@type":"messageText",
+ "text":{"@type":"formattedText","text":"/ping","entities":[]}}}}
+'@ | Set-Content -Encoding utf8 ping.json
+.\fuyubot.exe run --replay ping.json --plugin-dir demo\plugins
+```
+
+```text
+--replay：本次不接 TDLib（回放是离线的，请求只留档）
+fuyubot（fuyubot 0.1.0）已启动：插件 0 个，工具 0 个
+回放 updateNewMessage → UpdateOutcome { update_type: "updateNewMessage", listeners: 0, warnings: [] }
+插件打出来的日志：
+插件发出去的请求：
+```
+
+退出码 0 表示回放成功。细节（`--replay-wait`、脚本插件要等静默窗口）见 [离线回放](./replay.mdx)。
+
+## 目录布局 [#目录布局]
+
+`fuyubot init` 建出来的项目：
+
+```text
+demo/
+  fuyubot.toml        ← 配置（所有键都有默认值）
+  plugins/            ← 插件目录，run 从这里加载动态库
+  data/               ← TDLib 的 session / database
+  logs/fuyubot.log    ← --background 的日志
+  .fuyubot/           ← 实例状态（lock / status / stop），别手工编辑
+```
+
+## 下一步 [#下一步]
+
+<Cards>
+  <Card title="配置文件" href="/docs/usage/config/" />
+  <Card title="运行与实例管理" href="/docs/usage/run/" />
+  <Card title="离线回放" href="/docs/usage/replay/" />
+  <Card title="CLI 参考" href="/docs/cli/" />
+  <Card title="常见问题" href="/docs/usage/troubleshooting/" />
+  <Card title="从源码构建" href="/docs/usage/build/" />
+</Cards>
+
+
+# 离线回放 (/docs/usage/replay)
+
+`fuyubot run --replay` 把一批更新的 JSON 灌进整条管线后退出：**不接 TDLib、不用账号**，用来在任何机器上验插件。
+
+```powershell
+.\fuyubot.exe run --replay examples\replay\new_message.json --plugin-dir <插件目录>
+```
+
+```text
+--replay：本次不接 TDLib（回放是离线的，请求只留档）
+已加载插件 mybot (demo\plugins\mybot.dll)
+fuyubot（fuyubot 0.1.0）已启动：插件 1 个，工具 0 个
+回放 updateNewMessage → UpdateOutcome { update_type: "updateNewMessage", listeners: 1, warnings: [] }
+插件打出来的日志：
+  Info mybot: init
+  Info mybot: start()
+插件发出去的请求：
+```
+
+**每条 update 打一行**，`listeners` 是收到它的订阅数。退出码 0 表示回放成功，非零表示插件加载或回放本身失败。
+
+## 输出里看什么 [#输出里看什么]
+
+| 段落 | 含义 |
+| --- | --- |
+| `回放 <@type> → UpdateOutcome { … }` | 管线跑完一条更新的结果。`warnings` 非空说明有阶段或回调抱怨过 |
+| `插件打出来的日志：` | 插件 `log` 的原样回显（`Info mybot: init` / `start()` 是插件生命周期） |
+| `插件发出去的请求：` | 插件请求的**留档**。回放不连 Telegram，所以请求不会真的发出去 |
+
+回放是离线路径，所以插件发请求只留档、也不会等响应——要验「响应回到插件」用真 TDLib，并准备好账号。
+
+## 慢插件与脚本插件：`--replay-wait` [#慢插件与脚本插件--replay-wait]
+
+回放完不是立刻退出，而是等一个**安静窗口**再看结果（脚本插件的反应是异步的）。窗口的默认值按插件形态自动选：
+
+| 插件形态 | 默认窗口 |
+| --- | --- |
+| 有脚本（`.py` / `.js` / `.ts`） | 2000 ms |
+| 纯原生（Rust / C / C++） | 150 ms |
+
+插件要发慢速网络请求就把它调大：
+
+```powershell
+.\fuyubot.exe run --replay examples\replay\new_message.json --plugin-dir <插件目录> --replay-wait 5000
+```
+
+## 插件目录别指 `target\debug` [#插件目录别指-targetdebug]
+
+`--plugin-dir` 要指向「只放你要验的插件」的目录。指 `target\debug` 会混进所有示例产物：其中 `counter.dll` 是**脚本插件**，脚本不在它旁边，于是 Node 报 `Cannot find module '...\counter.ts'`，并且**整个回放以非零码中止**。
+
+正确做法是 `plugin install` 到一个干净目录，或把 dll + 脚本一起拷进去：
+
+```bash
+# examples/ 下的示例是 workspace 成员：产物落在仓库根的 target/，不在工程自己的 target/ 里
+cargo build -p fuyubot-example-counter
+mkdir demo-ts && cp target/debug/counter.dll examples/ts-counter/counter.ts examples/ts-counter/fuyubot_plugin.js demo-ts/
+fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
+```
+
+## 与实例的关系 [#与实例的关系]
+
+<Callout type="info">
+  `--replay` **不占单实例锁、不发布状态**：同一个目录可以一边跑着实例、一边回放。它也**不会自动 init**（回放不该因为你试了一次就在当前目录留下 `fuyubot.toml`），没有配置就按默认值跑，也不碰 `.fuyubot/` 里的实例状态。
+</Callout>
+
+- 回放**不接 TDLib**（无论有没有 `tdjson`）：这是硬约定，否则回放就要账号和网络。
+- 要看运行中的实例、后台跑、优雅停止，见 [运行与实例管理](./run.mdx)。
+- 回放里插件加载失败，多半是 ABI 版本或脚本同伴位置的问题，见 [常见问题](./troubleshooting.mdx)。
+
+
+# 运行与实例管理 (/docs/usage/run)
+
+## 一个目录一个实例 [#一个目录一个实例]
+
+实例状态放在 `<项目根>/.fuyubot/` 下的三个文件里，**三件事各占一个文件**：
+
+| 文件 | 作用 |
+| --- | --- |
+| `.fuyubot/lock` | **只用来独占**（`try_lock`，进程死即释放）。里面不存内容——Windows 的文件锁是强制的，别的进程读不到被锁的字节 |
+| `.fuyubot/status` | `key=value`：pid / started / version / plugins / name。**启动完成之后**才发布（拿上锁只说明进程活着） |
+| `.fuyubot/stop` | 停止请求，内容是 PID。`fuyubot stop` 先写它，让实例自己收摊 |
+
+- 第二次 `run`（前台后台都算）会被拒，报错里带上在跑的那个 PID。
+- 陈旧的 `lock` **不用手工清理**：拿锁时会顺手删掉上一个实例的 `status` / `stop`。
+- `--replay` **不占锁、不发布状态**：离线开发路径不该和跑着的实例互斥。
+
+## 前台运行 [#前台运行]
+
+```powershell
+.\fuyubot.exe run --config demo\fuyubot.toml
+```
+
+顺序是固定的：自动 init → 拿单实例锁 → 问/读凭据 → attach TDLib → **加载全部插件** → 发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 最后才开分发。插件先于登录加载，是为了不漏掉登录窗口里的更新。
+
+| 参数 | 作用 |
+| --- | --- |
+| `--config <路径>` | 配置文件，默认 `fuyubot.toml` |
+| `--plugin-dir <目录>` | 覆盖配置里的插件目录 |
+| `--no-login` | 只起框架、不走登录流程（CI / 容器；已有 session 仍会被 TDLib 打开） |
+| `--no-tdlib` | 不接 TDLib，只加载插件 |
+| `--background` | 放到后台跑 |
+| `--replay <JSON>` / `--replay-wait <MS>` | 见 [离线回放](./replay.mdx) |
+
+凭据来源：`TG_API_ID` / `TG_API_HASH`（Bot Token 还认 `TG_BOT_TOKEN`），缺了才交互式提问。凭据不落盘，详见 [环境变量](./env.mdx)。
+
+## 后台运行 [#后台运行]
+
+```powershell
+.\fuyubot.exe run --config demo\fuyubot.toml --no-login --background
+```
+
+```text
+已在后台运行：pid 64852，日志 demo\logs\fuyubot.log
+`fuyubot status` 看状态，`fuyubot stop` 停掉它
+```
+
+它派生一个没有终端的自己，stdout/stderr 追加进 `<目录>logs\fuyubot.log`；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
+
+<Callout type="warn">
+  后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 登一次，session 会落在 `data/`。
+</Callout>
+
+## 看状态 [#看状态]
+
+```powershell
+.\fuyubot.exe status --config demo\fuyubot.toml
+```
+
+```text
+demo：运行中
+  pid        64852
+  已运行     0 秒
+  版本       0.1.0
+  名字       mybot
+  插件       0 个
+  日志       demo\logs\fuyubot.log
+```
+
+`status` 只读 `.fuyubot/`，**不加载插件、不接 TDLib**。三种结果：运行中 / 陈旧（没人在跑，附上次的 pid 与启动时间）/ 没有运行中的实例。还有一种是「有实例在跑、但状态还没发布」，也就是卡在启动里。
+
+## 停掉 [#停掉]
+
+```powershell
+.\fuyubot.exe stop --config demo\fuyubot.toml
+```
+
+```text
+已停止 mybot（pid 64852，优雅退出：插件 stop 与内核都已收摊）
+```
+
+```powershell
+.\fuyubot.exe status --config demo\fuyubot.toml
+```
+
+```text
+demo：没有运行中的实例
+```
+
+`stop` 的机制：写 `.fuyubot/stop` → 实例每 500 ms 看一次 → 停接收循环 → 卸载插件（跑 `plugin_stop`）→ 停内核 → 放锁；**8 秒不理会才硬杀兜底**。硬杀跑不到插件的 `plugin_stop`，所以别一上来就 `taskkill`。
+
+<Callout type="warn">
+  **Ctrl-C 仍是硬杀**：捕获它要开 tokio 的 `signal` feature（会带进 `mio` + `signal-hook-registry` + `errno`，依赖白名单没放行）。要优雅退出就用 `fuyubot stop`，别按 Ctrl-C。
+</Callout>
+
+## 常见情形 [#常见情形]
+
+| 现象 | 处理 |
+| --- | --- |
+| 重复 `run` 报「已经有实例在跑」，带 PID | 先 `status`，再 `stop`；不要手工删 `lock` |
+| `status` 说陈旧 | 正常，陈旧状态不用清理，下次 `run` 自己接管 |
+| 后台启动后立刻 `status` 报「启动中」 | 状态是在插件加载 + 登录之后才发布的，等一会儿再看 |
+| 进程活着但没更新 | 没登录就收不到任何更新；先用 `--replay` 验插件 |
+
+
+# 常见问题 (/docs/usage/troubleshooting)
+
+## 找不到 tdjson [#找不到-tdjson]
+
+**构建成功不代表运行找得到**：`fuyubot-tdlib` 在编译期不依赖 tdjson 存在。缺库时 `run` 不会崩，而是打一行然后继续跑（插件照样加载，只是收不到更新）：
+
+```text
+TDLib 未就绪（不接更新）：找不到可用的 tdjson 动态库。已尝试：
+[1] 未设置 TDLIB_TDJSON_PATH
+[2] 可执行文件目录 … 里也没有 tdjson.dll
+[4] 裸库名 tdjson.dll 系统链接器也找不到
+```
+
+四级查找顺序（不要重排）：
+
+| 优先级 | 位置 |
+| --- | --- |
+| 1 | `TDLIB_TDJSON_PATH` 指向的**文件**或**目录** |
+| 2 | vendored（构建期烤进去的目录）→ **可执行文件所在目录** |
+| 3 | Linux 带版本号的系统库（`libtdjson.so.1.8.66` …） |
+| 4 | 裸库名（`tdjson.dll` / `libtdjson.so`，走 `PATH`） |
+
+报错里的 `[1]` … `[4]` 就是这四档的逐条结果，按顺序看就知道断在哪。嫌排查麻烦就直接指定：
+
+```powershell
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.66\windows-x86_64"
+```
+
+<Callout type="info">
+  加载动态库时会**先查库自己所在的目录**（Windows 上是 `LOAD_WITH_ALTERED_SEARCH_PATH`）。否则 tdjson 的兄弟依赖（libssl / zlib 之类）找不到，报的却是 `ERROR_MOD_NOT_FOUND`（126）——错误信息说「库不在」，实际缺的是它的依赖。所以 tdjson 和它的兄弟 DLL 要放在一起。
+</Callout>
+
+`cargo install` 装出来的二进制是唯一例外：安装目录不受构建脚本管，tdjson 得自己放到它旁边或设 `TDLIB_TDJSON_PATH`。
+
+## `LNK1104: cannot open file '...\Temp\lnk{GUID}.tmp'` [#lnk1104-cannot-open-file-templnkguidtmp]
+
+这是 **MSVC 链接器写不了 `%TEMP%`**（受限环境 / 沙箱里常见），跟你的代码无关。把临时目录指到可写的位置：
+
+```powershell
+$env:TEMP = "$PWD\target\linktmp"; $env:TMP = $env:TEMP; New-Item -ItemType Directory -Force $env:TEMP
+```
+
+同一坑的另一面：**测试不许依赖 `%TEMP%`**。仓库约定临时目录一律放 `target/test-tmp/<crate>/<名字>`——MSYS（git bash）会把 `TEMP` 改成 `/tmp`（在 Windows 上解析成当前盘根），受限环境里真实 `%TEMP%` 也可能写不了。换个 shell 就红的测试几乎总是这个原因。
+
+## 中文乱码 / 行号错位 [#中文乱码--行号错位]
+
+本机 PowerShell 的默认代码页是 cp936：`Get-Content` 会把 UTF-8 当 **GBK** 解码，中文注释直接毁掉，还会**吞换行**导致行号错位（按行号删代码会删错）。看文件内容用编辑器或 `read` 工具，别用 shell 的文本通道读写源码。
+
+脚本插件那条链路的 stdio 两侧已经钉成 UTF-8——Windows 上 Python 默认按系统代码页读管道，不钉就会把中文变乱码。这是 SDK 的职责，插件作者不用管。
+
+## 插件加载失败 [#插件加载失败]
+
+`run` 遇到加载不了的插件会打一行然后**继续**：
+
+```text
+跳过 <路径>: <错误>
+```
+
+`--plugin-dir` 下的东西会被逐个尝试，所以「少加载了一个」不会让整个进程失败——去看这行。
+
+| 现象 | 原因 / 怎么查 |
+| --- | --- |
+| `ABI 版本是 N，宿主是 M` | 插件与宿主的 ABI 不匹配：用同一份 SDK 重新编译，别拿旧产物硬跑 |
+| 缺 `plugin_init` / 根本不是动态库 | `fuyubot-sdk check <路径>` **静态**看导出符号；非零退出码 = 宿主一定拒绝加载 |
+| Node 报 `Cannot find module '...\counter.ts'` | 脚本同伴不在 cdylib 旁边。用 `plugin install` 装（会连 `.py` / `.js` / `.ts` / `.pyi` 一起拷），或把脚本和 dll 拷进同一目录 |
+| `.dll` 加载报找不到依赖 | 插件把兄弟 DLL 放自己旁边是支持的（加载器先查库所在目录），别把它挪走，也别只拷主 dll |
+
+脚本插件还有一条硬约定：`.py` / `.js` / `.ts` 必须和那个 cdylib **同目录**，宿主按「库旁边找脚本」的规则找它。
+
+## 回放以非零码中止 [#回放以非零码中止]
+
+多半是插件目录里有你不想要的东西：`--plugin-dir` 指向 `target/debug` 会混进所有示例产物，其中脚本插件的脚本不在旁边，加载失败就把回放整个拉停。把要验的插件装进一个干净目录即可。见 [离线回放](./replay.mdx)。
+
+## 收不到更新 / 进程停不下来 [#收不到更新--进程停不下来]
+
+| 现象 | 处理 |
+| --- | --- |
+| 进程跑着但插件没反应 | 没登录就收不到任何更新。要立刻验插件用 `--replay` |
+| `stop` 之后进程还在 | `stop` 是写停止请求，实例每 500 ms 看一次；8 秒不理会才硬杀。硬杀跑不到 `plugin_stop` |
+| 终端里按了 Ctrl-C | 那是硬杀，不是优雅退出（捕获信号要开 tokio 的 `signal` feature，依赖白名单没放行）。要优雅就用 `fuyubot stop` |
+
+实例状态、锁与 `status` 的三种结果见 [运行与实例管理](./run.mdx)。

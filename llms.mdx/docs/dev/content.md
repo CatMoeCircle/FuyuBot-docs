@@ -1,0 +1,42 @@
+# 开发文档 (/docs/dev)
+
+这一节是给**改 fuyubot 仓库**的人看的，不是给用它写 bot 的人看的。
+
+**公开文档都在这个文档站**：结构、ABI、插件写法、使用方式。仓库里只剩两类东西——
+[`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md)（硬约束，公开）
+与随源码分发、**不入库**的工程台账：
+
+| 东西 | 什么时候看 |
+| --- | --- |
+| [`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/master/AGENTS.md) | 改代码前必读：硬约束、依赖方向、凭据不许落盘、提交前检查清单 |
+| 仓库 `docs/HANDOFF.md`（本地，不入库） | 入口：当前状态、构建契约、每个 crate 有什么 |
+| 仓库 `docs/pitfalls.md` / `gaps.md` / `decisions.md`（本地，不入库） | 踩过的坑（编号即引用锚）/ 未验证缺口 / 拍板的决定 |
+| [架构与数据流](./architecture.mdx) | 结构与数据流（文档站内，最全） |
+
+<Callout type="warn">
+  仓库有一条硬规矩：**文档里出现的命令必须真跑过**，带输出的示例要抄真实输出。
+  改行为就同步改文档：文档站给使用者与插件作者，仓库里的工程台账给下一个改代码的人。
+  否则下一个人会比你更相信旧文档。
+</Callout>
+
+## 本节的页面 [#本节的页面]
+
+<Cards>
+  <Card title="架构与数据流" href="/docs/dev/architecture/" />
+  <Card title="构建与测试" href="/docs/dev/build-test/" />
+  <Card title="常见陷阱" href="/docs/dev/pitfalls/" />
+  <Card title="发布" href="/docs/dev/release/" />
+</Cards>
+
+## 一分钟上手 [#一分钟上手]
+
+```bash
+git clone https://github.com/CatMoeCircle/Fuyu-Bot
+cd Fuyu-Bot
+cargo build --workspace --offline   # 0 warning
+cargo test  --workspace --offline   # 全绿
+cargo fmt --all --check             # 0 diff
+```
+
+`td_api.tl` 是**构建的必需输入**：`TDLIB_TD_API_TL` → 缓存 → 从 Releases 下载，拿不到就让构建失败。
+仓里的 `.cargo/config.toml` 已经把缓存指到 `.tdlib-cache/`（相对仓库根），所以上面三条直接敲就行。
