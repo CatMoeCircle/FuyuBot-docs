@@ -93,29 +93,65 @@ fuyubot-sdk td-method sendMessage
 
 ### 公开方法
 
-| 方法 | 发出的 `@type` | 参数结构体字段 | 返回 |
-| --- | --- | --- | --- |
-| `send_message(chat_id, &SendMessageParams)` | `sendMessage` | `text` / `media` / `reply_to_message_id` / `topic_id` / `reply_markup` / `link_preview` / `timeout_ms` | `RequestId`（不阻塞） |
-| `send_message_wait_success(chat_id, &SendMessageParams)` | 同上，再等 `updateMessageSendSucceeded` | 同上（`timeout_ms` 是等待上限） | `SendConfirmation`（⚠️ **阻塞**） |
-| `send_message_album(chat_id, &SendAlbumParams)` | `sendMessageAlbum` | `medias`（2–10 项）/ `caption` / `reply_to_message_id` / `topic_id` | `RequestId`；项数不对返回 `SimplifyError::AlbumSize`。⚠️ **相册没有 `reply_markup`**（真签名里就没有这个参数）：想给相册挂键盘用 `editMessageReplyMarkup` |
-| `edit_message_text(chat_id, message_id, &EditTextParams)` | `editMessageText` | `text` / `link_preview` / `reply_markup` | `RequestId` |
-| `edit_message_caption(chat_id, message_id, &EditCaptionParams)` | `editMessageCaption` | `text` / `reply_markup` | `RequestId` |
-| `edit_message_media(chat_id, message_id, &EditMediaParams)` | `editMessageMedia` | `text`（新内容标题）/ `media` / `reply_markup` | `RequestId` |
-| `delete_message(chat_id, ids, revoke)` | `deleteMessages` | `message_ids` / `revoke` | `RequestId` |
-| `answer_callback_query(query_id, text, show_alert)` | `answerCallbackQuery` | `text`（`None` → `""`）/ `show_alert` / `url=""` / `cache_time=0` | `RequestId` |
-| `formatted(&Text)` | **`parseTextEntities`（同步 `td_execute`）** | `text` / `parse_mode` | `formattedText` 的 `Value` |
-| `wait_for_update` / `wait_for_update_json` | 不发方法（纯订阅） | `UpdateFilter` + `timeout_ms` | `WaitHandle` / `Option<Value>`（⚠️ 阻塞） |
-| `wait_response(request, timeout_ms)` | 不发方法（等 `"response"` 通道） | `RequestId` | `Option<Value>`（⚠️ 阻塞） |
-| `resolve_entities(ids, timeout_ms)` | `getChat` / `getUser` | `Vec<EntityId>` | `EntitiesResolution`（⚠️ 阻塞） |
-| `download_file(file_id, priority, timeout_ms)` | `downloadFile` | — | `FileDownload`（⚠️ 阻塞） |
-| `cancel_wait(handle)` | 不发 | `WaitHandle` | `()` |
+**每个方法都等到结果才返回**——不交回请求号。底下这张表的「返回」列就是「拿到结果时的返回值」；
+失败一律是 `Err`（见[错误](#错误)）。
 
-**编辑的结果去哪了**：编辑后的 `Message`、以及 `Message is not modified` 这类错误都是**响应**
-（`"response"` 通道，`@type == "error"` 表示失败）。要拿就 `wait_response(request, timeout)`。
-封装层**刻意不重试**——限流等多久是调用方的事。
+| 方法 | 发出的 `@type` | 参数结构体字段 | 等到什么 | 返回 |
+| --- | --- | --- | --- | --- |
+| `send_message(chat_id, &SendMessageParams)` | `sendMessage` | `text` / `media` / `reply_to_message_id` / `topic_id` / `reply_markup` / `link_preview` / `timeout_ms` | 响应 + **发送结局**（成功 / 失败） | 最终 `Message` 的 `Value` |
+| `send_message_album(chat_id, &SendAlbumParams)` | `sendMessageAlbum` | `medias`（2–10 项）/ `caption` / `reply_to_message_id` / `topic_id` / `timeout_ms` | 响应 + **每一项的结局** | `Vec<Value>`（与 `medias` 同序的最终消息）；项数不对是 `SimplifyError::AlbumSize` |
+| `edit_message_text(chat_id, message_id, &EditTextParams)` | `editMessageText` | `text` / `link_preview` / `reply_markup` / `timeout_ms` | 响应 | 改完的 `Message` |
+| `edit_message_caption(chat_id, message_id, &EditCaptionParams)` | `editMessageCaption` | `text` / `reply_markup` / `timeout_ms` | 响应 | 改完的 `Message` |
+| `edit_message_media(chat_id, message_id, &EditMediaParams)` | `editMessageMedia` | `text`（新内容标题）/ `media` / `reply_markup` / `timeout_ms` | 响应 | 改完的 `Message` |
+| `edit_message_reply_markup(chat_id, message_id, &[...], timeout_ms)` | `editMessageReplyMarkup` | `reply_markup`（**必填**：空数组 = `replyMarkupRemoveKeyboard`，移除键盘） | 响应 | 改完的 `Message` |
+| `delete_message(chat_id, ids, revoke, timeout_ms)` | `deleteMessages` | `message_ids` / `revoke` | 响应 | `()` |
+| `answer_callback_query(query_id, text, show_alert, timeout_ms)` | `answerCallbackQuery` | `text`（`None` → `""`）/ `show_alert` / `url=""` / `cache_time=0` | 响应 | `()` |
+| `send_rich_message(chat_id, &RichMessageParams)` | `sendMessage` + `inputMessageRichMessage` | 见[富消息](./rich.mdx) | 响应 + 发送结局 | 最终 `Message` |
+| `edit_rich_message(chat_id, message_id, &RichMessageParams)` | `editMessageText` + `inputMessageRichMessage` | 见[富消息](./rich.mdx) | 响应 | 改完的 `Message` |
+| `formatted(&Text)` | **`parseTextEntities`（同步 `td_execute`）** | `text` / `parse_mode` | 不等待（同步） | `formattedText` 的 `Value` |
+| `wait_for_update` / `wait_for_update_json` | 不发方法（纯订阅） | `UpdateFilter` + `timeout_ms` | — | `WaitHandle` / `Option<Value>`（⚠️ 阻塞） |
+| `wait_response(request, timeout_ms)` | 不发方法（等 `"response"` 通道） | `RequestId` | — | `Option<Value>`（⚠️ 阻塞） |
+| `resolve_entities(ids, timeout_ms)` | `getChat` / `getUser` | `Vec<EntityId>` | 逐个等响应 | `EntitiesResolution`（⚠️ 阻塞） |
+| `download_file(file_id, priority, timeout_ms)` | `downloadFile` | — | 等到 `updateFile` 完成 | `FileDownload`（⚠️ 阻塞） |
+| `cancel_wait(handle)` | 不发 | `WaitHandle` | — | `()` |
 
-**`send_message` 不阻塞、`send_message_wait_success` 阻塞**：等更新要靠**投递线程**送回来，
-而插件通常正是在更新回调里发消息，在回调里等就是自己卡自己，等到的是超时。
+**发送的两步时间线**（TDLib 是异步的，封装把两步合成一次）：
+
+1. 方法的**响应**先回来，里面是还**没发出去**的临时消息；
+2. 随后那条临时消息各来一条**结局更新**——`updateMessageSendSucceeded`（`message` 是最终消息）
+   或 `updateMessageSendFailed`（`error_code` / `error_message`）。按临时消息的
+   `old_message_id` 精确对号，同一会话里别人的结局不会串进来。
+
+相册返回的是 **`Messages`**（一组，不是单条），所以「发成功」对相册是 **N 条**结局：
+`timeout_ms` 是**整组共用**的一个预算，不是每项各等一次；任一项失败就返回 `SendFailed`。
+
+**编辑 / 删除 / 回答没有「发送结局」那一对更新**，它们的结果就是**响应**：
+`Message` / `ok` 是成功，`@type == "error"`（例如 `Message is not modified`、
+删不动的老消息）变成 `SimplifyError::Tdlib`。封装层**刻意不重试**——限流该等多久是调用方的事。
+
+**超时会先撤回**：等到 `timeout_ms` 还没结局，先用 `deleteMessages(revoke = true)`
+把那条还没发出去的消息撤掉，再返回 `SimplifyError::Timeout`（发出去的撤不回，没发出去的会被取消）。
+
+相册**发的时候带不上键盘**（真签名里没有 `reply_markup`）：先发，再拿返回的消息 id 调
+`edit_message_reply_markup`。空数组 = `replyMarkupRemoveKeyboard`（移除键盘），因为这个方法的
+`reply_markup` 是必填字段，不能省。
+
+### 异步版：`*_then`
+
+等更新要靠**接收循环**那个线程送回来，而插件的更新回调就跑在它上面——在那里调等待版
+就是自己卡自己，等到的一定是超时。回调里一律用 `*_then`：
+
+```rust
+simplify.send_message_then(chat_id, &params, |result| match result {
+    Ok(message) => { /* 最终消息 */ }
+    Err(error) => host.log(LogLevel::Error, &format!("发送失败: {error}")),
+});
+```
+
+每个等待版都有一个 `*_then`（`send_message_then` / `send_message_album_then` /
+`edit_message_text_then` / … / `answer_callback_query_then`）：发完**立刻返回**，
+结局从另一个线程交给闭包。它们返回那个线程的 `JoinHandle`——**插件要在 `stop()` 里 join 掉**，
+否则动态库卸载之后线程还在跑库里的代码（未定义行为）。三个内置插件就是这么写的，可以照抄。
 
 ### 内容与按钮
 
@@ -123,18 +159,59 @@ fuyubot-sdk td-method sendMessage
 
 | 变体 | 内容类型 | 必需 / 常用字段 |
 | --- | --- | --- |
-| `Media::photo(file)` | `inputMessagePhoto` | `caption` / `width` / `height` / `has_spoiler` |
-| `Media::Video { .. }` | `inputMessageVideo` | `duration` / `width` / `height` / `supports_streaming` / `has_spoiler` |
-| `Media::Audio { .. }` | `inputMessageAudio` | `duration` / `title` / `performer` |
-| `Media::document(file)` | `inputMessageDocument` | `caption` |
-| `Media::Animation { .. }` | `inputMessageAnimation` | `duration` / `width` / `height` / `has_spoiler` |
-| `Media::Sticker { .. }` | `inputMessageSticker` | `emoji`（**没有 caption**）/ `width` / `height` |
+| `Media::photo(file)` | `inputMessagePhoto` | `caption` / `thumbnail` / `width` / `height` / `has_spoiler` |
+| `Media::video(file)` | `inputMessageVideo` | `caption` / `thumbnail` / **`cover`** / **`start_timestamp`** / `duration` / `width` / `height` / `supports_streaming` / `has_spoiler` |
+| `Media::Audio { .. }` | `inputMessageAudio` | `caption` / **`album_cover_thumbnail`** / `duration` / `title` / `performer` |
+| `Media::document(file)` | `inputMessageDocument` | `caption` / `thumbnail` |
+| `Media::Animation { .. }` | `inputMessageAnimation` | `caption` / `thumbnail` / `duration` / `width` / `height` / `has_spoiler` |
+| `Media::Sticker { .. }` | `inputMessageSticker` | `emoji`（**没有 caption**）/ `thumbnail` / `width` / `height` |
 | `Media::location(lat, lng)` | `inputMessageLocation` | — |
 
 - `file` 一律是 `InputFile`：`InputFile::local(path)` → `inputFileLocal`，
   `InputFile::remote(id)` → `inputFileRemote`。`&str` / `String` 会被当成**本地路径**。
 - `.caption(text)` 给媒体挂标题；`SendMessageParams.text` 优先于媒体自带的 caption。
 - 尺寸 / 时长填 `0` 也行（TDLib 自己读真实值）。
+
+链式设置器（都返回新的 `Media`，可以串着写；**只在真签名里有那个参数的变体上生效**，其余原样返回）：
+
+| 设置器 | 作用范围 | 对应字段 |
+| --- | --- | --- |
+| `.caption(text)` | 图 / 视频 / 音频 / 文档 / 动图 | `caption` |
+| `.thumbnail(thumb)` | 上述五个 + 贴纸 | `thumbnail`（音频那个真名叫 `album_cover_thumbnail`） |
+| `.cover(file, 秒)` | 视频 | `cover` + `start_timestamp` |
+| `.spoiler(bool)` | 图 / 视频 / 动图 | `has_spoiler`（剧透：发过去先遮住，点一下才显示） |
+| `.size(w, h)` | 图 / 视频 / 动图 / 贴纸 | `width` / `height` |
+| `.duration(秒)` | 视频 / 音频 / 动图 | `duration` |
+| `.streaming(bool)` | 视频 | `supports_streaming` |
+| `.title(..)` / `.performer(..)` | 音频 | `title` / `performer` |
+| `.emoji(..)` | 贴纸 | `emoji` |
+
+```rust
+Media::video("/tmp/a.mp4")
+    .caption(Text::plain("视频"))
+    .thumbnail(Thumbnail::new("/tmp/thumb.jpg").size(320, 240))
+    .cover("/tmp/cover.jpg", 3)   // 封面帧 + 从第 3 秒开始播
+    .size(640, 480)
+    .duration(3)
+    .streaming(true)
+    .spoiler(true)                // 剧透
+```
+
+**缩略图 / 封面**（`Thumbnail { file, width, height }` → `inputThumbnail`，宽高填 `0` 让 TDLib 自己判断）：
+
+```rust
+// 视频：缩略图 + 封面帧（从第 3 秒开始播）
+Media::video("/tmp/a.mp4")
+    .caption(Text::plain("视频"))
+    .thumbnail(Thumbnail::new("/tmp/thumb.jpg").size(320, 240))
+    .cover("/tmp/cover.jpg", 3)
+
+// 音频的封面在真签名里叫 album_cover_thumbnail（`.thumbnail(..)` 自动对上）
+Media::Audio { album_cover_thumbnail: Some(Thumbnail::new("/tmp/cover.jpg")), .. }
+```
+
+没设置时**整个字段不发**（不是发 `null`）。⚠️ 真库：`cover` **不支持**秘密聊天和阅后即焚消息；
+`Media::location` 没有缩略图，`.thumbnail(..)` / `.caption(..)` 对它原样返回。
 
 `ReplyButton`（`reply_markup` 是 `Vec<Vec<ReplyButton>>`，空 = 不带键盘）：
 
@@ -188,7 +265,7 @@ fuyubot-sdk td-method sendMessage
 
 | 函数 | 作用 |
 | --- | --- |
-| `send_params` / `album_params` / `edit_text_params` / `edit_caption_params` / `edit_media_params` | 组装参数，**不含 `@type`**（那是宿主补的） |
+| `send_params` / `album_params` / `edit_text_params` / `edit_caption_params` / `edit_media_params` / `edit_markup_params` | 组装参数，**不含 `@type`**（那是宿主补的） |
 | `content_json(&Media, render)` | 媒体 → `InputMessageContent` |
 | `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
 | `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(...)` | 响应 → `formattedText`；拿不到退回纯文本 |
@@ -196,15 +273,30 @@ fuyubot-sdk td-method sendMessage
 | `command_of(&Value)` → `Command` | 从 `updateNewMessage` 解出 `chat_id` / `message_id` / `name` / `args` / `text`；跳过自己发的、非文本消息 |
 | `on_command(host, 闭包)` → `CommandSubscription` | 订阅 `updateNewMessage`，每条命令调一次闭包；**drop 即退订** |
 
-### 返回值与简化事件
+### 返回值与错误
+
+方法成功时返回的就是 TDLib 的原始 JSON（`Value` / `Vec<Value>` / `()`），没有额外包装。
+剩下这几个结构体只属于「本来就带状态」的那几个方法：
 
 | 类型 | 字段 |
 | --- | --- |
-| `SendConfirmation` | `request_id`、`confirmed`、`update`（`update.message` 就是最终消息；超时是 `Null`） |
 | `FileDownload` | `request_id`、`file_id`、`completed`、`last_update`（取自 `file.local.is_downloading_completed`） |
 | `EntitiesResolution` | `request_id`、`entities: Vec<EntityResult>`；`to_json()` 给出 `{"request_id":…,"entities":[…]}` |
 | `EntityResult` | `id`、`request`、`value`（超时是 `Null`） |
-| `SimplifyError` | `Abi(AbiError)`、`BadString`（参数串含 NUL）、`AlbumSize(usize)`（相册不是 2–10 项） |
+
+<a id="错误"></a>
+
+`SimplifyError`：
+
+| 变体 | 什么时候 |
+| --- | --- |
+| `Abi(AbiError)` | ABI 层出错（宿主没接 TDLib、请求号无效等） |
+| `BadString` | 参数串里含 NUL 字节 |
+| `AlbumSize(usize)` | 相册不是 2–10 项（**发之前**就挡掉，不会发请求） |
+| `SendFailed { code, message }` | 发出了但没发成（`updateMessageSendFailed`），例如限流 429 |
+| `Tdlib { code, message }` | 方法被 TDLib 拒绝（响应是 `@type == "error"`），例如 `Message is not modified` |
+| `Timeout(u64)` | `timeout_ms` 里没等到结局；**已先撤回**那条未发出的消息 |
+| `EmptyRichMessage` / `RichSourceNotBlocks` / `EmptyButtonRow` | 富消息（见[富消息](./rich.mdx)） |
 
 `Simplify` 顺带推两条简化事件（不想用就订阅原始 `@type`，两者不冲突）：
 
@@ -222,8 +314,9 @@ use fuyubot_simplify::{
 
 let simplify = Simplify::new(self.host);          // HostApi 是 Copy
 
-// 纯文本：不花任何往返
-simplify.send_message(chat_id, &SendMessageParams::text("你好"))?;
+// 纯文本：等到发送成功，返回最终那条消息
+let sent = simplify.send_message(chat_id, &SendMessageParams::text("你好"))?;
+let message_id = sent["id"].as_i64();
 
 // Markdown + 回复 + 内联键盘
 simplify.send_message(
@@ -240,16 +333,22 @@ simplify.send_message(
 let photo = Media::photo("/tmp/a.jpg").caption(Text::plain("标题"));
 simplify.send_message(chat_id, &SendMessageParams::media(photo))?;
 
-// 编辑：结果从响应通道回来
-let request = simplify.edit_message_text(
+// 编辑：等到响应，返回改完的消息（"Message is not modified" 会是 Err）
+let edited = simplify.edit_message_text(
     chat_id,
     message_id,
     &EditTextParams { text: Some(Text::markdown_v2("*改了*")), ..Default::default() },
 )?;
-let edited = simplify.wait_response(request, 5_000);
 
 // 删除（对所有人撤回）
-simplify.delete_message(chat_id, [message_id], true)?;
+simplify.delete_message(chat_id, [message_id], true, 5_000)?;
+
+// ⚠️ 在命令回调里：用 then，别阻塞接收循环
+simplify.send_message_then(chat_id, &SendMessageParams::text("你好"), |result| {
+    if let Err(error) = result {
+        host.log(LogLevel::Error, &format!("发送失败: {error}"));
+    }
+});
 ```
 
 <Callout type="info">
@@ -260,8 +359,9 @@ simplify.delete_message(chat_id, [message_id], true)?;
 
 ## 两条时间线
 
-1. `td_invoke*` 返回的是**请求号**，真正的 JSON 从 `"response"` 通道回来
-   （事件类型 `RESPONSE_EVENT`，只发给发起请求的那个插件）。
+1. 便捷方法把等待收进去了：发送类等**响应 + 发送结局**，其余等**响应**
+   （`"response"` 通道，事件类型 `RESPONSE_EVENT`，只发给发起请求的那个插件）。
+   想自己接原始 JSON，底层出口 `wait_response` / `wait_for_update` 仍然公开。
 2. `WaitHandle::payload_json` / `td_execute` 的返回串都是宿主临时的**线程局部缓冲**，
    只在下一次宿主调用之前有效。要拿数据就立刻读，或者用 `*_json` / `wait_response`（它们已经替你拷好了）。
 
