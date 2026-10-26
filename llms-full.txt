@@ -210,14 +210,17 @@ $ fuyubot config --config demo\fuyubot.toml
 [telegram]  api_id       = 12345
 [telegram]  data_dir     = demo\data
 [plugins]   dir          = demo\plugins
+[plugins]   log_level    = info（默认）
 [tdlib]     path         = 自动（TDLIB_TDJSON_PATH → 自带 → exe 同级 → 系统库 → 裸库名）
 [tdlib]     log_verbosity= 1
 凭据        api_hash / token / 手机号不读配置（TG_API_HASH 等环境变量或交互输入）
+[plugin.fuyubot.manage] = { reply_prefix = "已安装插件：" }
 ```
 
 - 文件不存在时第一行会写「（不存在，下面全是默认值）」——`run` 就是这样起的，不骗人。
 - `account_type` 写错**不会**静默当 bot：那一行直接是 `⚠️ [telegram].account_type = "robot" 认不出来，只能写 "bot" 或 "user"`。
-- 没有 `get` / `set` / `path`：改配置用编辑器更直接，路径 `status` 第一行已经打了。
+- 每个 `[plugin.<插件名>]` 段各占一行（插件名是点分的，所以显示成 `[plugin.fuyubot.manage]`）；没有插件段时写「无（没有 `[plugin.*]` 段）」。
+- 没有 `get` / `set` / `path`：改配置用编辑器更直接，路径 `status` 第一行已经打了。**插件**读写配置走 ABI 的 `get_config` / `set_config`（见[插件 ABI](../plugin/abi.mdx)），不是这个子命令。
 
 ## `plugin` [#plugin]
 
@@ -232,8 +235,8 @@ $ fuyubot plugin install ./my-plugin
 已安装 plugins\scripts\my-plugin
 
 $ fuyubot plugin list
-fuyubot.js-host  ABI 2  plugins\fuyubot_js_host.dll
-fuyubot.python-host  ABI 2  plugins\fuyubot_python_host.dll
+fuyubot.js-host  ABI 3  plugins\fuyubot_js_host.dll
+fuyubot.python-host  ABI 3  plugins\fuyubot_python_host.dll
 脚本插件（1 个，由中间插件托管）：
   mybot.my-plugin  python  plugins\scripts\my-plugin\main.py
 
@@ -353,7 +356,7 @@ graph TD
 | `fuyubot-loader` → 四个机制 + `tdlib` + `abi` + `core` | 允许（**只有它**） |
 
 组合只发生在两处：`HostRuntime::new`（把四个机制 `install` 进 `Context`）与 `HostRuntime` 里的
-15 个 `unsafe extern "C"` 桥。四个机制 crate 绝不彼此调用。
+17 个 `unsafe extern "C"` 桥。四个机制 crate 绝不彼此调用。
 
 ## 启动顺序：先 attach TDLib，再 load 插件 [#启动顺序先-attach-tdlib再-load-插件]
 
@@ -373,7 +376,7 @@ graph TD
 
 ```mermaid
 graph TD
-  P["插件：on / invoke / emit / use_middleware / …"] --> V["HostApiVTable<br/>18 字段 = version / size / host_ctx<br/>+ 15 个函数指针（全 Option，首参 host）"]
+  P["插件：on / invoke / emit / use_middleware / get_config / set_config / …"] --> V["HostApiVTable<br/>20 字段 = version / size / host_ctx<br/>+ 17 个函数指针（全 Option，首参 host）"]
   V --> H["HostRuntime：翻译成事件总线 / 服务容器<br/>/ 工具表 / 中间件管线 / TdClient"]
   H -->|"td_invoke* → td_send"| S["TdClient::send（注入 @extra）<br/>没接 TDLib：留档 + 合成请求号"]
   H -->|"td_execute（同步）"| X["TdClient::execute<br/>只给不碰网络的方法用"]
@@ -533,8 +536,8 @@ graph LR
 
 | 类型 / 函数 | 位置 | 作用 |
 | --- | --- | --- |
-| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（18 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
-| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 15 个桥的落点、请求留档、响应回投、`rollback_owner`；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
+| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（20 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
+| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 17 个桥的落点、请求留档、响应回投、`rollback_owner`、全局配置读写；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
 | `TdClient` / `Routed` / `ReceiveLoop` | `fuyubot-tdlib` | TDLib 客户端；`route()` 分出 `Update` / `Response`；停止把手（`stop()` / `join()`，drop **不会**停） |
 | `Simplify` / `RichMessage` | `fuyubot-simplify` | 发消息 / 相册 / 编辑 / 删除 / Markdown 转 entities / 等响应 / **富消息**（`rich` 模块，本地 Markdown → 块树）；参数是**每个方法一个结构体** |
 | `TdApiSchema::compiled()` | `fuyubot-tdlib-sys` | 编译期烘焙的元数据；`check_request` 做本地方法名/参数名校验 |
@@ -861,10 +864,10 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `NULL`。`PluginHandle::FAILED` 是全零版本号，`const _` 里有
 `assert!(PluginHandle::FAILED.abi_version == 0)`。
 
-## HostApiVTable：18 个字段 [#hostapivtable18-个字段]
+## HostApiVTable：20 个字段 [#hostapivtable20-个字段]
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 15 个是函数指针，全是 `Option<...>`；
-总大小 = `2 * size_of::<u32>() + 16 * size_of::<*const c_void>()`，由 `const _` 里的
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 17 个是函数指针，全是 `Option<...>`；
+总大小 = `2 * size_of::<u32>() + 18 * size_of::<*const c_void>()`，由 `const _` 里的
 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
 下表签名省略第一个参数 `host`：
@@ -889,13 +892,15 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 13 | `wait_for_update` | `(filter_json, timeout_ms: u64) -> WaitHandle` | `api_wait_for_update` | **阻塞**当前线程；`timeout_ms == 0` 表示只检查当前状态 |
 | 14 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
 | 15 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
+| 16 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
+| 17 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + 回写 `fuyubot.toml`）；非 0 = 越权 / 解析失败 / 写盘失败 |
 
 两条形状上的硬要求：
 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
   不给显式上下文就只能靠进程级全局，那样一个进程只能有一个宿主、测试也没法并行。
 - **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
-  Rust 侧 `HostApi::from_raw` 一次解包校验全部 15 个，之后调用路径上没有 `Option`、也没有 panic 分支。
+  Rust 侧 `HostApi::from_raw` 一次解包校验全部 17 个，之后调用路径上没有 `Option`、也没有 panic 分支。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
 都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；
@@ -907,7 +912,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 1. **谁分配谁释放**。插件通过 `plugin_init` 返回的 `name`、以及插件自己分配的任何字符串，
    都由插件持有；宿主**绝不** free 它们。插件要给宿主一个需要接管的临时字符串，只能走
    `plugin_free_string` 那套约定。
-2. **宿主返回的字符串是线程局部缓冲**。`list_tools`、`get_service`、`WaitHandle::payload_json`
+2. **宿主返回的字符串是线程局部缓冲**。`list_tools`、`get_config`、`WaitHandle::payload_json`
    指向宿主的一块复用缓冲（`thread_local! HOST_STRING`），**只在下一次调用宿主函数之前有效**。
    要留着就当场拷走，并且**不要试图释放它**——VTable 里没有 host 侧的 free 函数，这是设计不是遗漏。
 3. **`ServiceMethodFn` 的返回值由提供方持有**，调用方读完即弃。
@@ -916,7 +921,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 | 位置 | 谁比 | 不匹配的后果 |
 | --- | --- | --- |
-| `ABI_VERSION`（当前 `2`） | 编译期常量，两侧共同引用 | — |
+| `ABI_VERSION`（当前 `3`） | 编译期常量，两侧共同引用 | — |
 | `HostApiVTable::version` | 插件侧 `HostApi::from_raw` | `AbiError::VersionMismatch` |
 | `HostApiVTable::size` | 同上 | `AbiError::VTableTooSmall` |
 | 某个函数指针是 `NULL` | 同上 | `AbiError::MissingFunction("<字段名>")` |
@@ -925,14 +930,17 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 版本不兼容时宿主**不能**调 `plugin_stop`——那是对一个不认识的 ABI 下手，所以插件在 `init` 里
 分配的状态这一版回收不了。字段只增不改，新增一律追加在尾部。
 
-**版本 2 的改动**：尾部追加了 `td_execute`（同步执行，见上表第 11 项）。追加字段本身不破坏老插件
-（它们先比 `size`），但按契约「改 ABI 就加版本号」，`ABI_VERSION` 一起从 1 跳到 2——**用版本 1
-编出来的插件会被宿主拒绝加载**，重新编一次即可（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
+**版本 2 的改动**：尾部追加了 `td_execute`（同步执行，见上表第 11 项）。
+
+**版本 3 的改动**：尾部追加了 `get_config` / `set_config`（第 16 / 17 项），让插件能读全局配置、
+写自己的段。追加字段本身不破坏老插件（它们先比 `size`），但按契约「改 ABI 就加版本号」，
+`ABI_VERSION` 一起跳到 3——**用旧版本编出来的插件会被宿主拒绝加载**，重新编一次即可
+（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
 
 ## 为什么本 ABI 一个可变参数函数指针都没有 [#为什么本-abi-一个可变参数函数指针都没有]
 
 Rust 的 `extern "C" fn(.., ...)` 确实稳定（能写、cbindgen 也能生成），但**本 ABI 一个都没用**，
-理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 15 个函数的参数都是固定的，
+理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 17 个函数的参数都是固定的，
 用 `...` 只会让 C 侧传错参数从编译错误降级成运行期 UB。
 
 将来真要加，正确的声明形状是（C 侧）：
@@ -955,10 +963,10 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 
 | 语言 | 声明在哪 | 值 | 怎么生效 |
 | --- | --- | --- | --- |
-| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 2` | 2 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
-| C++ | 同一份 `fuyubot_plugin.h` | 2 | 同上（四个符号放 `extern "C"`） |
-| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 2 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
-| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v2 cdylib），`abi_version` 它填 |
+| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 3` | 3 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
+| C++ | 同一份 `fuyubot_plugin.h` | 3 | 同上（四个符号放 `extern "C"`） |
+| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 3 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
+| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v3 cdylib），`abi_version` 它填 |
 | JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
 
 脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
@@ -980,7 +988,7 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 </Callout>
 
 ```bash
-fuyubot-sdk abi-version   # 打印 2
+fuyubot-sdk abi-version   # 打印 3
 ```
 
 
@@ -1194,7 +1202,7 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录
 
 ## 相关 [#相关]
 
-- ABI 细节（17 个字段、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
+- ABI 细节（20 个字段、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
 - C / C++ 的写法（同一份头文件）：[C 与 C++ 插件](./native.mdx)
 - 订阅与过滤器：[订阅与事件](./events.mdx)
 
@@ -1261,7 +1269,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | --- | --- |
 | 回调是 `extern "C-unwind"` | 用 `extern "C"` 的话，逃出去的 panic 直接 abort 整个进程，宿主来不及 `catch_unwind` |
 | 一个 crate 只展开一次 `define_plugin!` | 四个符号名是 ABI 定死的，展开两次就是重复定义 |
-| ABI 版本目前是 `2` | 不匹配时宿主**拒绝加载**，而且**不能**调 `plugin_stop` 收状态 |
+| ABI 版本目前是 `3` | 不匹配时宿主**拒绝加载**，而且**不能**调 `plugin_stop` 收状态 |
 | 订阅句柄必须活着 | Rust 侧是 `#[must_use]` 的守卫，drop 就是退订 |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
@@ -1332,7 +1340,49 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 | `log(message, level = "info")` | 打日志 |
 | `registerTool(name, description = "", inputSchema?)` | 登记一个工具 |
 | `useMiddleware(stage, handler)` | 挂一个中间件 |
+| `pluginConfig()` | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
+| `getConfig(section, key?, onConfig?)` | 读**任意**插件段（异步，回调在 `run()` 之后） |
+| `setConfig(key, value, onDone?)` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
 | `run()` | 握手并开始收事件——**永远是最后一行** |
+
+## 读 / 写配置 [#读--写配置]
+
+`fuyubot.toml` 里每个插件有自己的段（见[配置文件](../usage/config.mdx)）。读**自己**那段
+用 `pluginConfig()`——它是**同步**的，宿主在启动脚本时就把这段塞进了 `argv[2]`，所以
+`run()` 之前（模块顶层）就能用：
+
+```ts
+import { on, log, pluginConfig, getConfig, run } from "./fuyubot";
+
+const cfg = pluginConfig(); // { city: "上海" }；没配就是 {}
+const city = (cfg.city as string) ?? "北京";
+
+on("updateNewMessage", (payload) => {
+  log(`城市 = ${city}`);
+  // 读别人的段：异步，回调要等 run() 之后。
+  getConfig("my.weather", "city", (value) => log(`天气插件的城市：${JSON.stringify(value)}`));
+});
+
+run();
+```
+
+```toml
+# fuyubot.toml —— 这个段就叫 [plugin.<你的插件名>]
+[plugin.fuyubot.js.weather]
+city = "上海"
+```
+
+- **读别人的段**（`getConfig`）是**异步**的：回执要等 `run()` 之后才有，所以只能在事件/中间件
+  回调里用。段或键不存在时回调收到 `null`。
+- **写自己的段**（`setConfig`）也是异步的，成功后 `onDone(true)`，宿主会**回写
+  `fuyubot.toml`**。⚠️ 回写是**全量重写**，你手写的注释会丢。
+- 写失败（越权 / 值不是合法 JSON / 写盘失败）时宿主只发一条 error 日志、**不会**调 `onDone`
+  ——别把「没收到回调」当成成功。
+
+<Callout type="info">
+  脚本插件只能写**自己**的段：`setConfig` 没有 section 参数，宿主按调用者身份判定归属，
+  所以改不到别的插件那一段（会被拒）。这是 ABI 层面的硬约束，不是薄 SDK 的限制。
+</Callout>
 
 ## 事件怎么触发 [#事件怎么触发]
 
@@ -1681,10 +1731,35 @@ g++ -shared -fPIC -I <工程目录> <工程目录>/plugin.cpp -o <工程目录>/
 fuyubot plugin install <工程目录>
 ```
 
+## 读 / 写配置 [#读--写配置]
+
+每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段配置（见[配置文件](../usage/config.mdx)）。
+C 侧直接调 VTable 上那两个函数：
+
+```c
+/* 读自己的段 `[plugin.ping]` 里的 greeting；返回 JSON 文本，没有就是 NULL。 */
+const char *greeting = g_host->get_config(g_host, "ping", "greeting");
+if (greeting != NULL) {
+    /* greeting 指向 "…"（带引号的 JSON 字符串）；要用就当场拷走。 */
+    printf("greeting = %s\n", greeting);
+}
+
+/* 读别人的段（只读）：section 是那个插件的名字。 */
+const char *city = g_host->get_config(g_host, "my.weather", "city");
+
+/* 写自己的段：只能写自己（没有 section 参数），成功返回 0，并回写 fuyubot.toml。 */
+int32_t code = g_host->set_config(g_host, "last_started", "\"2026-01-01\"");
+if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
+```
+
+两点与其它函数一致：**返回值是宿主线程局部缓冲**（读完即弃，别 free）；`set_config`
+**没有 section 参数**——宿主按调用者身份判定，所以插件无法伪造写别人的段。
+
 ## 注意 [#注意]
 
 - 模板里的 JSON 取值是**朴素查找**（`strstr`），不处理转义、不处理同名嵌套键；认真写就引一个 JSON 库。
 - 宿主返回的字符串是**线程局部缓冲**，只在下一次宿主调用之前有效——当场拷走，并且**不要试图释放它**。
+- `set_config` 回写是**全量重写** `fuyubot.toml`，手写注释会丢（见上面「读 / 写配置」）。
 - 想少拼 JSON，可以只发 `td_invoke_simplified` 需要的参数对象（`@type` 由宿主补），见 [调用 TDLib](./tdlib.mdx)。
 
 
@@ -1723,7 +1798,48 @@ entry = "main.py"
 | `log(message, level="info")` | 打日志 |
 | `register_tool(name, description="", input_schema=None)` | 登记一个工具 |
 | `use_middleware(stage, handler)` | 挂一个中间件 |
+| `plugin_config()` | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
+| `get_config(section, key="", on_config=None)` | 读**任意**插件段（异步，回调在 `run()` 之后） |
+| `set_config(key, value, on_done=None)` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
 | `run()` | 握手并开始收事件——**永远是最后一行** |
+
+## 读 / 写配置 [#读--写配置]
+
+`fuyubot.toml` 里每个插件有自己的段（见[配置文件](../usage/config.mdx)）。读**自己**那段
+用 `plugin_config()`——它是**同步**的，宿主在启动脚本时就把这段塞进了 `argv[2]`，所以
+`run()` 之前（模块顶层）就能用：
+
+```python
+import fuyubot_plugin as host
+
+cfg = host.plugin_config()              # {"city": "上海"}；没配就是 {}
+city = cfg.get("city", "北京")
+
+@host.on("updateNewMessage")
+def on_message(payload):
+    host.log(f"城市 = {city}")
+    host.get_config("my.weather", "city", lambda value: host.log(f"天气插件的城市：{value}"))
+
+host.run()
+```
+
+```toml
+# fuyubot.toml —— 这个段就叫 [plugin.<你的插件名>]
+[plugin.fuyubot.python.weather]
+city = "上海"
+```
+
+- **读别人的段**（`get_config`）是**异步**的：回执要等 `run()` 之后才有，所以只能在事件/中间件
+  回调里用。段或键不存在时回调收到 `None`。
+- **写自己的段**（`set_config`）也是异步的，成功后 `on_done(True)`，宿主会**回写
+  `fuyubot.toml`**。⚠️ 回写是**全量重写**，你手写的注释会丢。
+- 写失败（越权 / 值不是合法 JSON / 写盘失败）时宿主只发一条 error 日志、**不会**调 `on_done`
+  ——别把「没收到回调」当成成功。
+
+<Callout type="info">
+  脚本插件只能写**自己**的段：`set_config` 没有 section 参数，宿主按调用者身份判定归属，
+  所以改不到别的插件那一段（会被拒）。这是 ABI 层面的硬约束，不是薄 SDK 的限制。
+</Callout>
 
 ## 事件怎么触发 [#事件怎么触发]
 
@@ -2133,6 +2249,45 @@ define_plugin!(MyPlugin, "demo");
 
 `define_plugin!` 还会把插件代码包在 `catch_unwind` 里——和 `C-unwind` 是两层，
 **两层都要**：一层防 panic 逃出 ABI，一层防 panic 把宿主线程带走。
+
+## 读 / 写配置 [#读--写配置]
+
+每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段配置（详见[配置文件](../usage/config.mdx)）。
+`HostApi` 上两个方法直接读写它：
+
+| 方法 | 作用 |
+| --- | --- |
+| `get_config(section, key) -> Option<String>` | 读**任意**段。`section` 空串读顶层（`[bot]` 等），`key` 空串读整段、否则按点路径取键。返回 JSON 文本，找不到就是 `None` |
+| `set_config(key, value_json) -> Result<(), AbiError>` | 写**自己**的段。**没有 section 参数**——宿主按调用者身份判定，写不到别人那段。`key` 空串覆盖整段。成功后写内存并回写 `fuyubot.toml` |
+
+```rust
+fn start(&mut self, _config_json: &str) -> Result<(), String> {
+    // 读自己的段 `[plugin.demo]`（插件名点分，宿主当点路径下钻到 plugin.demo）。
+    let greeting: String = self
+        .host
+        .get_config("demo", "greeting")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_else(|| "hello".to_owned());
+    self.host.info(&format!("greeting = {greeting}"));
+
+    // 读别人的段：允许（只读）。
+    if let Some(city) = self.host.get_config("my.weather", "city") {
+        self.host.info(&format!("天气插件的 city = {city}"));
+    }
+
+    // 写自己的段：把上次启动时间存回去（会回写 fuyubot.toml）。
+    self.host
+        .set_config("last_started", "\"2026-01-01\"")
+        .map_err(|e| format!("写自己的配置失败: {e}"))?;
+    Ok(())
+}
+```
+
+<Callout type="warn">
+  `set_config` 回写是**全量重写** `fuyubot.toml`——你手写在文件里的注释、空行会被 `toml`
+  序列化丢掉。插件写配置属于程序化修改，这是可接受的取舍；要保注释就别让插件运行时去改，
+  把值手工维护进文件。
+</Callout>
 
 ## 回调里带状态 [#回调里带状态]
 
@@ -2657,7 +2812,7 @@ fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
   [ok] plugin_start
   [ok] plugin_stop
   [ok] plugin_free_string
-ABI 版本：宿主是 2。插件报的版本**只能运行时判定**——它在 `PluginHandle.abi_version`
+ABI 版本：宿主是 3。插件报的版本**只能运行时判定**——它在 `PluginHandle.abi_version`
      里，是 `plugin_init` 的返回值，不是静态符号（见 [ABI 契约](./abi.mdx)）。
 结论：可以加载。
 ```
@@ -2940,6 +3095,37 @@ demo/
 | `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错** |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
+| `[plugin.<插件名>]` | 无 | 插件自己的配置段（见下） |
+
+## 插件自己的配置段 [#插件自己的配置段]
+
+每个插件在 `[plugin.<插件名>]` 下可以有自己的配置，键值任意、可嵌套。插件名是点分的
+（`define_plugin!` / 脚手架里登记的那个名字，如 `fuyubot.manage`），所以在 TOML 里自然写成
+嵌套表——`[plugin.fuyubot.manage]` 就代表插件 `fuyubot.manage` 那段：
+
+```toml
+[plugin.fuyubot.manage]
+reply_prefix = "已安装插件："
+
+[plugin.my.weather]
+city = "上海"
+api_key = "……"      # 密钥这类东西别写进全局配置——它会被 `set_config` 回写、也会随仓库走
+```
+
+插件在**运行时**读它、写它，走的是 ABI 接口（不是 `plugin_start` 的那个 `config_json`）：
+
+- **读**：`get_config(section, key)` —— 读任意段（自己的 + 别人的）。`section` 空串读顶层
+  （`[bot]` / `[telegram]` 等），`key` 空串读整段，`key` 是点路径（`nested.k`）。
+- **写**：`set_config(key, value_json)` —— **只能写自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。成功会写内存并回写 `fuyubot.toml`。
+
+各语言的写法：[Rust 插件](../plugin/rust.mdx)、[C / C++ 插件](../plugin/native.mdx)、
+[Python 插件](../plugin/python.mdx)、[JS / TS 插件](../plugin/js-ts.mdx)（每页都有「读 / 写配置」一节），
+函数签名在[插件 ABI](../plugin/abi.mdx)。脚本插件读**自己**那段还有个同步入口
+（`plugin_config()` / `pluginConfig()`），`run()` 之前就能用。
+
+<Callout type="warn">
+  **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。
+</Callout>
 
 模板（`fuyubot init` 生成的就是它）：
 

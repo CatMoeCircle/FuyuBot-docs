@@ -107,8 +107,33 @@ g++ -shared -fPIC -I <工程目录> <工程目录>/plugin.cpp -o <工程目录>/
 fuyubot plugin install <工程目录>
 ```
 
+## 读 / 写配置 [#读--写配置]
+
+每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段配置（见[配置文件](../usage/config.mdx)）。
+C 侧直接调 VTable 上那两个函数：
+
+```c
+/* 读自己的段 `[plugin.ping]` 里的 greeting；返回 JSON 文本，没有就是 NULL。 */
+const char *greeting = g_host->get_config(g_host, "ping", "greeting");
+if (greeting != NULL) {
+    /* greeting 指向 "…"（带引号的 JSON 字符串）；要用就当场拷走。 */
+    printf("greeting = %s\n", greeting);
+}
+
+/* 读别人的段（只读）：section 是那个插件的名字。 */
+const char *city = g_host->get_config(g_host, "my.weather", "city");
+
+/* 写自己的段：只能写自己（没有 section 参数），成功返回 0，并回写 fuyubot.toml。 */
+int32_t code = g_host->set_config(g_host, "last_started", "\"2026-01-01\"");
+if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
+```
+
+两点与其它函数一致：**返回值是宿主线程局部缓冲**（读完即弃，别 free）；`set_config`
+**没有 section 参数**——宿主按调用者身份判定，所以插件无法伪造写别人的段。
+
 ## 注意 [#注意]
 
 - 模板里的 JSON 取值是**朴素查找**（`strstr`），不处理转义、不处理同名嵌套键；认真写就引一个 JSON 库。
 - 宿主返回的字符串是**线程局部缓冲**，只在下一次宿主调用之前有效——当场拷走，并且**不要试图释放它**。
+- `set_config` 回写是**全量重写** `fuyubot.toml`，手写注释会丢（见上面「读 / 写配置」）。
 - 想少拼 JSON，可以只发 `td_invoke_simplified` 需要的参数对象（`@type` 由宿主补），见 [调用 TDLib](./tdlib.mdx)。

@@ -33,7 +33,49 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 | `log(message, level = "info")` | 打日志 |
 | `registerTool(name, description = "", inputSchema?)` | 登记一个工具 |
 | `useMiddleware(stage, handler)` | 挂一个中间件 |
+| `pluginConfig()` | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
+| `getConfig(section, key?, onConfig?)` | 读**任意**插件段（异步，回调在 `run()` 之后） |
+| `setConfig(key, value, onDone?)` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
 | `run()` | 握手并开始收事件——**永远是最后一行** |
+
+## 读 / 写配置 [#读--写配置]
+
+`fuyubot.toml` 里每个插件有自己的段（见[配置文件](../usage/config.mdx)）。读**自己**那段
+用 `pluginConfig()`——它是**同步**的，宿主在启动脚本时就把这段塞进了 `argv[2]`，所以
+`run()` 之前（模块顶层）就能用：
+
+```ts
+import { on, log, pluginConfig, getConfig, run } from "./fuyubot";
+
+const cfg = pluginConfig(); // { city: "上海" }；没配就是 {}
+const city = (cfg.city as string) ?? "北京";
+
+on("updateNewMessage", (payload) => {
+  log(`城市 = ${city}`);
+  // 读别人的段：异步，回调要等 run() 之后。
+  getConfig("my.weather", "city", (value) => log(`天气插件的城市：${JSON.stringify(value)}`));
+});
+
+run();
+```
+
+```toml
+# fuyubot.toml —— 这个段就叫 [plugin.<你的插件名>]
+[plugin.fuyubot.js.weather]
+city = "上海"
+```
+
+- **读别人的段**（`getConfig`）是**异步**的：回执要等 `run()` 之后才有，所以只能在事件/中间件
+  回调里用。段或键不存在时回调收到 `null`。
+- **写自己的段**（`setConfig`）也是异步的，成功后 `onDone(true)`，宿主会**回写
+  `fuyubot.toml`**。⚠️ 回写是**全量重写**，你手写的注释会丢。
+- 写失败（越权 / 值不是合法 JSON / 写盘失败）时宿主只发一条 error 日志、**不会**调 `onDone`
+  ——别把「没收到回调」当成成功。
+
+<Callout type="info">
+  脚本插件只能写**自己**的段：`setConfig` 没有 section 参数，宿主按调用者身份判定归属，
+  所以改不到别的插件那一段（会被拒）。这是 ABI 层面的硬约束，不是薄 SDK 的限制。
+</Callout>
 
 ## 事件怎么触发 [#事件怎么触发]
 
