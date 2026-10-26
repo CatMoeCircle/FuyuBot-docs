@@ -7,7 +7,8 @@
 ```text
 demo/
   fuyubot.toml        ← 配置
-  plugins/            ← [plugins].dir，run 从这里加载动态库
+  plugins/            ← [plugins].dir，run 从这里加载插件
+  plugins/scripts/    ← 脚本插件住这里（fuyubot plugin install 的落点）
   data/               ← [telegram].data_dir，TDLib 的 database 与 files 都指它
   logs/fuyubot.log    ← --background 的日志
   .fuyubot/           ← 实例状态（lock / status / stop），别手工编辑
@@ -22,7 +23,8 @@ demo/
 | `[telegram].account_type` | `bot` | 登录走哪条路：`bot` → Bot Token；`user` → 手机号 / 扫码。**写错报错**，不会静默当 bot |
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
-| `[plugins].dir` | `plugins` | `run` 从这里加载所有动态库；`--plugin-dir` 覆盖它 |
+| `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
+| `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错** |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
 
@@ -39,6 +41,7 @@ data_dir = "data"
 
 [plugins]
 dir = "plugins"
+log_level = "info"   # 排查插件时调成 "debug" / "trace"
 
 [tdlib]
 path = ""          # 留空 = 按加载优先级自动找 tdjson

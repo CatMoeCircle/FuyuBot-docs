@@ -223,23 +223,39 @@ $ fuyubot config --config demo\fuyubot.toml
 
 | 命令 | 作用 |
 | --- | --- |
-| `fuyubot plugin list [--config …] [--plugin-dir <目录>]` | 列出插件目录里能加载的插件（会**真的加载一次**再看名字） |
-| `fuyubot plugin install <文件或工程目录> [--config …] [--plugin-dir <目录>]` | 把编好的产物（+ 同伴脚本）复制进插件目录 |
+| `fuyubot plugin list [--config …] [--plugin-dir <目录>]` | 列出插件；脚本插件会**展平到每个脚本** |
+| `fuyubot plugin install <文件或目录> [--config …] [--plugin-dir <目录>]` | 装一个插件：传**目录**是脚本插件，传**文件**是原生插件 |
+| `fuyubot plugin uninstall <名字> [--config …] [--plugin-dir <目录>]` | 卸载：脚本插件按**目录名**，原生插件按动态库名 |
 
 ```text
-$ fuyubot plugin list --plugin-dir demo\plugins
-已加载插件 mybot (demo\plugins\mybot.dll)
+$ fuyubot plugin install ./my-plugin
+已安装 plugins\scripts\my-plugin
 
-$ fuyubot plugin install demo\plugins\mybot --plugin-dir demo\plugins
-已安装 demo\plugins\mybot.dll
+$ fuyubot plugin list
+fuyubot.js-host  ABI 2  plugins\fuyubot_js_host.dll
+fuyubot.python-host  ABI 2  plugins\fuyubot_python_host.dll
+脚本插件（1 个，由中间插件托管）：
+  mybot.my-plugin  python  plugins\scripts\my-plugin\main.py
+
+$ fuyubot plugin uninstall my-plugin
+已卸载 plugins\scripts\my-plugin
 ```
 
-传**工程目录**时会去 `<工程>/target/{release,debug}` 找产物，并把工程根目录的
-`.py` / `.js` / `.ts` / `.pyi` 一起拷走；传单个 `.dll` 时只扫 dll 旁边——**脚本插件请传目录**。
-workspace 成员的产物默认落在仓库根 `target/` 下，这种情况加 `--target-dir` 或直接指着产物装。
+- **脚本插件**（推荐，见 [脚本插件](../plugin/scripts.mdx)）：传的是**整个目录**
+  （里面有 `pyproject.toml` / `package.json` 身份段），装到 `plugins/scripts/<目录名>/`。
+  目标已存在会报错，要覆盖先 `uninstall` 再 `install`。
+- **原生插件**：传编好的 `.dll` / `.so` / `.dylib`，或**工程目录**（去
+  `<工程>/target/{release,debug}` 找产物）。产物连同旁边 / 工程根的 `.py` / `.js` /
+  `.ts` / `.pyi` 同伴脚本一起拷进插件目录。workspace 成员的产物默认落在仓库根
+  `target/` 下，这种情况加 `--target-dir` 或直接指着产物装。
+- `list` 会**真的加载一次**动态库才知道名字，但**只发现不启动**脚本——不装依赖、
+  不起进程，随时可以跑。脚本的名字取自 manifest（`name` 字段），路径是入口文件。
+- `uninstall` 对**跑着的实例也安全**：文件删掉后目录 watch 会自动卸载对应脚本，
+  不需要先 `stop`。
 
 ## 相关页面 [#相关页面]
 
+- 脚本插件上手：[脚本插件](../plugin/scripts.mdx)
 - 配置字段：[配置文件](../usage/config.mdx)
 - 实例与后台运行：[运行与实例管理](../usage/run.mdx)
 - 回放的输出与等待窗口：[离线回放](../usage/replay.mdx)
@@ -1171,6 +1187,11 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录
 | 崩溃 | 拖垮宿主 | 只有子进程死，宿主记一条错 |
 | 起步 | `fuyubot-sdk init demo --lang rust` | `fuyubot-sdk init demo --lang python` / `js` |
 
+<Callout type="info">
+  **只想写脚本？** 看 [脚本插件](./scripts.mdx)：一个目录就是一个插件，
+  不编译、不碰 ABI，`fuyubot plugin install` 装上就跑。
+</Callout>
+
 脚本插件的 cdylib 里只有一行 `script_plugin!`，逻辑全在脚本里——它**不改变**「一个 cdylib 一个插件」这个结构。
 
 ## 最小闭环 [#最小闭环]
@@ -1234,8 +1255,9 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
   （`fuyubot.weather` → `fuyubot_weather`）。
 - **插件名只有 dlopen 之后才知道**：它来自 `plugin_init` 返回的 `PluginHandle`，所以
   `fuyubot plugin list` 会真的加载一次再看名字。
-- 脚本插件必须让脚本与 cdylib **同名同目录**（`weather.dll` ↔ `weather.py`），细节见
+- 带脚本的**原生插件**（旧形态）必须让脚本与 cdylib **同名同目录**（`weather.dll` ↔ `weather.py`），细节见
   [Python 插件](./python.mdx) 与 [JS 与 TypeScript 插件](./js-ts.mdx)。
+  [脚本插件](./scripts.mdx)（目录形态）没有这个约束——身份在 manifest 里。
 
 
 # JS 与 TypeScript 插件 (/docs/plugin/js-ts)
@@ -1706,6 +1728,177 @@ fuyubot plugin install target/release/fuyubot_demo.dll
 
 要发消息、调 TDLib、等响应，见 [调用 TDLib](./tdlib.mdx)；要按字段过滤更新，见
 [订阅与事件](./events.mdx)；契约本身见 [ABI 契约](./abi.mdx)。
+
+
+# 脚本插件 (/docs/plugin/scripts)
+
+这一页讲**脚本插件**：不编译、不碰 C ABI，用 Python 或 JS / TS 写一个目录，装进机器人就能跑。
+
+```text
+my-plugin/
+  pyproject.toml 或 package.json   ← 身份（插件叫什么、入口在哪）
+  main.py 或 index.ts              ← 你写的逻辑
+  fuyubot.py 或 fuyubot.ts         ← 薄 SDK（单文件，拷进来就行）
+```
+
+装好之后大概是这样——每个脚本是自己的小进程，坏一个不连累别人：
+
+```mermaid
+graph TD
+  A[fuyubot 宿主] --> B[Python 托管]
+  A --> C[JS 托管]
+  B --> D[脚本 A · main.py]
+  B --> E[脚本 B · main.py]
+  C --> F[脚本 C · index.ts]
+```
+
+## 三步上手 [#三步上手]
+
+### 1. 建目录、写两行 [#1-建目录写两行]
+
+Python 插件的 `pyproject.toml` 里写一段身份（`name` 是插件名，`entry` 不写就默认 `main.py`）：
+
+```toml
+[project]
+name = "my-plugin"
+version = "0.1.0"
+
+[tool.fuyubot]
+name = "mybot.my-plugin"
+entry = "main.py"
+```
+
+JS / TS 插件写在 `package.json` 里（`entry` 不写就默认 `index.ts`）：
+
+```json
+{
+  "name": "my-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "fuyubot": { "name": "mybot.my-plugin", "entry": "index.ts" }
+}
+```
+
+入口文件用薄 SDK 写逻辑。Python 长这样：
+
+```python
+from fuyubot import on, log, run
+
+def handle(update):
+    log(f"收到新消息 {update['message']['id']}")
+
+on("updateNewMessage", handle)   # 订阅事件
+run()                            # 最后一行，永远如此
+```
+
+TypeScript 长这样：
+
+```ts
+import { on, log, run } from "./fuyubot";
+
+on("updateNewMessage", (update) => {
+  log(`收到新消息 ${update.message.id}`);
+});
+
+run(); // 最后一行，永远如此
+```
+
+薄 SDK 是**一个文件**：Python 拷 `fuyubot.py`、TS 拷 `fuyubot.ts` 进插件目录即可
+（随 [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK) 提供，在
+`crates/fuyubot-sdk-native/` 下）。
+
+### 2. 装进机器人 [#2-装进机器人]
+
+```bash
+fuyubot plugin install ./my-plugin
+# 已安装 plugins\scripts\my-plugin
+```
+
+整个目录被复制到 `plugins/scripts/` 下。想确认装好了：
+
+```bash
+fuyubot plugin list
+```
+
+### 3. 跑起来 [#3-跑起来]
+
+```bash
+fuyubot run
+```
+
+剩下的交给机器人：装依赖（Python 用 `uv sync`，JS / TS 用 `bun install`）、启动脚本、
+开始收事件。流程大致是这样：
+
+```mermaid
+graph LR
+  A[fuyubot run] --> B[装依赖]
+  B --> C[启动脚本]
+  C --> D[脚本就绪]
+  D --> E[收事件、干活]
+```
+
+## 薄 SDK 能干什么 [#薄-sdk-能干什么]
+
+| 函数 | 干什么 |
+| --- | --- |
+| `on(事件名, 处理函数)` | 订阅一个事件，来消息时你的函数被调用 |
+| `invoke(方法, 参数, 回调?)` | 调一次 TDLib 接口（发消息、取资料……） |
+| `log(消息, 级别?)` | 打日志，级别：error / warn / info / debug / trace |
+| `emit(事件名, 数据?)` | 发一条自己的事件 |
+| `register_tool(...)` / `use_middleware(...)` | 注册工具、挂中间件（进阶，见下文按语言页） |
+| `run()` | 握手并开始收事件。**永远放最后一行** |
+
+`on` 收到的 `payload` 是解析好的对象 / 字典，直接取字段就行，不用自己拼 JSON。
+更多事件名与接口用法见按语言的页面：
+
+<Cards>
+  <Card title="Python 插件" href="/docs/plugin/python/" />
+  <Card title="JS 与 TypeScript 插件" href="/docs/plugin/js-ts/" />
+  <Card title="订阅与事件" href="/docs/plugin/events/" />
+</Cards>
+
+## 装好之后会发生什么 [#装好之后会发生什么]
+
+| 你做的 | 机器人的反应 |
+| --- | --- |
+| `fuyubot plugin install <目录>` | 目录整个拷进 `plugins/scripts/`，下次 `run` 自动加载 |
+| 运行中往 `plugins/scripts/` 丢一个新目录 | 约一秒内自动发现、装依赖、启动 |
+| 运行中删掉一个脚本目录 | 自动停掉对应脚本（对跑着的实例也安全） |
+| 改了脚本里的代码 | **不**自动重启；改完重启机器人即可 |
+| `fuyubot plugin uninstall <目录名>` | 删掉目录并卸载脚本 |
+
+<Callout type="info">
+  **名字的两副面孔**：manifest 里的 `name`（如 `mybot.my-plugin`）是插件身份，日志里看到的是它；
+  `plugin uninstall` 用的是**目录名**（`my-plugin`）。装的时候整个目录一起拷，
+  `node_modules` / `.venv` / `target` 这类依赖与构建产物会被跳过——到机器人上现装。
+</Callout>
+
+## 两种形态怎么选 [#两种形态怎么选]
+
+| | 脚本插件（本页） | 原生插件 |
+| --- | --- | --- |
+| 写什么 | Python / JS / TS 脚本 | Rust / C / C++ 编译出的动态库 |
+| 要编译吗 | 不要 | 要（用你自己的工具链） |
+| 崩了会怎样 | 只有这个脚本的进程死，机器人照常跑 | 可能拖垮整个宿主 |
+| 适合 | 机器人逻辑、自动化、小工具 | 高性能、要贴近宿主的场合 |
+
+原生插件是「一个 cdylib 一个插件」的老路子，见 [插件总览](./index.mdx)。
+
+## 常见问题 [#常见问题]
+
+<Callout type="warn">
+  **脚本报「找不到 fuyubot 原生桥库」**：脚本进程要加载 `fuyubot_sdk_native`
+  （和托管插件是同一份库）。把它放在插件目录里，或设环境变量
+  `FUYUBOT_NATIVE_LIB` 指向它的完整路径，再重启机器人。
+</Callout>
+
+- **依赖工具**：Python 要装 [uv](https://docs.astral.sh/uv/)，JS / TS 要装
+  [bun](https://bun.sh)。缺了的话对应脚本起不来，日志里会有提示，但不影响机器人启动。
+- **托管插件**：`plugins/` 里要有 `fuyubot_python_host` / `fuyubot_js_host`
+  两个中间插件（脚本由它们托管），和内置插件放在一起。
+- **插件名只允许**字母、数字和 `.` `_` `-`。
+- **想排查脚本**：把配置里 `[plugins].log_level` 调成 `"debug"`（见
+  [配置文件](../usage/config.mdx)），日志会详细很多。
 
 
 # 调用 TDLib (/docs/plugin/tdlib)
@@ -2282,7 +2475,8 @@ cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 ```text
 demo/
   fuyubot.toml        ← 配置
-  plugins/            ← [plugins].dir，run 从这里加载动态库
+  plugins/            ← [plugins].dir，run 从这里加载插件
+  plugins/scripts/    ← 脚本插件住这里（fuyubot plugin install 的落点）
   data/               ← [telegram].data_dir，TDLib 的 database 与 files 都指它
   logs/fuyubot.log    ← --background 的日志
   .fuyubot/           ← 实例状态（lock / status / stop），别手工编辑
@@ -2297,7 +2491,8 @@ demo/
 | `[telegram].account_type` | `bot` | 登录走哪条路：`bot` → Bot Token；`user` → 手机号 / 扫码。**写错报错**，不会静默当 bot |
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
-| `[plugins].dir` | `plugins` | `run` 从这里加载所有动态库；`--plugin-dir` 覆盖它 |
+| `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
+| `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错** |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
 
@@ -2314,6 +2509,7 @@ data_dir = "data"
 
 [plugins]
 dir = "plugins"
+log_level = "info"   # 排查插件时调成 "debug" / "trace"
 
 [tdlib]
 path = ""          # 留空 = 按加载优先级自动找 tdjson
