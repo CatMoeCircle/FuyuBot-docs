@@ -47,7 +47,7 @@ FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作�
 `--ignored` 能回答**：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.66\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.68\windows-x86_64"
 cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 
 # 「兄弟依赖定位」单独一个测试二进制，必须单独跑（进程里加载过那些 DLL 会污染它的负向对照）

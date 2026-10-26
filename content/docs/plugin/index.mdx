@@ -1,9 +1,27 @@
 ---
 title: 插件总览
-description: 一个 cdylib 就是一个插件，四种导出符号
+description: 原生插件（一个 cdylib）与脚本插件（一个目录），以及四种导出符号
 ---
 
-**一个插件 = 一个 cdylib**（`.dll` / `.so` / `.dylib`）。宿主 `dlopen` 它，只认四个导出符号，
+**插件有两种形态**，按需求选：
+
+| | 原生插件 | 脚本插件 |
+| --- | --- | --- |
+| 语言 | Rust / C / C++ | Python / JS / TS |
+| 形态 | 一个 cdylib（`.dll` / `.so` / `.dylib`） | 一个目录（manifest + 脚本 + 薄 SDK） |
+| 边界 | 与宿主同进程，C ABI 函数调用 | 一个脚本一个解释器子进程 |
+| 崩溃 | 拖垮宿主 | 只有子进程死，宿主记一条错 |
+| 要编译吗 | 要（用你自己的工具链） | 不要，装上就跑 |
+| 起步 | `fuyubot-sdk init demo --lang rust` | 看 [脚本插件](./scripts.mdx) |
+
+<Callout type="info">
+  **只想写脚本？** 看 [脚本插件](./scripts.mdx)：一个目录就是一个插件，
+  不编译、不碰 ABI，`fuyubot plugin install` 装上就跑。
+</Callout>
+
+## 原生插件：四个导出符号
+
+一个原生插件 = 一个 cdylib。宿主 `dlopen` 它，只认四个导出符号，
 其余全部能力都经 `HostApiVTable` 回调宿主。插件不认识 Rust 内核，也不需要认识。
 
 | 符号 | 必须吗 | 干什么 |
@@ -15,23 +33,7 @@ description: 一个 cdylib 就是一个插件，四种导出符号
 
 契约细节（字段布局、内存所有权、版本协商）见 [ABI 契约](./abi.mdx)。
 
-## 两种形态
-
-| | 原生插件 | 脚本插件 |
-| --- | --- | --- |
-| 语言 | Rust / C / C++ | Python / JS / TS，外加一层 Rust 胶水 cdylib |
-| 边界 | 与宿主同进程，C ABI 函数调用 | 一个插件一个解释器子进程，一行一个 JSON |
-| 崩溃 | 拖垮宿主 | 只有子进程死，宿主记一条错 |
-| 起步 | `fuyubot-sdk init demo --lang rust` | `fuyubot-sdk init demo --lang python` / `js` |
-
-<Callout type="info">
-  **只想写脚本？** 看 [脚本插件](./scripts.mdx)：一个目录就是一个插件，
-  不编译、不碰 ABI，`fuyubot plugin install` 装上就跑。
-</Callout>
-
-脚本插件的 cdylib 里只有一行 `script_plugin!`，逻辑全在脚本里——它**不改变**「一个 cdylib 一个插件」这个结构。
-
-## 最小闭环
+## 最小闭环（原生插件）
 
 ```bash
 fuyubot init --name mybot --api-id 12345   # 建项目：fuyubot.toml + plugins/
@@ -46,7 +48,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
   （`fuyubot.weather` → `fuyubot_weather`）。
 - **产物落在哪**：`plugin install <工程目录>` 只看 `<工程>/target/{release,debug}` 与工程目录本身。
   插件若是**当前 workspace 的成员**，`cargo build -p <crate>` 默认把产物放在仓库根的 `target/`，于是它找不到
-  ——加 `--target-dir <工程目录>/target`，或直接指着产物装（脚本插件必须用前者，否则脚本不会被拷）。
+  ——加 `--target-dir <工程目录>/target`，或直接指着产物装。
 - **SDK 走源码开发时**设 `FUYUBOT_SDK_PATH` 指向 FuyuBot-SDK 仓库的 `crates/`，生成的插件会写 `path = "…"`；
   不设就写 crates.io 版本号。
 
@@ -55,7 +57,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
   （`cargo build` / `cl /LD` / `gcc -shared`）。`fuyubot plugin install` 只**复制**已编好的产物。
 </Callout>
 
-## 写插件要知道的六件事
+## 写原生插件要知道的六件事
 
 | 事 | 说明 |
 | --- | --- |
@@ -81,6 +83,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 <Cards>
   <Card title="订阅与事件" href="/docs/plugin/events/" />
   <Card title="调用 TDLib" href="/docs/plugin/tdlib/" />
+  <Card title="富消息" href="/docs/plugin/rich/" />
   <Card title="工具与中间件" href="/docs/plugin/tools/" />
   <Card title="ABI 契约" href="/docs/plugin/abi/" />
   <Card title="调试与安装" href="/docs/plugin/testing/" />
@@ -90,8 +93,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 
 - 插件名只允许字母、数字和 `.` `_` `-`（它会拼进源码和 TOML）；目录名里的 `.` / `-` 换成 `_` 当 crate 名
   （`fuyubot.weather` → `fuyubot_weather`）。
-- **插件名只有 dlopen 之后才知道**：它来自 `plugin_init` 返回的 `PluginHandle`，所以
+- **原生插件名只有 dlopen 之后才知道**：它来自 `plugin_init` 返回的 `PluginHandle`，所以
   `fuyubot plugin list` 会真的加载一次再看名字。
-- 带脚本的**原生插件**（旧形态）必须让脚本与 cdylib **同名同目录**（`weather.dll` ↔ `weather.py`），细节见
-  [Python 插件](./python.mdx) 与 [JS 与 TypeScript 插件](./js-ts.mdx)。
-  [脚本插件](./scripts.mdx)（目录形态）没有这个约束——身份在 manifest 里。
+- **脚本插件的身份在 manifest 里**（Python 的 `[tool.fuyubot]` / JS 的 `"fuyubot"` 段），
+  目录名是装卸载的单位（`fuyubot plugin install|uninstall <目录>`），见 [脚本插件](./scripts.mdx)。

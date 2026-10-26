@@ -9,15 +9,19 @@ description: 下载对应平台的包，解压就能跑
 
 ## 下载哪个包
 
-| 系统 | 下载 | 包里有什么 |
-| --- | --- | --- |
-| Windows 10/11（x64） | `fuyubot-windows-x86_64.zip` | `fuyubot.exe` + `tdjson.dll` + `plugins/` + `README.txt` |
-| Windows 11（ARM64） | `fuyubot-windows-aarch64.zip` | `fuyubot.exe` + `tdjson.dll` + `plugins/` + `README.txt` |
-| Linux（x86_64） | `fuyubot-linux-x86_64.zip` | `fuyubot` + `libtdjson.so` + `plugins/` + `README.txt` |
-| Linux（ARM64） | `fuyubot-linux-aarch64.zip` | `fuyubot` + `libtdjson.so` + `plugins/` + `README.txt` |
-| macOS（Apple Silicon） | `fuyubot-macos-aarch64.zip` | `fuyubot` + `libtdjson.dylib` + `plugins/` + `README.txt` |
+资产名是 **`fuyubot-<版本>-<OS>-<平台>.zip`**（例：`fuyubot-v0.1.0-windows-x86_64.zip`）：
+`<版本>` 就是 Release 版本号，带在名字里方便一眼看出下的是哪个；`<OS>` = windows / linux / macos，
+`<平台>` = x86_64 / aarch64（cargo 口径，和 TDLib 自己的资产同序）。
 
-- 资产名里的 `<系统>-<架构>` 用 cargo 那套口径（`x86_64` / `aarch64`），和 TDLib 自己的资产同名同序。
+| 系统 | 资产 | 包里有什么 |
+| --- | --- | --- |
+| Windows 10/11（x64） | `fuyubot-<版本>-windows-x86_64.zip` | `fuyubot.exe` + `tdjson.dll` + `plugins/` + `README.txt` |
+| Windows 11（ARM64） | `fuyubot-<版本>-windows-aarch64.zip` | `fuyubot.exe` + `tdjson.dll` + `plugins/` + `README.txt` |
+| Linux（x86_64） | `fuyubot-<版本>-linux-x86_64.zip` | `fuyubot` + `libtdjson.so` + `plugins/` + `README.txt` |
+| Linux（ARM64） | `fuyubot-<版本>-linux-aarch64.zip` | `fuyubot` + `libtdjson.so` + `plugins/` + `README.txt` |
+| macOS（Apple Silicon） | `fuyubot-<版本>-macos-aarch64.zip` | `fuyubot` + `libtdjson.dylib` + `plugins/` + `README.txt` |
+
+- **解压出来就是本体**：zip 里没有额外的一层目录，建议先建一个空目录再往里解压。
 - 归档一律 `.zip`（Windows 资源管理器双击就能解，Linux / macOS 用 `unzip`）。
 - **上面没有的平台**（Intel Mac 等）暂时没有包，自己编：见 [从源码构建](./build.mdx)。
 - 插件开发 CLI（`fuyubot-sdk`）在**另一个仓库**的 Release 里：
@@ -26,19 +30,21 @@ description: 下载对应平台的包，解压就能跑
 
 ## 解压、验证
 
-Windows（PowerShell）：
+先建一个空目录再解压（zip 里没有套层目录，直接解到当前目录会把文件摊开）：
 
 ```powershell
-Expand-Archive -Path fuyubot-windows-x86_64.zip -DestinationPath .
-cd fuyubot-windows-x86_64
+mkdir demo-bot
+Expand-Archive -Path fuyubot-v0.1.0-windows-x86_64.zip -DestinationPath demo-bot
+cd demo-bot
 .\fuyubot.exe --version
 ```
 
 Linux / macOS：
 
 ```bash
-unzip fuyubot-linux-x86_64.zip
-cd fuyubot-linux-x86_64
+mkdir demo-bot
+unzip fuyubot-v0.1.0-linux-x86_64.zip -d demo-bot
+cd demo-bot
 chmod +x fuyubot        # 从网盘 / 别的机器转手后可能丢执行位
 ./fuyubot --version
 ```
@@ -54,7 +60,7 @@ fuyubot 0.1.0
 ```
 
 `--version` 能打印版本号，说明这个可执行文件本身没坏；真正加载 TDLib 是在 `run` 的时候
-（日志里会有一行 `TDLib 1.8.66 命中「可执行文件所在目录」`）。加载失败按
+（日志里会有一行 `TDLib 1.8.68 命中「可执行文件所在目录」`）。加载失败按
 [常见问题](./troubleshooting.mdx) 排查。
 
 ## 起一个 bot 项目

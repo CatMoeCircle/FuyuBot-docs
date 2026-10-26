@@ -86,6 +86,7 @@ fuyubot-sdk td-method sendMessage
 `Simplify` 只简化**输入**，不改变输出：每个方法都经 `td_invoke*` 发出，原始更新照旧对插件可见。
 参数形状是**一个方法一个结构体 + 短字段名**，调用方不用拼 TDLib 的嵌套 JSON；
 文本格式（Markdown / HTML）**不自己解析**，经同步的 `td_execute` 问 TDLib 的 `parseTextEntities`。
+富消息（`messageRichMessage`）是另一套参数（`RichMessageParams`），见 [富消息](./rich.mdx)。
 
 方法名与参数名由 `every_request_simplify_builds_passes_the_real_schema` 拿真 `td_api.tl` 烤出来的元数据
 （`TdApiSchema::compiled()`）逐条校验，离线就能跑。
