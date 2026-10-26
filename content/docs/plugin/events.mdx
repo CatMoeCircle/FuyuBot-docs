@@ -87,23 +87,30 @@ fn emit_job_done(&self) {
 回调用 `extern "C-unwind" fn(user_data, payload) -> i32`，返回 `0` 表示成功；`payload` 是宿主临时的
 NUL 结尾字符串，要留就当场拷走（`parse_payload` 已经替你解析成 `serde_json::Value`）。
 
-## Python / JS
+## Python / JS（薄 SDK）
 
 ```python
-@host.on("updateNewMessage", filter={"message.content.text.text": "/hello"})
-def on_hello(payload):
-    host.log("有人说 /hello")
+from fuyubot import on, emit, log
 
-host.emit("job_done", {"ok": True})
+on("updateNewMessage",
+   lambda p: log("有人说 /hello"),
+   {"message.content.text.text": "/hello"})
+
+emit("job_done", {"ok": True})   # 自己 + 全局订阅者收得到
 ```
 
 ```js
-host.on("updateNewMessage", (payload) => {
-  host.log("有人说 /hello");
+import { on, emit, log } from "./fuyubot";
+
+on("updateNewMessage", (payload) => {
+  log("有人说 /hello");
 }, { "message.content.text.text": "/hello" });
+
+emit("job_done", { ok: true });
 ```
 
-脚本侧的 `off(event, handler)` 只从脚本自己的分发表里摘掉回调；宿主的订阅随插件 `stop` 一起撤。
+脚本侧的订阅**没有退订接口**——注册后一直有效，随插件停止一起撤。
+方法的逐个说明见 [Python 插件](./python.mdx) / [JS 与 TS 插件](./js-ts.mdx)。
 
 要按固定次数等一条更新（阻塞式），用 `wait_for_update`，见 [调用 TDLib](./tdlib.mdx)。
 要改流经管线的负载，用中间件，见 [工具与中间件](./tools.mdx)。

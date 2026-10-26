@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useId, useSyncExternalStore } from 'react';
+import { Component, use, useId, useSyncExternalStore, type ReactNode } from 'react';
 import { useTheme } from 'next-themes';
 
 export function Mermaid({ chart }: { chart: string }) {
@@ -12,7 +12,47 @@ export function Mermaid({ chart }: { chart: string }) {
   );
 
   if (!isClient) return;
-  return <MermaidContent chart={chart} />;
+  return (
+    <MermaidErrorBoundary chart={chart}>
+      <MermaidContent chart={chart} />
+    </MermaidErrorBoundary>
+  );
+}
+
+/**
+ * 图表渲染失败（语法错误等）不能把整页炸掉：降级成等宽的源码块。
+ * mermaid 的 parse/render 错误是异步抛出的（`use()` 的 rejected promise），
+ * 只有 error boundary 能接住。
+ */
+class MermaidErrorBoundary extends Component<
+  { chart: string; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <pre
+          style={{
+            overflow: 'auto',
+            padding: '1rem',
+            border: '1px solid rgba(200, 80, 80, 0.5)',
+            borderRadius: '0.5rem',
+            fontSize: '0.85rem',
+          }}
+        >
+          {'图表渲染失败（语法错误），源码如下：\n\n'}
+          {this.props.chart}
+        </pre>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 const cache = new Map<string, Promise<unknown>>();
@@ -27,7 +67,9 @@ function cachePromise<T>(key: string, setPromise: () => Promise<T>): Promise<T> 
 }
 
 function MermaidContent({ chart }: { chart: string }) {
-  const id = useId();
+  // React 19 的 useId 形如 `«r0»`，直喂给 mermaid.render 会在 querySelector 上翻车；
+  // 清成安全的 CSS id。
+  const id = `mmd-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const { resolvedTheme } = useTheme();
   const { default: mermaid } = use(cachePromise('mermaid', () => import('mermaid')));
 
