@@ -14,8 +14,8 @@
   - [Rust 插件](/docs/plugin/rust): fuyubot-plugin-api 与 define_plugin! 的完整写法
   - [C 与 C++ 插件](/docs/plugin/native): 同一份头文件、extern "C"、用你自己的工具链编译
   - [Go 插件](/docs/plugin/go): cgo 编 c-shared，逻辑用 Go 写、ABI 用一层 C 薄壳
-  - [Python 插件](/docs/plugin/python): 用薄 SDK 写 Python 脚本插件：一个目录就是插件，不编译、不碰 ABI
-  - [JS 与 TypeScript 插件](/docs/plugin/js-ts): 用薄 SDK 写 JS / TS 脚本插件：一个目录就是插件，bun 直接跑 TS
+  - [Python 插件](/docs/plugin/python): 薄 SDK 全部方法的用法、事件怎么触发、可抄的例子
+  - [JS 与 TypeScript 插件](/docs/plugin/js-ts): 薄 SDK 全部方法的用法、事件怎么触发、可抄的例子
   - [订阅与事件](/docs/plugin/events): on/off/emit、过滤器、双通道与归属
   - [调用 TDLib](/docs/plugin/tdlib): td_invoke、请求号与 response 通道、便捷封装
   - [工具与中间件](/docs/plugin/tools): 注册工具元数据、call_tool、六阶段洋葱管线

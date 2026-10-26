@@ -1,18 +1,18 @@
 # JS 与 TypeScript 插件 (/docs/plugin/js-ts)
 
-JS / TS 插件就是一个目录：manifest（`package.json`）里写身份，入口文件写逻辑，
-`fuyubot.ts`（单文件薄 SDK）负责和宿主通信。三步上手见 [脚本插件](./scripts.mdx)，本页是 API 参考。
+JS / TS 插件就是一个目录：`package.json` 写身份，入口文件写逻辑，`fuyubot.ts`（单文件薄 SDK）
+管通信。运行时是 [bun](https://bun.sh)，**TS 不需要 `tsc`**。上手三步见
+[脚本插件](./scripts.mdx)。本页是**方法手册 + 示例**。
 
 ```text
 my-plugin/
-  package.json   ← 身份（插件叫什么、入口在哪）
+  package.json   ← 身份（"fuyubot" 段：name / entry）
   index.ts       ← 你写的逻辑（.js 也行）
-  fuyubot.ts     ← 薄 SDK（单文件，拷进来就行；另有 fuyubot.d.ts 类型声明）
+  fuyubot.ts     ← 薄 SDK（单文件，拷进来就行）
+  fuyubot.d.ts   ← 类型声明（可选，IDE 补全）
 ```
 
-运行时是 [bun](https://bun.sh)（`bun install` 装依赖、`bun` 起进程），**TS 不需要 `tsc`**。
-
-## manifest：`package.json` [#manifestpackagejson]
+manifest 长这样（`entry` 不写就默认 `index.ts`）：
 
 ```json
 {
@@ -23,67 +23,238 @@ my-plugin/
 }
 ```
 
-`entry` 不写就默认 `index.ts`。
+## 方法一览 [#方法一览]
 
-## API [#api]
+| 方法 | 干什么 |
+| --- | --- |
+| `on(event, handler, filter?)` | 订阅事件：事件来了就调你的函数 |
+| `invoke(method, params?, onResponse?)` | 调一次 TDLib 接口（发消息、取资料……） |
+| `emit(event, payload?)` | 发一条自定义事件 |
+| `log(message, level = "info")` | 打日志 |
+| `registerTool(name, description = "", inputSchema?)` | 登记一个工具 |
+| `useMiddleware(stage, handler)` | 挂一个中间件 |
+| `run()` | 握手并开始收事件——**永远是最后一行** |
 
-`fuyubot.ts` 随 [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK) 提供
-（`crates/fuyubot-sdk-native/` 下），拷进插件目录即可 `import { … } from "./fuyubot"`。
-它只是原生桥的一层封装，协议细节（握手、订阅号、JSON 管道）作者看不见。
+## 事件怎么触发 [#事件怎么触发]
 
-| 函数 | 签名 | 说明 |
-| --- | --- | --- |
-| `on` | `on(event, handler, filter?)` | 订阅事件；同一个事件可订阅多次 |
-| `invoke` | `invoke(method, params?, onResponse?)` | 发 TDLib 请求；给了 `onResponse` 就按 `request_id` 自动配对 |
-| `emit` | `emit(event, payload?)` | 发自定义事件（**只送自己 + 全局订阅者**，不是广播） |
-| `log` | `log(message, level = "info")` | `level`：`error` / `warn` / `info` / `debug` / `trace` |
-| `registerTool` | `registerTool(name, description = "", inputSchema?)` | 只登记元数据 |
-| `useMiddleware` | `useMiddleware(stage, handler)` | 挂中间件，`handler(stage, payload)` |
-| `run` | `run()` | 握手并开始收事件。**永远放最后一行** |
+你的函数只有**被事件触发**才会跑。事件有两个来源：
 
-`on` 的 `filter` 是点分路径的字段相等匹配，比如只听 `/hello`：
+1. **TDLib 更新**：来一条消息、消息发送成功……每种更新是一个事件，**事件名就是更新的 `@type`**
+   （`updateNewMessage`、`updateMessageSendSucceeded` ……）。每条更新会同时发到两个通道：
+   具体的 `@type` 事件，和兜底的 `"update"` 事件（订阅它可以看全部）。
+2. **你自己发的事件**：`emit("job_done", …)` 发出的自定义事件（细节见
+   [订阅与事件](./events.mdx)）。
 
-```ts
-import { on, invoke, log, run } from "./fuyubot";
-
-on("updateNewMessage", (update) => {
-  log(`收到新消息 ${update.message.id}`);
-});
-
-on("updateNewMessage", () => log("有人说 /hello"),
-  { "message.content.text.text": "/hello" });
-
-run(); // 最后一行，永远如此
+```mermaid
+graph LR
+  A[TDLib 更新] --> B{按 @type 分发}
+  B -->|updateNewMessage| C["on('updateNewMessage', …)"]
+  B -->|"update 兜底"| D["on('update', …)"]
+  E["emit('job_done', …)"] --> F["on('job_done', …)"]
 ```
 
-- `payload` 是解析好的对象，直接取字段；JS 侧没有 schema，取字段前可以先窄化（`typeof` / `as`）。
-- `invoke` 的参数形状以 TDLib 为准（方法名 ≠ Bot API），见 [调用 TDLib](./tdlib.mdx)。
-- **`run()` 必须是最后一行**：它发就绪握手并阻塞收事件，脚本提前退出 = 插件加载失败。
+## `on` — 订阅事件 [#on--订阅事件]
 
-一个稍完整的例子——按聊天计数然后回一条：
+```ts
+on(event, handler, filter?)
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `event` | 事件名：更新的 `@type`、`"update"`（全部更新）或你自定义的名字 |
+| `handler` | 回调函数，收到一个 `payload`（解析好的对象，直接取字段） |
+| `filter` | 可选。只收负载里**指定字段等于指定值**的事件（点分路径写法，见下） |
+
+同一个事件可以订阅多次，各带各的过滤器。
+
+```ts
+import { on, log, run } from "./fuyubot";
+
+const onMessage = (update: any) => {
+  log(`新消息 ${update.message.id}`);
+};
+
+on("updateNewMessage", onMessage);          // 全收
+on("update", () => log("来了一条更新"));      // 兜底通道
+run();
+```
+
+**过滤器**：`{ "点分路径": 期望值 }`，负载里那个字段**等于**期望值才触发：
+
+```ts
+// 只听某个群的消息
+on("updateNewMessage", onMessage, { "message.chat_id": -1001234567890 });
+
+// 只听 /hello 命令（文本内容匹配）
+on("updateNewMessage", onHello, { "message.content.text.text": "/hello" });
+```
+
+## `invoke` — 调 TDLib 接口 [#invoke--调-tdlib-接口]
+
+```ts
+invoke(method, params?, onResponse?)
+```
+
+发一个 TDLib 请求。方法名与参数名**以 TDLib 为准**（不是 Bot API），查法见
+[调用 TDLib](./tdlib.mdx)。给了 `onResponse` 时回调按 `request_id` **自动配对**，
+不用自己记请求号。
+
+```ts
+import { invoke } from "./fuyubot";
+
+const onMessage = (update: any) => {
+  // 发一条文本消息（TDLib 的 sendMessage + inputMessageText）
+  invoke("sendMessage", {
+    chat_id: update.message.chat_id,
+    input_message_content: {
+      "@type": "inputMessageText",
+      text: { "@type": "formattedText", text: "收到" },
+    },
+  });
+};
+
+// 要看结果就传第三个参数：响应回来自动调它
+invoke("getMe", {}, (resp) => console.log("我是", resp));
+```
+
+<Callout type="warn">
+  `invoke` **不阻塞**、立即返回。响应回来时你的 `onResponse` 被调用。
+  不传 `onResponse` 就是「发完不管」。
+</Callout>
+
+## `emit` — 发自定义事件 [#emit--发自定义事件]
+
+```ts
+emit(event, payload?)
+```
+
+给**自己 + 全局订阅者**发一条自定义事件（不是广播给所有插件，见 [订阅与事件](./events.mdx)）。
+适合在自己内部做「任务完成」之类的信号：
+
+```ts
+on("job_done", (p) => log(`任务完成：${JSON.stringify(p)}`));
+emit("job_done", { ok: true });
+```
+
+## `log` — 打日志 [#log--打日志]
+
+```ts
+log(message, level = "info")
+```
+
+`level`：`error` / `warn` / `info` / `debug` / `trace`。排查问题时把配置里
+`[plugins].log_level` 调成 `"debug"`（见[配置文件](../usage/config.mdx)）。
+
+```ts
+log("普通信息");
+log("要坏事了", "warn");
+```
+
+## `registerTool` — 登记工具 [#registertool--登记工具]
+
+```ts
+registerTool(name, description = "", inputSchema?)
+```
+
+只登记**元数据**（名字、说明、参数的 JSON Schema），让宿主知道有这个工具；
+调用分发看 [工具与中间件](./tools.mdx)。
+
+```ts
+registerTool("weather", "查天气", {
+  type: "object",
+  properties: { city: { type: "string" } },
+  required: ["city"],
+});
+```
+
+## `useMiddleware` — 挂中间件 [#usemiddleware--挂中间件]
+
+```ts
+useMiddleware(stage, handler)
+```
+
+`handler(stage, payload)` 在更新流经管线时被调用，可以检查或改写负载。
+`stage` 是阶段号；细节看 [工具与中间件](./tools.mdx)。
+
+```ts
+const audit = (stage: number, payload: any) => {
+  log(`阶段 ${stage} 看到一条更新`);
+};
+
+useMiddleware(2, audit);
+```
+
+## `run` — 启动 [#run--启动]
+
+```ts
+run()
+```
+
+发就绪握手、开始收事件，**阻塞到进程结束**。**必须是最后一行**——它提前返回 = 插件加载失败。
+
+## 完整示例 [#完整示例]
+
+**Echo 机器人**——回声复读：
+
+```ts
+import { on, invoke, run } from "./fuyubot";
+
+const echo = (update: any) => {
+  const message = update.message;
+  const text = message?.content?.text?.text ?? "";
+  if (!text || message.is_outgoing) return;   // 别回自己发的，否则自激
+  invoke("sendMessage", {
+    chat_id: message.chat_id,
+    input_message_content: {
+      "@type": "inputMessageText",
+      text: { "@type": "formattedText", text },
+    },
+  });
+};
+
+on("updateNewMessage", echo);
+run();
+```
+
+**命令处理器**——不同命令各干各的：
+
+```ts
+import { on, invoke, run } from "./fuyubot";
+
+const reply = (chatId: number, text: string) =>
+  invoke("sendMessage", {
+    chat_id: chatId,
+    input_message_content: {
+      "@type": "inputMessageText",
+      text: { "@type": "formattedText", text },
+    },
+  });
+
+on("updateNewMessage", (u: any) => reply(u.message.chat_id, "你好！"),
+  { "message.content.text.text": "/hello" });
+on("updateNewMessage", (u: any) => reply(u.message.chat_id, "pong"),
+  { "message.content.text.text": "/ping" });
+run();
+```
+
+**按聊天计数**——记住状态：
 
 ```ts
 import { on, invoke, run } from "./fuyubot";
 
 const counts = new Map<number, number>();
 
-on("updateNewMessage", (payload: any) => {
-  const message = payload?.message;
-  if (!message || message.is_outgoing === true) return;   // 别回自己发的，否则自激
-
-  const text = message.content?.["@type"] === "messageText"
-    ? message.content.text?.text : "";
-  if (!text) return;
-
+on("updateNewMessage", (update: any) => {
+  const message = update.message;
+  if (!message || message.is_outgoing) return;
   const chatId: number = message.chat_id;
   const count = (counts.get(chatId) ?? 0) + 1;
   counts.set(chatId, count);
-
   invoke("sendMessage", {
     chat_id: chatId,
     input_message_content: {
       "@type": "inputMessageText",
-      text: { "@type": "formattedText", text: `本聊天第 ${count} 条消息`, entities: [] },
+      text: { "@type": "formattedText", text: `本聊天第 ${count} 条消息` },
     },
   });
 });
@@ -91,23 +262,12 @@ on("updateNewMessage", (payload: any) => {
 run();
 ```
 
-## 类型声明 [#类型声明]
+## 常见问题 [#常见问题]
 
-`fuyubot.d.ts` 与 `fuyubot.ts` 同目录放着，`import { … } from "./fuyubot"` 时编辑器自动补全
-（无 `tsc` 也有类型提示，看编辑器支不支持裸 TS）。
-
-## 原生桥 [#原生桥]
-
-薄 SDK 要加载原生桥（和托管插件是同一份库）。查找顺序：**脚本同目录 → 环境变量
-`FUYUBOT_NATIVE_LIB` → 当前工作目录**；找不到会报「找不到 fuyubot 原生桥库」，
-排法见 [脚本插件的常见问题](./scripts.mdx#常见问题)。
-
-## 调试 [#调试]
-
-```bash
-bun fuyubot.ts     # 薄 SDK 自检：验证 API 形状（不碰宿主、不调 run）
-# fuyubot: self-test ok
-```
-
-- 日志不够细就把 `[plugins].log_level` 调成 `"debug"`（见[配置文件](../usage/config.mdx)）。
-- JS / TS 侧要装 [bun](https://bun.sh)；缺了的话脚本起不来，日志里有提示，不影响机器人本身。
+- **原生桥**：薄 SDK 要加载原生桥（和托管插件同一份库）。查找顺序：脚本同目录 →
+  环境变量 `FUYUBOT_NATIVE_LIB` → 当前工作目录。找不到会报
+  「找不到 fuyubot 原生桥库」，排法见 [脚本插件常见问题](./scripts.mdx#常见问题)。
+- **自检**：`bun fuyubot.ts` 验证 API 形状（不碰宿主），输出 `fuyubot: self-test ok`。
+- **依赖工具**：要装 [bun](https://bun.sh)（机器人用 `bun install` 装依赖、`bun` 起脚本）。
+- **payload 取字段**：JS 侧没有 schema，先判空或 `as any` 再取；
+  `updateNewMessage` 的文本在 `message.content.text.text`。
