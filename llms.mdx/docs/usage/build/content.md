@@ -61,6 +61,6 @@ cargo fmt --all --check             # 0 diff
 真 TDLib 的端到端自检（要本机的 `tdjson`）：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.66\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.68\windows-x86_64"
 cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 ```

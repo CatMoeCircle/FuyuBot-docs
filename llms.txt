@@ -9,13 +9,13 @@
   - [环境变量](/docs/usage/env): 每个变量的读取者与作用
   - [常见问题](/docs/usage/troubleshooting): tdjson 找不到、%TEMP%、乱码、插件加载失败
 - 插件开发: Rust / C / C++ / Go / Python / JS / TS 写插件
-  - [插件总览](/docs/plugin): 一个 cdylib 就是一个插件，四种导出符号
+  - [插件总览](/docs/plugin): 原生插件（一个 cdylib）与脚本插件（一个目录），以及四种导出符号
   - [脚本插件](/docs/plugin/scripts): 一个目录就是一个插件：Python / JS / TS 写逻辑，装上就跑
   - [Rust 插件](/docs/plugin/rust): fuyubot-plugin-api 与 define_plugin! 的完整写法
   - [C 与 C++ 插件](/docs/plugin/native): 同一份头文件、extern "C"、用你自己的工具链编译
   - [Go 插件](/docs/plugin/go): cgo 编 c-shared，逻辑用 Go 写、ABI 用一层 C 薄壳
-  - [Python 插件](/docs/plugin/python): 脚本与 cdylib 同目录的行 JSON 协议
-  - [JS 与 TypeScript 插件](/docs/plugin/js-ts): Node 类型剥离、脚本约定
+  - [Python 插件](/docs/plugin/python): 用薄 SDK 写 Python 脚本插件：一个目录就是插件，不编译、不碰 ABI
+  - [JS 与 TypeScript 插件](/docs/plugin/js-ts): 用薄 SDK 写 JS / TS 脚本插件：一个目录就是插件，bun 直接跑 TS
   - [订阅与事件](/docs/plugin/events): on/off/emit、过滤器、双通道与归属
   - [调用 TDLib](/docs/plugin/tdlib): td_invoke、请求号与 response 通道、便捷封装
   - [工具与中间件](/docs/plugin/tools): 注册工具元数据、call_tool、六阶段洋葱管线

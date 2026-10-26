@@ -119,12 +119,12 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 | C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 2` | 2 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
 | C++ | 同一份 `fuyubot_plugin.h` | 2 | 同上（四个符号放 `extern "C"`） |
 | Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 2 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
-| Python | **没有自己的常量** | — | 走同一条 Rust 桥：`.py` 由 `fuyubot-sdk-script` 编出的 cdylib 驱动，`abi_version` 由那个 cdylib 填 |
-| JS / TS | **没有自己的常量** | — | 同上，与 Python 共用 `fuyubot-sdk-script` 这一份实现 |
+| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v2 cdylib），`abi_version` 它填 |
+| JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
 
-脚本侧 SDK（`fuyubot_plugin.py` / `fuyubot_plugin.js` 与它们的类型声明）声明的是**「一行一个 JSON」
-的协议**，不是 ABI 版本；ABI 版本永远由承载它的那份 Rust cdylib 声明。Python 与 JS 共用同一份桥，
-所以「两个 SDK 对 ABI 的理解」不可能漂移。
+脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
+**作者永远不碰 C ABI**；ABI 版本由承载它的那份 cdylib 声明。Python 与 JS 的中间插件
+是同一套机制的两份实现，「两门语言对 ABI 的理解」不可能漂移。
 
 ## 回调为什么是 `C-unwind` [#回调为什么是-c-unwind]
 

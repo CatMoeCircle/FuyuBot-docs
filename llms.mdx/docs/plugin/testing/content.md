@@ -92,7 +92,7 @@ fuyubot plugin list
 | `check` 报 `[缺] plugin_init` | crate 是不是 `crate-type = ["cdylib"]`；C++ 的四个符号在不在 `extern "C"` 里 |
 | 日志里有「跳过 xxx」 | ABI 版本不匹配，或 `dlopen` 失败（缺兄弟 DLL：把依赖放在插件旁边，加载器会先查库自己的目录） |
 | 加载了但一条事件都没收到 | 订阅句柄是不是被 drop 了（Rust 侧 `let _ =` 会立刻退订） |
-| 脚本插件 `plugin_start` 报错 | 脚本与 cdylib 是否**同名同目录**；`host.run()` 是不是最后一行；解释器在不在 PATH |
+| 脚本插件起不来 | manifest 身份段（`[tool.fuyubot]` / `"fuyubot"`）与 `entry` 对不对；`run()` 是不是最后一行；`uv` / `bun` 在不在；原生桥库找不找得到（见 [脚本插件常见问题](./scripts.mdx#常见问题)） |
 | 请求发出去了但没收到响应 | 回放里本来就不会有响应（请求只留档）；真环境下等的是 `"response"` 通道，见 [调用 TDLib](./tdlib.mdx) |
 
 要查 TDLib 的方法名与参数名，用 `fuyubot-sdk td-methods --filter <片段>` / `td-method <名字>`；

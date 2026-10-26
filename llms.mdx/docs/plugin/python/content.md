@@ -1,105 +1,82 @@
 # Python 插件 (/docs/plugin/python)
 
-Python 插件的逻辑全写在 `.py` 里，cdylib 只是一层胶水：宿主加载它，它在 `plugin_start` 时
-启动解释器执行脚本，两边用**一行一个 JSON** 说话（见 [ABI 契约](./abi.mdx) 里的脚本形态）。
+Python 插件就是一个目录：manifest（`pyproject.toml`）里写身份，`main.py` 写逻辑，
+`fuyubot.py`（单文件薄 SDK）负责和宿主通信。三步上手见 [脚本插件](./scripts.mdx)，本页是 API 参考。
 
-## 胶水 crate [#胶水-crate]
+```text
+my-plugin/
+  pyproject.toml   ← 身份（插件叫什么、入口在哪）
+  main.py          ← 你写的逻辑
+  fuyubot.py       ← 薄 SDK（单文件，拷进来就行）
+  fuyubot.pyi      ← 类型声明（可选，给 IDE 补全）
+```
+
+## manifest：`pyproject.toml` [#manifestpyprojecttoml]
 
 ```toml
-[workspace]
-
-[package]
-name = "fuyubot_weather"
+[project]
+name = "my-plugin"
 version = "0.1.0"
-edition = "2024"
 
-# ⚠️ 名字必须与脚本同名：宿主是按**动态库文件名**去找同名脚本的
-[lib]
-name = "weather"
-crate-type = ["cdylib"]
-
-[dependencies]
-fuyubot-sdk-script = "0.1.0"        # crates.io；对 SDK 源码开发时换成 path = "…/crates/fuyubot-sdk-script"
+[tool.fuyubot]
+name = "mybot.my-plugin"   # 插件身份（日志里看到的名字）
+entry = "main.py"          # 不写就默认 main.py
 ```
 
-```rust
-// src/lib.rs —— 这个插件的全部 Rust 代码
-fuyubot_sdk_script::script_plugin!("fuyubot.python.weather", python, "weather.py");
-```
+## API [#api]
 
-这一行展开出 `Plugin` 实现和四个 C ABI 导出符号；插件只依赖 `fuyubot-sdk-script` 一个 crate。
-
-## 脚本 [#脚本]
-
-`fuyubot-sdk init demo --lang python` 生成的 `demo.py`：
-
-```python
-import fuyubot_plugin as host
-
-@host.on("updateNewMessage")
-def on_message(payload):
-    host.log("demo 收到一条更新")
-
-@host.on("updateNewMessage", filter={"message.content.text.text": "/hello"})
-def on_hello(payload):
-    host.log("有人说 /hello")
-
-host.run()
-```
+`fuyubot.py` 随 [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK) 提供
+（`crates/fuyubot-sdk-native/` 下），拷进插件目录即可 `from fuyubot import …`。
+它只是原生桥的一层 ctypes 封装，协议细节（握手、订阅号、JSON 管道）作者看不见。
 
 | 函数 | 签名 | 说明 |
 | --- | --- | --- |
+| `on` | `on(event, handler, filter=None)` | 订阅事件。**是两参数函数，不是装饰器**；同一个事件可订阅多次 |
+| `invoke` | `invoke(method, params=None, on_response=None)` | 发 TDLib 请求；给了 `on_response` 就按 `request_id` 自动配对 |
+| `emit` | `emit(event, payload=None)` | 发自定义事件（**只送自己 + 全局订阅者**，不是广播） |
 | `log` | `log(message, level="info")` | `level`：`error` / `warn` / `info` / `debug` / `trace` |
-| `on` | `on(event, handler=None, filter=None)` | 给了 `handler` 就是普通调用，没给就能当装饰器 |
-| `off` | `off(event, handler)` | 只影响脚本内的分发表；宿主订阅随插件停止一起撤 |
-| `invoke` | `invoke(method, params=None, on_response=None)` | 发 TDLib 请求；`on_response` 按 `request_id` 自动配对 |
-| `emit` | `emit(event, payload=None)` | 发自定义事件（**只送自己 + 全局订阅者**） |
 | `register_tool` | `register_tool(name, description="", input_schema=None)` | 只登记元数据 |
-| `config` | `config()` | 宿主传给 `plugin_start` 的配置 JSON，没给就是 `{}` |
-| `run` | `run()` | **必须是最后一行** |
+| `use_middleware` | `use_middleware(stage, handler)` | 挂中间件，`handler(stage, payload)` |
+| `run` | `run()` | 握手并开始收事件。**永远放最后一行** |
 
-## 一行一个 JSON [#一行一个-json]
+`on` 的 `filter` 是点分路径的字段相等匹配，比如只听 `/hello`：
 
-脚本 → 宿主（`op` 是动作名，`tag` 是脚本自己用的配对号，宿主原样带回）：
+```python
+from fuyubot import on, invoke, log, run
 
-| 行 | 宿主回什么 |
-| --- | --- |
-| `{"op":"ready"}` | 无 |
-| `{"op":"log","level":"info","message":"…"}` | 无 |
-| `{"op":"on","tag":1,"event":"updateNewMessage","filter":{…}}` | `{"op":"on","tag":1,"handle":N}` |
-| `{"op":"off","handle":N}` | 无 |
-| `{"op":"invoke","tag":2,"method":"sendMessage","params":{…}}` | `{"op":"invoked","tag":2,"request_id":R}` |
-| `{"op":"emit","event":"x","payload":{…}}` | 无 |
-| `{"op":"tool","descriptor":{…}}` | `{"op":"tool","tag":n,"handle":N}` |
+def handle(update):
+    log(f"收到新消息 {update['message']['id']}")
+    invoke("sendMessage", {
+        "chat_id": update["message"]["chat_id"],
+        "input_message_content": {
+            "@type": "inputMessageText",
+            "text": {"@type": "formattedText", "text": "收到"},
+        },
+    })
 
-宿主 → 脚本：`{"op":"event","event":"…","payload":{…}}` 外加上面那几种回执。
-**事件带的是订阅号 `handle`，不是事件名**——同一个事件可以有多条带不同过滤器的订阅，
-按事件名分发会让不该响的回调也响。
+on("updateNewMessage", handle)
+on("updateNewMessage", lambda u: log("有人说 /hello"),
+   {"message.content.text.text": "/hello"})
+run()   # 最后一行，永远如此
+```
 
-## 四条硬约定 [#四条硬约定]
+- `payload` 是解析好的 `dict`，直接取字段；不用自己拼 JSON。
+- `invoke` 的参数形状以 TDLib 为准（方法名 ≠ Bot API），见 [调用 TDLib](./tdlib.mdx)。
+- **`run()` 必须是最后一行**：它发就绪握手并阻塞收事件，脚本提前退出 = 插件加载失败。
 
-1. **脚本与 cdylib 同名、同目录**：`weather.dll` ↔ `weather.py`。宿主按动态库文件名去找，
-   依次试 `.py` / `.js` / `.ts`（cargo 在类 Unix 上加的 `lib` 前缀会被去掉），
-   把**绝对路径**写进配置 JSON（`{"script": "…"}`）——cdylib 自己不知道自己在哪。
-   所以 `[lib] name` 不能省。
-2. **`host.run()` 必须是最后一行**：宿主收到 `{"op":"ready"}` 才算加载完成，
-   `plugin_start` 会等它（上限 10 秒）。脚本早退 = 加载失败。
-3. **两侧 stdio 钉成 UTF-8**：Windows 上 Python 默认按系统代码页读管道，`上海` 会变成 `涓婃捣`。
-   桥自己会 reconfigure 三个流，脚本不用管。
-4. **解释器起不来 / 脚本早退要让 `plugin_start` 报错**，不能留一个「加载成功但什么都不干」的插件——
-   这条桥已经替你做了。
+## 原生桥 [#原生桥]
+
+薄 SDK 要加载原生桥（和托管插件是同一份库）。查找顺序：**脚本同目录 → 环境变量
+`FUYUBOT_NATIVE_LIB` → 当前工作目录**；找不到会报「找不到 fuyubot 原生桥库」，
+排法见 [脚本插件的常见问题](./scripts.mdx#常见问题)。
 
 ## 调试 [#调试]
 
 ```bash
-python demo.py            # 能跑，只是没有宿主可说话
-python fuyubot_plugin.py  # 桥自带自检：打印 fuyubot_plugin: self-test ok
+python fuyubot.py    # 薄 SDK 自检：验证 API 形状（不碰宿主、不调 run）
+# fuyubot: self-test ok
 ```
 
-`fuyubot_plugin.py` 与 `fuyubot_plugin.pyi`（桥 + 类型声明）由 `fuyubot-sdk init` 一起放进目录，
-与 `fuyubot-sdk-script` 里那份**逐字相同**——别自己改，改了就漂移。
-
-<Callout type="info">
-  解释器依次试 `python` / `python3` / `py`。`plugin_start` 起不来解释器会直接失败，
-  Python 的报错经脚本 stderr 原样透传到宿主控制台。
-</Callout>
+- 日志不够细就把 `[plugins].log_level` 调成 `"debug"`（见[配置文件](../usage/config.mdx)）。
+- Python 侧要装 [uv](https://docs.astral.sh/uv/)（机器人用 `uv sync` 装依赖、`uv run` 起脚本）；
+  缺了的话脚本起不来，日志里有提示，不影响机器人本身。

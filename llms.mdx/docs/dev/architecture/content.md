@@ -2,28 +2,33 @@
 
 结论先说：**一个宿主进程 + N 个动态库插件（cdylib）**。插件不认识 Rust，只认识 `HostApiVTable`；
 宿主是**唯一**实现这张表的 crate（`fuyubot-loader`）。脚本插件（Python / JS / TS）不改变这个结构
-——它们的 cdylib 里只多了一个子进程。
+——目录形态由两个中间插件（`fuyubot_python_host` / `fuyubot_js_host`）托管，旧的胶水形态
+则把解释器子进程藏在自己的 cdylib 里。
 
 本文只讲**结构与数据流**；构建、发布与排错见 [开发文档](/docs/dev/)。
 
 ## crate 依赖方向 [#crate-依赖方向]
 
-```text
-                          fuyubot-core                （Cordis 内核，不认识 Telegram）
-                        ┌──────┬──────┬──────┬──────┐
-                        │      │      │      │      │
-                   event  service  tool  middleware │     四个机制 crate 只依赖 core，彼此不依赖
-                        └──────┴──────┴──────┴──────┘
-                                    ▲
-fuyubot-abi ─────────────────────► fuyubot-loader ◄───── fuyubot-tdlib ──► fuyubot-tdlib-sys
-（不依赖 core / 机制 crate）        （唯一宿主层）              （加载/循环/授权）（类型/元数据/FFI）
-                                    ▲
-                              fuyubot-cli（二进制 fuyubot）
+箭头指向「依赖的那一边」（`A --> B` = A 依赖 B）：
 
-插件侧（**在 FuyuBot-SDK 仓库**，通过 crates.io 依赖本仓的 fuyubot-abi）：
-fuyubot-plugin-api ──► fuyubot-abi                 Rust 插件只用这一个 crate
-fuyubot-sdk-script ──► fuyubot-plugin-api          Python / JS / TS 插件的 cdylib 用它
-fuyubot-simplify   ──► fuyubot-tdlib-sys           TDLib 便捷封装（可选糖，重导 td_api）
+```mermaid
+graph TD
+  event["fuyubot-event"] --> core["fuyubot-core<br/>Cordis 内核，不认识 Telegram"]
+  service["fuyubot-service"] --> core
+  tool["fuyubot-tool"] --> core
+  middleware["fuyubot-middleware"] --> core
+  loader["fuyubot-loader<br/>唯一宿主层"] --> event
+  loader --> service
+  loader --> tool
+  loader --> middleware
+  loader --> core
+  loader --> tdlib["fuyubot-tdlib<br/>加载 / 循环 / 授权"]
+  tdlib --> sys["fuyubot-tdlib-sys<br/>类型 / 元数据 / FFI"]
+  loader --> abi["fuyubot-abi<br/>不依赖 core / 机制 crate"]
+  cli["fuyubot-cli · 二进制 fuyubot"] --> loader
+  pluginapi["fuyubot-plugin-api<br/>SDK 仓"] --> abi
+  sdkscript["fuyubot-sdk-script<br/>SDK 仓"] --> pluginapi
+  simplify["fuyubot-simplify<br/>TDLib 便捷封装"] --> sys
 ```
 
 | 边 | 允许吗 |
@@ -39,12 +44,12 @@ fuyubot-simplify   ──► fuyubot-tdlib-sys           TDLib 便捷封装（�
 
 ## 启动顺序：先 attach TDLib，再 load 插件 [#启动顺序先-attach-tdlib再-load-插件]
 
-```text
-Kernel::new() → kernel.start()
-  → PluginLoader::new(kernel.context().clone())   // 装四个机制 + 生成 HostApiVTable
-  → pipeline.attach_tdlib(client)                 // 把 TdClient 挂进 HostRuntime（不起循环）
-  → loader.load_with_config(dll, {"script": …})   // 逐个 dlopen 插件
-  → pipeline.spawn_dispatch()                     // 拿到 ReceiveLoop，才开始分发
+```mermaid
+graph TD
+  A["Kernel::new() → kernel.start()"] --> B["PluginLoader::new(context)<br/>装四个机制 + 生成 HostApiVTable"]
+  B --> C["pipeline.attach_tdlib(client)<br/>挂 TdClient，不起循环"]
+  C --> D["loader.load_with_config(dll, config)<br/>逐个 dlopen 插件"]
+  D --> E["pipeline.spawn_dispatch()<br/>拿到 ReceiveLoop，开始分发"]
 ```
 
 为什么不能反过来：`attach_tdlib` 之前 `td_send` 走「没接 TDLib」分支（请求只留档 + 合成请求号，
@@ -53,17 +58,18 @@ Kernel::new() → kernel.start()
 
 ## 主链路 [#主链路]
 
-```text
-插件 ── host.on / invoke / emit / use_middleware / …
-  ▼ HostApiVTable：18 个字段 = version / size / host_ctx + 15 个函数指针（全 Option，首参 host）
-  ▼ HostRuntime：把每个桥翻译成「事件总线 / 服务容器 / 工具表 / 中间件管线 / TdClient」
-  ├── td_invoke* ──► td_send：接了走 TdClient::send（注入 @extra）／没接就留档 + 合成请求号
-  ├── td_execute ──► HostRuntime::td_execute ──► TdClient::execute：**同步**，只给不碰网络的方法用
-  ▼
-TdClient::spawn_receive_loop ──► Routed
-  ├─ Update   ──► process_value：PreUpdate → 解析 @type → PreRoute → InPlugin → 双通道发布 → PostResponse
-  │               publish_update：emit("update", …)（兜底）+ emit(@type, …)（具体）
-  └─ Response ──► deliver_response：按 request_id / @extra 找到发起者 → emit_scoped(owner, "response", …)
+```mermaid
+graph TD
+  P["插件：on / invoke / emit / use_middleware / …"] --> V["HostApiVTable<br/>18 字段 = version / size / host_ctx<br/>+ 15 个函数指针（全 Option，首参 host）"]
+  V --> H["HostRuntime：翻译成事件总线 / 服务容器<br/>/ 工具表 / 中间件管线 / TdClient"]
+  H -->|"td_invoke* → td_send"| S["TdClient::send（注入 @extra）<br/>没接 TDLib：留档 + 合成请求号"]
+  H -->|"td_execute（同步）"| X["TdClient::execute<br/>只给不碰网络的方法用"]
+  S --> L["TdClient::spawn_receive_loop → Routed"]
+  L --> U["Update → process_value：PreUpdate → 解析 @type<br/>→ PreRoute → InPlugin → 双通道发布 → PostResponse"]
+  U --> C1["emit(\"update\", …) 兜底通道"]
+  U --> C2["emit(@type, …) 具体通道"]
+  L --> R["Response → deliver_response<br/>按 request_id / @extra 找到发起者"]
+  R --> S2["emit_scoped(owner, \"response\", …)"]
 ```
 
 `process`（吃 `&str`）只是 `process_value` 的前半段（解析 JSON 再交给它）；接收循环那条路
@@ -96,6 +102,11 @@ TdClient::spawn_receive_loop ──► Routed
 `LoadedPlugin` 的字段声明顺序就是卸载顺序：先 `plugin_stop`，再 `rollback_owner`，
 最后 `_lib: Library` 才 drop——到这一步动态库才真正卸载。
 
+中间插件要批量托管脚本时，用**内置 scope 服务**（`get_service("fuyubot.host.scope")`）开子作用域：
+`create` 出的子作用域从当前作用域栈继承 owner（脱离加载线程的场景——比如 watch 线程——要先建
+root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到），注册落在子作用域里，
+`rollback_scope` 可以只撤这一批；插件卸载时连 owner 一起收。
+
 **唯一的例外是 Go 的 c-shared 库**：它的运行时有线程与信号处理器，卸载后进程会 access violation
 （`0xC0000005`，而且崩在退出那一刻）。`PluginLoader` 用文件里的 Go buildinfo 魔数认出 Go 产物，
 对这类库 `plugin_stop` 与注册回滚照跑，但**故意不卸载那个 `Library`**，让它映射到进程退出。
@@ -109,22 +120,25 @@ TdClient::spawn_receive_loop ──► Routed
   数据不走序列化管道：回调直接收到宿主的临时 NUL 结尾字符串（只在下一次宿主调用前有效）
   代价是共享地址空间（崩了一起崩），收益是零拷贝、零协议
 
-脚本插件（Python / JS / TS）——一个插件 = 一个解释器子进程
-  plugin_start → Bridge::start：resolve_script(config_json)（配置里的 "script" 优先，否则用宏里写的名字）
-    → spawn（python / python3 / py，或 node / bun）：stdin/stdout = 管道，stderr = inherit
-    → pump 线程读脚本 stdout（一行一个 JSON）→ 等 {"op":"ready"}（超时 10 秒）
-  订阅回调 forward() 往子进程 stdin 写一行 JSON；宿主 ◄──▶ 桥 ◄── 一行一个 JSON ──▶ 解释器
+脚本插件（Python / JS / TS）——一个脚本一个解释器子进程
+  目录形态（推荐）：中间插件 fuyubot_python_host / fuyubot_js_host 托管，
+    每个脚本目录一个子进程（uv sync / bun install 装依赖，uv run / bun 起进程），
+    薄 SDK（fuyubot.py / fuyubot.ts）经原生桥（同一份中间插件的 dll）回调宿主
+  胶水 cdylib 形态（旧）：script_plugin! 展开出的 cdylib 自己 spawn 解释器，
+    脚本与 cdylib 同名同目录（weather.dll ↔ weather.py），stdin/stdout 一行一个 JSON
 ```
 
-| | 动态库插件 | 脚本插件 |
-| --- | --- | --- |
-| 进程 / 边界 / 语言 | 与宿主同进程；C ABI 函数调用；Rust / C / C++ | 一个插件一个子进程；stdin/stdout 一行一个 JSON；Python、JS、TS（Node ≥ 23.6 类型剥离） |
-| 脚本定位 | 不适用 | **脚本必须与 cdylib 同名同目录**（`find_script`；cargo 的 `lib` 前缀会被去掉） |
-| 启动时序 / 崩溃 | 同步；崩了拖垮宿主 | `plugin_start` 阻塞等脚本报 `ready`；子进程死，宿主记一条错 |
-| 已知天花板 | panic 靠 `C-unwind` + `catch_unwind` 接住 | 管道是同步写的：脚本一直不读 stdin 会拖住宿主那条线程 |
+| | 动态库插件 | 脚本插件（目录形态） | 脚本插件（胶水 cdylib） |
+| --- | --- | --- | --- |
+| 进程 / 边界 | 与宿主同进程；C ABI 函数调用 | 一进程一脚本；经原生桥回调 | 一进程一插件；stdin/stdout 一行一个 JSON |
+| 脚本定位 | 不适用 | manifest（`[tool.fuyubot]` / `"fuyubot"`）声明入口 | **脚本必须与 cdylib 同名同目录** |
+| 装载 | `plugin install <产物>` | `plugin install <目录>` → `plugins/scripts/` | `plugin install <产物>` |
+| 启动时序 / 崩溃 | 同步；崩了拖垮宿主 | 装依赖后起进程，等 `ready`；子进程死，宿主记一条错 | `plugin_start` 阻塞等脚本报 `ready`；同左 |
+| 已知天花板 | panic 靠 `C-unwind` + `catch_unwind` 接住 | 改代码不热载（watch 只认目录增删） | 管道是同步写的：脚本一直不读 stdin 会拖住宿主那条线程 |
 
-脚本侧协议见 `fuyubot-sdk-script` 的 crate 文档；两门语言共用同一份 Rust 桥，
-所以「Python SDK 与 JS SDK 对 ABI 的理解」不可能漂移。
+脚本侧协议见 `fuyubot-sdk-script` 的 crate 文档；目录形态与薄 SDK 见文档站的
+[脚本插件](https://catmoecircle.github.io/FuyuBot-docs/docs/plugin/scripts/)。
+两门语言共用同一份 Rust 桥，所以「Python SDK 与 JS SDK 对 ABI 的理解」不可能漂移。
 
 ## 四大机制与内核 [#四大机制与内核]
 
@@ -188,11 +202,13 @@ crates/fuyubot-tdlib/  ← 运行时半边（依赖并重导出 sys）
 
 ### `td_api.tl` 转成了什么（**只在编译期**） [#td_apitl-转成了什么只在编译期]
 
-```text
-              ┌─ tl_schema::parse ──> tl_codegen::generate ──> $OUT_DIR/td_api_generated.rs
-td_api.tl ────┤                                                    └─ include! ─> fuyubot_tdlib_sys::td_api（Rust 类型）
-（TDLIB_TD_API_TL                              └─> $OUT_DIR/td_api.json
-  或缓存/Releases 下载）                        └─ include_str! ─> TdApiSchema::compiled（可校验元数据）
+```mermaid
+graph LR
+  TL["td_api.tl<br/>TDLIB_TD_API_TL → 缓存 → Releases 下载"] --> P["tl_schema::parse"]
+  P --> G["tl_codegen::generate"] --> RS["$OUT_DIR/td_api_generated.rs"]
+  RS --> TD["include! → fuyubot_tdlib_sys::td_api<br/>Rust 类型"]
+  P --> J["$OUT_DIR/td_api.json"]
+  J --> SC["include_str! → TdApiSchema::compiled<br/>可校验元数据"]
 ```
 
 两份产物来自同一个解析结果，而且 `tl_schema.rs` 被 build.rs 用 `#[path]` 引同一份实现，所以「编译期
@@ -211,5 +227,5 @@ td_api.tl ────┤                                                    └
 | `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（18 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
 | `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 15 个桥的落点、请求留档、响应回投、`rollback_owner`；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
 | `TdClient` / `Routed` / `ReceiveLoop` | `fuyubot-tdlib` | TDLib 客户端；`route()` 分出 `Update` / `Response`；停止把手（`stop()` / `join()`，drop **不会**停） |
-| `Simplify` | `fuyubot-simplify` | 发消息 / 相册 / 编辑 / 删除 / Markdown 转 entities / 等响应；参数是**每个方法一个结构体** |
+| `Simplify` / `RichMessage` | `fuyubot-simplify` | 发消息 / 相册 / 编辑 / 删除 / Markdown 转 entities / 等响应 / **富消息**（`rich` 模块，本地 Markdown → 块树）；参数是**每个方法一个结构体** |
 | `TdApiSchema::compiled()` | `fuyubot-tdlib-sys` | 编译期烘焙的元数据；`check_request` 做本地方法名/参数名校验 |
