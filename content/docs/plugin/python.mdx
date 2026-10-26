@@ -36,7 +36,48 @@ entry = "main.py"
 | `log(message, level="info")` | 打日志 |
 | `register_tool(name, description="", input_schema=None)` | 登记一个工具 |
 | `use_middleware(stage, handler)` | 挂一个中间件 |
+| `plugin_config()` | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
+| `get_config(section, key="", on_config=None)` | 读**任意**插件段（异步，回调在 `run()` 之后） |
+| `set_config(key, value, on_done=None)` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
 | `run()` | 握手并开始收事件——**永远是最后一行** |
+
+## 读 / 写配置
+
+`fuyubot.toml` 里每个插件有自己的段（见[配置文件](../usage/config.mdx)）。读**自己**那段
+用 `plugin_config()`——它是**同步**的，宿主在启动脚本时就把这段塞进了 `argv[2]`，所以
+`run()` 之前（模块顶层）就能用：
+
+```python
+import fuyubot_plugin as host
+
+cfg = host.plugin_config()              # {"city": "上海"}；没配就是 {}
+city = cfg.get("city", "北京")
+
+@host.on("updateNewMessage")
+def on_message(payload):
+    host.log(f"城市 = {city}")
+    host.get_config("my.weather", "city", lambda value: host.log(f"天气插件的城市：{value}"))
+
+host.run()
+```
+
+```toml
+# fuyubot.toml —— 这个段就叫 [plugin.<你的插件名>]
+[plugin.fuyubot.python.weather]
+city = "上海"
+```
+
+- **读别人的段**（`get_config`）是**异步**的：回执要等 `run()` 之后才有，所以只能在事件/中间件
+  回调里用。段或键不存在时回调收到 `None`。
+- **写自己的段**（`set_config`）也是异步的，成功后 `on_done(True)`，宿主会**回写
+  `fuyubot.toml`**。⚠️ 回写是**全量重写**，你手写的注释会丢。
+- 写失败（越权 / 值不是合法 JSON / 写盘失败）时宿主只发一条 error 日志、**不会**调 `on_done`
+  ——别把「没收到回调」当成成功。
+
+<Callout type="info">
+  脚本插件只能写**自己**的段：`set_config` 没有 section 参数，宿主按调用者身份判定归属，
+  所以改不到别的插件那一段（会被拒）。这是 ABI 层面的硬约束，不是薄 SDK 的限制。
+</Callout>
 
 ## 事件怎么触发
 

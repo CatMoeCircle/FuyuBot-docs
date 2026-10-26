@@ -83,6 +83,45 @@ define_plugin!(MyPlugin, "demo");
 `define_plugin!` 还会把插件代码包在 `catch_unwind` 里——和 `C-unwind` 是两层，
 **两层都要**：一层防 panic 逃出 ABI，一层防 panic 把宿主线程带走。
 
+## 读 / 写配置
+
+每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段配置（详见[配置文件](../usage/config.mdx)）。
+`HostApi` 上两个方法直接读写它：
+
+| 方法 | 作用 |
+| --- | --- |
+| `get_config(section, key) -> Option<String>` | 读**任意**段。`section` 空串读顶层（`[bot]` 等），`key` 空串读整段、否则按点路径取键。返回 JSON 文本，找不到就是 `None` |
+| `set_config(key, value_json) -> Result<(), AbiError>` | 写**自己**的段。**没有 section 参数**——宿主按调用者身份判定，写不到别人那段。`key` 空串覆盖整段。成功后写内存并回写 `fuyubot.toml` |
+
+```rust
+fn start(&mut self, _config_json: &str) -> Result<(), String> {
+    // 读自己的段 `[plugin.demo]`（插件名点分，宿主当点路径下钻到 plugin.demo）。
+    let greeting: String = self
+        .host
+        .get_config("demo", "greeting")
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_else(|| "hello".to_owned());
+    self.host.info(&format!("greeting = {greeting}"));
+
+    // 读别人的段：允许（只读）。
+    if let Some(city) = self.host.get_config("my.weather", "city") {
+        self.host.info(&format!("天气插件的 city = {city}"));
+    }
+
+    // 写自己的段：把上次启动时间存回去（会回写 fuyubot.toml）。
+    self.host
+        .set_config("last_started", "\"2026-01-01\"")
+        .map_err(|e| format!("写自己的配置失败: {e}"))?;
+    Ok(())
+}
+```
+
+<Callout type="warn">
+  `set_config` 回写是**全量重写** `fuyubot.toml`——你手写在文件里的注释、空行会被 `toml`
+  序列化丢掉。插件写配置属于程序化修改，这是可接受的取舍；要保注释就别让插件运行时去改，
+  把值手工维护进文件。
+</Callout>
+
 ## 回调里带状态
 
 回调是裸函数指针，没有捕获环境。状态要么放插件字段、经 `user_data` 传进去，要么像

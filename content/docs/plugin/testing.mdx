@@ -28,7 +28,7 @@ fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
   [ok] plugin_start
   [ok] plugin_stop
   [ok] plugin_free_string
-ABI 版本：宿主是 2。插件报的版本**只能运行时判定**——它在 `PluginHandle.abi_version`
+ABI 版本：宿主是 3。插件报的版本**只能运行时判定**——它在 `PluginHandle.abi_version`
      里，是 `plugin_init` 的返回值，不是静态符号（见 [ABI 契约](./abi.mdx)）。
 结论：可以加载。
 ```

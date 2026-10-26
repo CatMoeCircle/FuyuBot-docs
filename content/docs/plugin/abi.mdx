@@ -25,10 +25,10 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `NULL`。`PluginHandle::FAILED` 是全零版本号，`const _` 里有
 `assert!(PluginHandle::FAILED.abi_version == 0)`。
 
-## HostApiVTable：18 个字段
+## HostApiVTable：20 个字段
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 15 个是函数指针，全是 `Option<...>`；
-总大小 = `2 * size_of::<u32>() + 16 * size_of::<*const c_void>()`，由 `const _` 里的
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 17 个是函数指针，全是 `Option<...>`；
+总大小 = `2 * size_of::<u32>() + 18 * size_of::<*const c_void>()`，由 `const _` 里的
 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
 下表签名省略第一个参数 `host`：
@@ -53,13 +53,15 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 13 | `wait_for_update` | `(filter_json, timeout_ms: u64) -> WaitHandle` | `api_wait_for_update` | **阻塞**当前线程；`timeout_ms == 0` 表示只检查当前状态 |
 | 14 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
 | 15 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
+| 16 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
+| 17 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + 回写 `fuyubot.toml`）；非 0 = 越权 / 解析失败 / 写盘失败 |
 
 两条形状上的硬要求：
 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
   不给显式上下文就只能靠进程级全局，那样一个进程只能有一个宿主、测试也没法并行。
 - **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
-  Rust 侧 `HostApi::from_raw` 一次解包校验全部 15 个，之后调用路径上没有 `Option`、也没有 panic 分支。
+  Rust 侧 `HostApi::from_raw` 一次解包校验全部 17 个，之后调用路径上没有 `Option`、也没有 panic 分支。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
 都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；
@@ -71,7 +73,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 1. **谁分配谁释放**。插件通过 `plugin_init` 返回的 `name`、以及插件自己分配的任何字符串，
    都由插件持有；宿主**绝不** free 它们。插件要给宿主一个需要接管的临时字符串，只能走
    `plugin_free_string` 那套约定。
-2. **宿主返回的字符串是线程局部缓冲**。`list_tools`、`get_service`、`WaitHandle::payload_json`
+2. **宿主返回的字符串是线程局部缓冲**。`list_tools`、`get_config`、`WaitHandle::payload_json`
    指向宿主的一块复用缓冲（`thread_local! HOST_STRING`），**只在下一次调用宿主函数之前有效**。
    要留着就当场拷走，并且**不要试图释放它**——VTable 里没有 host 侧的 free 函数，这是设计不是遗漏。
 3. **`ServiceMethodFn` 的返回值由提供方持有**，调用方读完即弃。
@@ -80,7 +82,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 | 位置 | 谁比 | 不匹配的后果 |
 | --- | --- | --- |
-| `ABI_VERSION`（当前 `2`） | 编译期常量，两侧共同引用 | — |
+| `ABI_VERSION`（当前 `3`） | 编译期常量，两侧共同引用 | — |
 | `HostApiVTable::version` | 插件侧 `HostApi::from_raw` | `AbiError::VersionMismatch` |
 | `HostApiVTable::size` | 同上 | `AbiError::VTableTooSmall` |
 | 某个函数指针是 `NULL` | 同上 | `AbiError::MissingFunction("<字段名>")` |
@@ -89,14 +91,17 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 版本不兼容时宿主**不能**调 `plugin_stop`——那是对一个不认识的 ABI 下手，所以插件在 `init` 里
 分配的状态这一版回收不了。字段只增不改，新增一律追加在尾部。
 
-**版本 2 的改动**：尾部追加了 `td_execute`（同步执行，见上表第 11 项）。追加字段本身不破坏老插件
-（它们先比 `size`），但按契约「改 ABI 就加版本号」，`ABI_VERSION` 一起从 1 跳到 2——**用版本 1
-编出来的插件会被宿主拒绝加载**，重新编一次即可（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
+**版本 2 的改动**：尾部追加了 `td_execute`（同步执行，见上表第 11 项）。
+
+**版本 3 的改动**：尾部追加了 `get_config` / `set_config`（第 16 / 17 项），让插件能读全局配置、
+写自己的段。追加字段本身不破坏老插件（它们先比 `size`），但按契约「改 ABI 就加版本号」，
+`ABI_VERSION` 一起跳到 3——**用旧版本编出来的插件会被宿主拒绝加载**，重新编一次即可
+（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
 
 ## 为什么本 ABI 一个可变参数函数指针都没有
 
 Rust 的 `extern "C" fn(.., ...)` 确实稳定（能写、cbindgen 也能生成），但**本 ABI 一个都没用**，
-理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 15 个函数的参数都是固定的，
+理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 17 个函数的参数都是固定的，
 用 `...` 只会让 C 侧传错参数从编译错误降级成运行期 UB。
 
 将来真要加，正确的声明形状是（C 侧）：
@@ -119,10 +124,10 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 
 | 语言 | 声明在哪 | 值 | 怎么生效 |
 | --- | --- | --- | --- |
-| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 2` | 2 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
-| C++ | 同一份 `fuyubot_plugin.h` | 2 | 同上（四个符号放 `extern "C"`） |
-| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 2 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
-| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v2 cdylib），`abi_version` 它填 |
+| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 3` | 3 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
+| C++ | 同一份 `fuyubot_plugin.h` | 3 | 同上（四个符号放 `extern "C"`） |
+| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 3 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
+| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v3 cdylib），`abi_version` 它填 |
 | JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
 
 脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
@@ -144,5 +149,5 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 </Callout>
 
 ```bash
-fuyubot-sdk abi-version   # 打印 2
+fuyubot-sdk abi-version   # 打印 3
 ```

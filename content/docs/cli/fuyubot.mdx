@@ -112,14 +112,17 @@ $ fuyubot config --config demo\fuyubot.toml
 [telegram]  api_id       = 12345
 [telegram]  data_dir     = demo\data
 [plugins]   dir          = demo\plugins
+[plugins]   log_level    = info（默认）
 [tdlib]     path         = 自动（TDLIB_TDJSON_PATH → 自带 → exe 同级 → 系统库 → 裸库名）
 [tdlib]     log_verbosity= 1
 凭据        api_hash / token / 手机号不读配置（TG_API_HASH 等环境变量或交互输入）
+[plugin.fuyubot.manage] = { reply_prefix = "已安装插件：" }
 ```
 
 - 文件不存在时第一行会写「（不存在，下面全是默认值）」——`run` 就是这样起的，不骗人。
 - `account_type` 写错**不会**静默当 bot：那一行直接是 `⚠️ [telegram].account_type = "robot" 认不出来，只能写 "bot" 或 "user"`。
-- 没有 `get` / `set` / `path`：改配置用编辑器更直接，路径 `status` 第一行已经打了。
+- 每个 `[plugin.<插件名>]` 段各占一行（插件名是点分的，所以显示成 `[plugin.fuyubot.manage]`）；没有插件段时写「无（没有 `[plugin.*]` 段）」。
+- 没有 `get` / `set` / `path`：改配置用编辑器更直接，路径 `status` 第一行已经打了。**插件**读写配置走 ABI 的 `get_config` / `set_config`（见[插件 ABI](../plugin/abi.mdx)），不是这个子命令。
 
 ## `plugin`
 
@@ -134,8 +137,8 @@ $ fuyubot plugin install ./my-plugin
 已安装 plugins\scripts\my-plugin
 
 $ fuyubot plugin list
-fuyubot.js-host  ABI 2  plugins\fuyubot_js_host.dll
-fuyubot.python-host  ABI 2  plugins\fuyubot_python_host.dll
+fuyubot.js-host  ABI 3  plugins\fuyubot_js_host.dll
+fuyubot.python-host  ABI 3  plugins\fuyubot_python_host.dll
 脚本插件（1 个，由中间插件托管）：
   mybot.my-plugin  python  plugins\scripts\my-plugin\main.py
 

@@ -30,6 +30,37 @@ demo/
 | `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错** |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
+| `[plugin.<插件名>]` | 无 | 插件自己的配置段（见下） |
+
+## 插件自己的配置段
+
+每个插件在 `[plugin.<插件名>]` 下可以有自己的配置，键值任意、可嵌套。插件名是点分的
+（`define_plugin!` / 脚手架里登记的那个名字，如 `fuyubot.manage`），所以在 TOML 里自然写成
+嵌套表——`[plugin.fuyubot.manage]` 就代表插件 `fuyubot.manage` 那段：
+
+```toml
+[plugin.fuyubot.manage]
+reply_prefix = "已安装插件："
+
+[plugin.my.weather]
+city = "上海"
+api_key = "……"      # 密钥这类东西别写进全局配置——它会被 `set_config` 回写、也会随仓库走
+```
+
+插件在**运行时**读它、写它，走的是 ABI 接口（不是 `plugin_start` 的那个 `config_json`）：
+
+- **读**：`get_config(section, key)` —— 读任意段（自己的 + 别人的）。`section` 空串读顶层
+  （`[bot]` / `[telegram]` 等），`key` 空串读整段，`key` 是点路径（`nested.k`）。
+- **写**：`set_config(key, value_json)` —— **只能写自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。成功会写内存并回写 `fuyubot.toml`。
+
+各语言的写法：[Rust 插件](../plugin/rust.mdx)、[C / C++ 插件](../plugin/native.mdx)、
+[Python 插件](../plugin/python.mdx)、[JS / TS 插件](../plugin/js-ts.mdx)（每页都有「读 / 写配置」一节），
+函数签名在[插件 ABI](../plugin/abi.mdx)。脚本插件读**自己**那段还有个同步入口
+（`plugin_config()` / `pluginConfig()`），`run()` 之前就能用。
+
+<Callout type="warn">
+  **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。
+</Callout>
 
 模板（`fuyubot init` 生成的就是它）：
 
