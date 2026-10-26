@@ -152,8 +152,8 @@ const onMessage = (update: any) => {
   invoke("sendMessage", {
     chat_id: update.message.chat_id,
     input_message_content: {
-      "@type": "inputMessageText",
-      text: { "@type": "formattedText", text: "收到" },
+      _: "inputMessageText",
+      text: { _: "formattedText", text: "收到" },
     },
   });
 };
@@ -161,6 +161,27 @@ const onMessage = (update: any) => {
 // 要看结果就传第三个参数：响应回来自动调它
 invoke("getMe", {}, (resp) => console.log("我是", resp));
 ```
+
+<Callout type="info">
+  **`_` 就是 `"@type"`**：`params` 里嵌的 TDLib 对象都可以把判别字段写成 `_`，
+  薄 SDK 会在发往宿主之前**递归**换回 `"@type"`——嵌套多深、数组里的对象都算。
+  两种写法等价，同时写了两个时以 `"@type"` 为准：
+
+  ```ts
+  invoke("sendMessage", {
+    chat_id: chatId,
+    input_message_content: {
+      // 完全等价于 { _: "inputMessageText", text: { _: "formattedText", text: "hi" } }
+      "@type": "inputMessageText",
+      text: { "@type": "formattedText", text: "hi" },
+    },
+  });
+  ```
+
+  这一层只在 JS / TS 薄 SDK 里做（宿主不会替你补判别字段），而且只作用于要发给
+  TDLib 的东西：`emit` 的自定义负载、`callTool` 的参数不过这一步，那里的 `_`
+  就是个普通字段。
+</Callout>
 
 <Callout type="warn">
   `invoke` **不阻塞**、立即返回。响应回来时你的 `onResponse` 被调用。
