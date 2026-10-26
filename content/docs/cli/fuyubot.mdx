@@ -125,23 +125,39 @@ $ fuyubot config --config demo\fuyubot.toml
 
 | 命令 | 作用 |
 | --- | --- |
-| `fuyubot plugin list [--config …] [--plugin-dir <目录>]` | 列出插件目录里能加载的插件（会**真的加载一次**再看名字） |
-| `fuyubot plugin install <文件或工程目录> [--config …] [--plugin-dir <目录>]` | 把编好的产物（+ 同伴脚本）复制进插件目录 |
+| `fuyubot plugin list [--config …] [--plugin-dir <目录>]` | 列出插件；脚本插件会**展平到每个脚本** |
+| `fuyubot plugin install <文件或目录> [--config …] [--plugin-dir <目录>]` | 装一个插件：传**目录**是脚本插件，传**文件**是原生插件 |
+| `fuyubot plugin uninstall <名字> [--config …] [--plugin-dir <目录>]` | 卸载：脚本插件按**目录名**，原生插件按动态库名 |
 
 ```text
-$ fuyubot plugin list --plugin-dir demo\plugins
-已加载插件 mybot (demo\plugins\mybot.dll)
+$ fuyubot plugin install ./my-plugin
+已安装 plugins\scripts\my-plugin
 
-$ fuyubot plugin install demo\plugins\mybot --plugin-dir demo\plugins
-已安装 demo\plugins\mybot.dll
+$ fuyubot plugin list
+fuyubot.js-host  ABI 2  plugins\fuyubot_js_host.dll
+fuyubot.python-host  ABI 2  plugins\fuyubot_python_host.dll
+脚本插件（1 个，由中间插件托管）：
+  mybot.my-plugin  python  plugins\scripts\my-plugin\main.py
+
+$ fuyubot plugin uninstall my-plugin
+已卸载 plugins\scripts\my-plugin
 ```
 
-传**工程目录**时会去 `<工程>/target/{release,debug}` 找产物，并把工程根目录的
-`.py` / `.js` / `.ts` / `.pyi` 一起拷走；传单个 `.dll` 时只扫 dll 旁边——**脚本插件请传目录**。
-workspace 成员的产物默认落在仓库根 `target/` 下，这种情况加 `--target-dir` 或直接指着产物装。
+- **脚本插件**（推荐，见 [脚本插件](../plugin/scripts.mdx)）：传的是**整个目录**
+  （里面有 `pyproject.toml` / `package.json` 身份段），装到 `plugins/scripts/<目录名>/`。
+  目标已存在会报错，要覆盖先 `uninstall` 再 `install`。
+- **原生插件**：传编好的 `.dll` / `.so` / `.dylib`，或**工程目录**（去
+  `<工程>/target/{release,debug}` 找产物）。产物连同旁边 / 工程根的 `.py` / `.js` /
+  `.ts` / `.pyi` 同伴脚本一起拷进插件目录。workspace 成员的产物默认落在仓库根
+  `target/` 下，这种情况加 `--target-dir` 或直接指着产物装。
+- `list` 会**真的加载一次**动态库才知道名字，但**只发现不启动**脚本——不装依赖、
+  不起进程，随时可以跑。脚本的名字取自 manifest（`name` 字段），路径是入口文件。
+- `uninstall` 对**跑着的实例也安全**：文件删掉后目录 watch 会自动卸载对应脚本，
+  不需要先 `stop`。
 
 ## 相关页面
 
+- 脚本插件上手：[脚本插件](../plugin/scripts.mdx)
 - 配置字段：[配置文件](../usage/config.mdx)
 - 实例与后台运行：[运行与实例管理](../usage/run.mdx)
 - 回放的输出与等待窗口：[离线回放](../usage/replay.mdx)

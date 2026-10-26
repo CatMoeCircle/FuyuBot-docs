@@ -24,6 +24,11 @@ description: 一个 cdylib 就是一个插件，四种导出符号
 | 崩溃 | 拖垮宿主 | 只有子进程死，宿主记一条错 |
 | 起步 | `fuyubot-sdk init demo --lang rust` | `fuyubot-sdk init demo --lang python` / `js` |
 
+<Callout type="info">
+  **只想写脚本？** 看 [脚本插件](./scripts.mdx)：一个目录就是一个插件，
+  不编译、不碰 ABI，`fuyubot plugin install` 装上就跑。
+</Callout>
+
 脚本插件的 cdylib 里只有一行 `script_plugin!`，逻辑全在脚本里——它**不改变**「一个 cdylib 一个插件」这个结构。
 
 ## 最小闭环
@@ -87,5 +92,6 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
   （`fuyubot.weather` → `fuyubot_weather`）。
 - **插件名只有 dlopen 之后才知道**：它来自 `plugin_init` 返回的 `PluginHandle`，所以
   `fuyubot plugin list` 会真的加载一次再看名字。
-- 脚本插件必须让脚本与 cdylib **同名同目录**（`weather.dll` ↔ `weather.py`），细节见
+- 带脚本的**原生插件**（旧形态）必须让脚本与 cdylib **同名同目录**（`weather.dll` ↔ `weather.py`），细节见
   [Python 插件](./python.mdx) 与 [JS 与 TypeScript 插件](./js-ts.mdx)。
+  [脚本插件](./scripts.mdx)（目录形态）没有这个约束——身份在 manifest 里。
