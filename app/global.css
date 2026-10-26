@@ -3,6 +3,31 @@
 @import 'fumadocs-ui/css/preset.css';
 @import './theme-colors.css';
 
+/*
+ * 浏览器 UI 的深浅色（滚动条 / 表单控件 / 内嵌滚动容器 / 默认背景）。
+ * 首帧主题脚本还没跑，先靠 media query 对齐系统；
+ * 脚本跑完后由 <html> 上的 `.light` / `.dark` 接管——所以手动切回浅色时，
+ * 即使系统是深色，浏览器 UI 也跟着回浅色（class 规则写在后面，优先级相同则后者胜）。
+ * next-themes 还会写一条等效的 inline style（enableColorScheme），值与这里一致。
+ */
+:root {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+.light {
+  color-scheme: light;
+}
+
 html {
   scrollbar-gutter: stable;
 }
