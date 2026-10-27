@@ -1,5 +1,5 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
-import { appName, gitConfig } from './shared';
+import { appName, runtimeGitConfig } from './shared';
 
 // 静态导出 + 项目页：站点挂在 /FuyuBot-docs/ 下，所以图片路径要自己带 basePath
 // （public/ 里的资源不会被 Next 自动加前缀；app/icon.png 这类元数据路由会，但路径带 hash）。
@@ -25,6 +25,8 @@ export function baseOptions(): BaseLayoutProps {
       ),
     },
     links: [{ text: '文档', url: '/docs/' }],
-    githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
+    // 右上角这个按钮要跳的是框架源码（runtimeGitConfig），不是文档站自己；
+    // 文档页里那个「Open in GitHub」用的是 gitConfig，别改到这里来。
+    githubUrl: `https://github.com/${runtimeGitConfig.user}/${runtimeGitConfig.repo}`,
   };
 }
