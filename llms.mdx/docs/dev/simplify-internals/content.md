@@ -1,0 +1,199 @@
+# simplify 封装是怎么实现的 (/docs/dev/simplify-internals)
+
+这一篇是给**改这一层的人**看的：为什么这么做，以及加东西时该动哪儿。
+用这一层的人请先看[插件 › Simplify 封装](../plugin/simplify.mdx)。
+
+## 三条不可协商的原则 [#三条不可协商的原则]
+
+1. **只简化输入，不改变输出。** 返回值永远是 TDLib 的原始 JSON（`Value` / `Vec<Value>`），
+   不带自己的包装类型。插件要能随时退回手写请求。
+2. **一个方法一个参数结构体 + 短字段名。** `text` / `media` / `topic_id` 这些名字只服务于「人好写」，
+   到 TDLib 字段名的映射**只有一处实现**（`send_params` / `edit_*_params`）。
+3. **公开方法都等到结果**（唯一例外是同步的 `formatted`）。请求号不外泄——泄漏就意味着调用方要自己管
+   `old_message_id` / `request_id` 那一套，而这正是这一层要替人扛的东西。
+
+改这一层之前先读一遍这三条：违反任何一条的改动，都应该先回来改这一节说清楚为什么要破例。
+
+## 1. 请求出口：一切经 ABI [#1-请求出口一切经-abi]
+
+`Simplify` 只持有一个 `HostApi`（它是 `Copy`）。**没有一处**直接碰 `tdjson` 的符号：
+
+- 异步方法走 `host.td_invoke_simplified("方法名", payload)`——`@type` 由宿主补，
+  返回 `RequestId`；响应从 `"response"` 通道回来（只发给发起请求的那个插件）。
+- 唯一走别的是 `formatted`：同步的 `host.td_execute`（下一节解释）。
+
+参数 JSON 不是字符串拼接，而是 `serde_json::Map` 一层层 `insert` 出来的——每个字段「发 / 不发」
+在代码里一眼能看出来（`Option` 为 `None` 就是整个字段缺省，不是发 `null`）。
+
+## 2. 文本链路：为什么不异步 [#2-文本链路为什么不异步]
+
+`Text { text, parse_mode }` → `formattedText { text, entities }` 只有一条路：TDLib 的 `parseTextEntities`。
+**这里刻意不做第二套解析器**——一旦自己解析，「我们认的语法」和「Telegram 认的语法」就开始漂移
+（实测就已经够意外了：MarkdownV2 的粗体是 `*x*`，`**x**` 会被吞成 `x` 且不给 bold entity）。
+
+代价是一次往返，而这次往返**必须是同步的**：
+
+```text
+插件（在更新回调里）── td_execute("parseTextEntities") ──► TDLib，当场给 formattedText
+插件 ── td_invoke（异步）──► 宿主 ──► TDLib ──► 接收循环线程 ──► 更新/响应 ──► 插件
+```
+
+插件通常正是在**更新回调里**发消息，而「更新」和「响应」都靠接收循环那个线程投递。
+在那儿 `td_invoke` + 等响应 = 自己卡自己的投递线程，等到的一定是超时。
+`parseTextEntities` 不碰服务器，TDLib 允许同步跑它（`td_json_client_execute`）——所以这条链路
+即使在**更新回调里**也是安全的，换成异步等待反而会把自己卡死。
+
+实现上的三点：
+
+- `ParseMode::to_td()` 把四个模式换成三个 `TextParseMode`（`Plain` 返回 `None`，直接跳过请求）；
+- 拿不到结果（没接 TDLib / 报错 / 回了个别的）→ `formatted_from` 退回纯文本，并打一条 `Warn`；
+  一条 Markdown 写错的消息不该让整条消息发不出去；
+- `formatted` 作为**渲染闭包**传进 `send_params(.., render)` / `edit_*_params(.., render)`，
+  所以每个发送 / 编辑方法都自动得到「文本的最终形态」，不需要各自处理解析。
+
+## 3. 发送：两步合成一次等待 [#3-发送两步合成一次等待]
+
+TDLib 是异步的，`sendMessage` 的真相是这样的：
+
+```text
+① td_invoke_simplified("sendMessage")          → RequestId
+② 响应回来：一条**还没发出去**的临时消息（有 id）
+③ 随后那条临时消息各来一条结局：
+   updateMessageSendSucceeded { old_message_id, message }   ← message 才是最终那条
+   updateMessageSendFailed    { old_message_id, error_code, error_message }
+```
+
+封装把 ②③ 合成一次（见 `await_response` / `await_outcome`）：
+
+- `await_response`：等 `"response"` 通道，`request_id` 精确匹配；`@type == "error"` → `SimplifyError::Tdlib`；
+- `await_outcome`：走**兜底的 `"update"` 通道** + `"old_message_id"` 匹配。成功与失败两条更新都在这条通道上，
+  所以一次等待就能拿到「到底成了没」；按临时消息的 id 精确对号，同一会话里别人的结局不会串进来。
+- **超时先补救**：`cancel_sending` 用 `deleteMessages(revoke = true)` 把那条还没发出去的消息撤掉，
+  再返回 `Timeout(u64)`。发出去的撤不回，没发出去的会被取消。这一步**只打日志**，不把删除的成败返回结果。
+
+相册是同一套的 N 倍：`sendMessageAlbum` 的响应是 `Messages`（一组），`pending_messages` 取出每一项的临时 id，
+然后**逐项** `await_outcome`。`timeout_ms` 是**整组共用一个预算**——方法是把 deadline 算出来，
+每次只剩 `remaining_ms(deadline)`，不是每项各重新计时。
+
+`AlbumSize` 是**发之前**挡下来的（`invoke_send_album` 里先验 2–10 项），因为一个错项数的相册
+发出去也只会让服务端拒绝，不如在本地给个清脆的错误。
+
+## 4. 编辑 / 删除 / 应答：只有一步 [#4-编辑--删除--应答只有一步]
+
+这类方法**没有结局更新**——结果就是响应本身：
+
+- 成功 ⇒ `Message`（编辑）或 `ok`（删除 / 应答）；
+- `@type == "error"` ⇒ `SimplifyError::Tdlib`（`Message is not modified`、消息太老删不动都在这一档）。
+
+**这里刻意不重试**：该等多久是限流策略的事，调用方比封装层更清楚。
+
+`editMessageReplyMarkup` 是真签名里 `reply_markup` **必填**的那个（`chat_id message_id reply_markup`），
+所以「不要键盘」不能靠省略字段表示，必须发 `replyMarkupRemoveKeyboard`——`edit_markup_params` 用
+`entry(..).or_insert_with(..)` 兜住这一点。相册要挂键盘就只能先发、再用这条改。
+
+## 5. 富消息：为什么单列一条路 [#5-富消息为什么单列一条路]
+
+`messageRichMessage` 与普通消息的互斥规则完全不同（那边「文本 / 媒体」二选一，这边是一棵树），
+所以它有独立参数类型 `RichMessageParams` 与独立的构造入口（`RichMessage`）。
+
+特殊性在于：**Markdown/HTML 源由服务端解析且仅 bot 可用**，让 local 之间也就没有中间态可看。
+为了让用户号也能写 Markdown，`fuyubot-simplify` 带了一份**受控子集**的本地转换器
+（`markdown` 模块 → `InputPageBlock` 块树）：认不出的一律退回普通文本，不报错。
+按钮在 Markdown 里没有语法，所以是显式的 `RichButton` + `with_button_row`。
+
+实现细节、覆盖表与测试分工在[插件 › 富消息](../plugin/rich.mdx)，这里不重复——
+**只记住一条**：发/编辑也只是 `sendMessage` / `editMessageText` + `inputMessageRichMessage`，
+出口仍然只有一个。
+
+## 6. 等待层：三个底层出口 [#6-等待层三个底层出口]
+
+公开方法底下其实只有三种等待：
+
+| 出口 | 等什么 | 过滤器 |
+| --- | --- | --- |
+| `wait_response(request_id, ms)` | 某个请求的响应 | `{"event_type":"response","request_id":…}` |
+| `wait_for_update(filter, ms)` | 一条匹配的更新 | `UpdateFilter::to_json()` |
+| `download_file` 内部的循环 | 一组 `updateFile`，直到 completed | `{"event_type":"update","file.id":…}` |
+
+`UpdateFilter::to_json()` 里有个容易写错的地方：`update_type` 落在 **`event_type` 键**（通道选择），
+其余条件才是对负载的字段匹配；普通更新把消息包在 `message` 里（所以条件是 `message.chat_id`），
+而 `updateNewCallbackQuery` 这类把字段放在顶层（`UpdateFilter::flat` 切的就是这个前缀）。
+
+`wait_for_update` 返回的 `WaitHandle::payload_json` 是宿主的**线程局部缓冲**，只在下一次宿主调用前有效；
+`wait_for_update_json` 内部用 `payload_of` 当场拷成 `Value`。凡是跨越宿主调用的，都要拷。
+
+## 7. 命令订阅：为什么两层 Box [#7-命令订阅为什么两层-box]
+
+`on_command` 把 Rust 闭包交给 C 回调，`user_data` 必须是一个**稳定**的指针：
+
+```rust
+let mut owned: Box<Box<dyn Fn(&Command) + Send + Sync>> = Box::new(Box::new(handler));
+let user_data = (&raw mut *owned).cast::<c_void>();
+```
+
+外层 Box 活着时，内层 Box 的地址不变；传给 ABI 的是**内层 Box 的胖指针目标地址**（瘦指针），
+trampoline 里再还原成 `&Box<dyn Fn(..)>`。所有权整体压在 `CommandSubscription` 上，
+所以 **drop = 退订**（`Drop` 里调 `host.off(handle)`），语义跟 `Effect` 一致。
+
+trampoline 是 `extern "C-unwind"`（宿主要求），并且对所有空指针先 `return -1` / `0`，不会 panic 过 FFI。
+
+## 8. 异步版：一次调用一个线程 [#8-异步版一次调用一个线程]
+
+`*_then` 的实现就三行——`spawn_then(move || simplify.xxx(..), on_done)`：
+
+```rust
+std::thread::spawn(move || on_done(work()))
+```
+
+因为等待必须是阻塞的（上层 API 就是这么设计的），要「不阻塞」只能换线程。代价是每次调用一个 OS 线程
+（有 `timeout_ms` 兜着，不会一直挂着），并且 `JoinHandle` 必须交回插件——**插件卸载前要 join**，
+否则动态库卸载之后线程还在执行库里的代码。这是 Gotcha，不是建议。
+
+这一层**不引入 async runtime**：阻塞 + 线程已经够表达这套语义，而且 `HostApi` 本身是同步的 C ABI。
+
+## 9. 错误映射 [#9-错误映射]
+
+| 来源 | 变体 |
+| --- | --- |
+| 请求本身就发不出去（ABI 层） | `Abi(AbiError)`（宿主没接 TDLib 时也会在这里冒泡） |
+| 参数串里含 NUL | `BadString` |
+| 响应是 `@type == "error"` | `Tdlib { code, message }` |
+| `updateMessageSendFailed` | `SendFailed { code, message }` |
+| 到期没结局（**已先撤回**过） | `Timeout(u64)` |
+| 本地校验挡下来的（相册项数、空的富消息 / 按钮行、源不是块树） | `AlbumSize` / `EmptyRichMessage` / `RichSourceNotBlocks` / `EmptyButtonRow` |
+
+区分 `Tdlib` 与 `SendFailed` 是有意的：**方法被拒绝**和**发出去了但没发成**是两回事，
+调用方的处理也不一样（前者通常是用法错，后者通常是限流 / 权限）。
+
+## 10. 真 schema 守卫（离线测试） [#10-真-schema-守卫离线测试]
+
+靠肉眼对 `td_api.tl` 是靠不住的（本文开头那批方法名以前就按 Bot API 拼错过一次），
+所以每次改动都要过这几条离线测试：
+
+- `every_request_simplify_builds_passes_the_real_schema`：`TdApiSchema::compiled()`
+  （编译期从 `td_api.tl` 烤出来的元数据）逐条 `check_request("方法名", &payload)`——
+  参数名写错、漏字段、多发字段都会失败，**不需要联网**；
+- `every_media_kind_becomes_one_send_message` / `media_setters_touch_only_the_variants_that_have_the_field`：
+  七个 `Media` 变体各自的 `inputMessage*` 形状，以及「链式设置器只在有这个字段的变体上生效」；
+- `album_rejects_wrong_sizes` / `edit_reply_markup_is_how_an_album_gets_a_keyboard`：
+  上面两节说的那些边界；
+- `block_syntax_covers_the_official_table` / `input_page_block_coverage_is_accounted_for`
+  （在 `rich.rs`）：本地 Markdown 转换器对着官方 Rich Markdown 表一类一例，加块 / 删块会让它失败。
+
+在线行为（`cargo test -p fuyubot-tdlib -- --ignored`）验证的是「真库认不认这些值」，与上面这层互补。
+
+## 11. 加一个新方法 / 新字段的清单 [#11-加一个新方法--新字段的清单]
+
+1. **参数结构体**（一个方法一个，字段用短名字）→ `Default`（`timeout_ms` 用 `DEFAULT_TIMEOUT_MS`）；
+2. **请求组装函数** `xxx_params(.., render)`：`@type` 不要自己写（那是宿主补的），
+   字段名以真 `td_api.tl` 为准；
+3. **`Simplify` 上的方法**：阻塞版等到结果 + 同名 `*_then`（见第 8 节）；
+4. **补测试**：先让 `every_request_simplify_builds_passes_the_real_schema` 盖住新请求；
+5. **补文档**：[插件 › Simplify 封装](../plugin/simplify.mdx) 里按**功能范围**归到对应那一节，
+   别新开章节堆在末尾。
+
+<Callout type="warn">
+  方法名 / 字段名**不要按 Telegram Bot API 的直觉写**。TDLib 里一切发送都是 `sendMessage`，
+  媒体类型在 `input_message_content.@type` 里；话题是 `topic_id`、回复是 `reply_to`、
+  没有顶层 `caption`。要查就查真 `td_api.tl`（或 `fuyubot-sdk td-method <名字>`）。
+</Callout>

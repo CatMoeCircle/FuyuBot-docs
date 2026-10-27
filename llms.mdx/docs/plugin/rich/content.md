@@ -45,11 +45,12 @@ graph LR
 二选一，混在一起互斥规则没人记得住）：`message` / `reply_to_message_id` / `topic_id` /
 `reply_markup` / `clear_draft` / `timeout_ms`。
 
-| 方法 | 发出的 `@type` | 返回 |
-| --- | --- | --- |
-| `Simplify::send_rich_message(chat_id, &RichMessageParams)` | `sendMessage` | `RequestId`（不阻塞） |
-| `Simplify::send_rich_message_wait_success(chat_id, &RichMessageParams)` | 同上，再等 `updateMessageSendSucceeded` | `SendConfirmation`（⚠️ **阻塞**） |
-| `Simplify::edit_rich_message(chat_id, message_id, &RichMessageParams)` | `editMessageText` | `RequestId` |
+和 `Simplify` 的其它方法一样，**等到结果才返回**（详见[调用 TDLib](./tdlib.mdx)）：
+
+| 方法 | 发出的 `@type` | 等到什么 | 返回 |
+| --- | --- | --- | --- |
+| `Simplify::send_rich_message(chat_id, &RichMessageParams)` | `sendMessage` | 响应 + 发送结局（成功 / 失败） | 最终 `Message`（⚠️ **阻塞**，回调里用 `send_rich_message_then`） |
+| `Simplify::edit_rich_message(chat_id, message_id, &RichMessageParams)` | `editMessageText` | 响应 | 改完的 `Message`（回调里用 `edit_rich_message_then`） |
 
 最常用的两条捷径：
 

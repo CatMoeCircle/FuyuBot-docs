@@ -18,12 +18,14 @@
   - [JS 与 TypeScript 插件](/docs/plugin/js-ts): 薄 SDK 全部方法的用法、事件怎么触发、可抄的例子
   - [订阅与事件](/docs/plugin/events): on/off/emit、过滤器、双通道与归属
   - [调用 TDLib](/docs/plugin/tdlib): td_invoke、请求号与 response 通道、便捷封装
+  - [Simplify 封装](/docs/plugin/simplify): fuyubot-simplify 的 API 参考：按功能范围分组的参数结构体、链式设置器与返回值
   - [工具与中间件](/docs/plugin/tools): 注册工具元数据、call_tool、六阶段洋葱管线
   - [ABI 契约](/docs/plugin/abi): HostApiVTable、四个符号、内存所有权与版本协商
   - [调试与安装](/docs/plugin/testing): 回放验证、静态检查、装进插件目录
-- 开发文档: 改框架本身：架构、构建、陷阱、发布
+- 开发文档: 改框架本身：架构、封装层的实现、构建、陷阱、发布
   - [开发文档](/docs/dev): 改框架本身：结构、构建测试、踩过的坑、发布
   - [架构与数据流](/docs/dev/architecture): 一个宿主进程 + N 个动态库插件，以及它们之间的三段数据流
+  - [simplify 封装是怎么实现的](/docs/dev/simplify-internals): 按功能范围拆开 fuyubot-simplify 的实现：等待语义、同步 td_execute、错误映射、异步线程与测试守卫
   - [构建与测试](/docs/dev/build-test): 三条硬门槛、两类测试，以及本机的离线约定
   - [常见陷阱](/docs/dev/pitfalls): 编号即引用锚：这些坑真踩过，别再踩回去
   - [发布](/docs/dev/release): 两套发布资产（TDLib 库 / fuyubot 本体）与文档站的静态部署

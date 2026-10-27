@@ -1,6 +1,6 @@
-:HL["/FuyuBot-docs/_next/static/chunks/28z6-dxexp2ju.css","style"]
+:HL["/FuyuBot-docs/_next/static/chunks/0rabvgug3mlqu.css","style"]
 :HL["/FuyuBot-docs/icon.png","image"]
 3:[["children",{"s":"__PAGE__","h":160}]]
 2:[["children",{"s":{"n":"slug","t":"oc","k":"plugin/rust","s":[]},"h":65600,"c":"$Q3"}]]
 1:[["children",{"s":"docs","h":131104,"c":"$Q2"}]]
-0:{"b":"zLVIp1_z4vtTgZSu9JdIQ","t":{"t":{"s":"","h":131152,"c":"$Q1"}}}
+0:{"b":"HiUxG5SI4nnhrX3pjdl0C","t":{"t":{"s":"","h":131152,"c":"$Q1"}}}
