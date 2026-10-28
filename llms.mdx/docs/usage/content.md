@@ -73,7 +73,8 @@ fuyubot 0.1.0
 ```
 
 `api_id` 到 [my.telegram.org](https://my.telegram.org) 申请，**它不是秘密**，可以直接写进配置；`api_hash` 是凭据，
-不落盘——只认环境变量 `TG_API_HASH` 或运行时的交互式输入（见 [配置文件](./config.mdx)）。
+但每次启动都要发给 TDLib，所以 `run` 首次问过之后会把明文写回 `fuyubot.toml`（也可以事先设环境变量 `TG_API_HASH`
+让它一次都不问）——那份文件要当密钥看待，别提交进版本库（见 [配置文件](./config.mdx)）。
 
 ## 跑起来 [#跑起来]
 

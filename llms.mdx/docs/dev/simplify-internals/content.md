@@ -8,7 +8,9 @@
 1. **只简化输入，不改变输出。** 返回值永远是 TDLib 的原始 JSON（`Value` / `Vec<Value>`），
    不带自己的包装类型。插件要能随时退回手写请求。
 2. **一个方法一个参数结构体 + 短字段名。** `text` / `media` / `topic_id` 这些名字只服务于「人好写」，
-   到 TDLib 字段名的映射**只有一处实现**（`send_params` / `edit_*_params`）。
+   到 TDLib 字段名的映射**只有一处实现**（`send_params` / `edit_*_params` / `put_common`）。
+   短名字不代表裸标量：`topic_id` 是 [`Topic`](../plugin/simplify.mdx#话题topic)，
+   `media` 是 `Media`——凡是有「选哪个构造器」问题的一律用枚举，不用 `i64` 让人猜。
 3. **公开方法都等到结果**（唯一例外是同步的 `formatted`）。请求号不外泄——泄漏就意味着调用方要自己管
    `old_message_id` / `request_id` 那一套，而这正是这一层要替人扛的东西。
 
@@ -160,7 +162,11 @@ std::thread::spawn(move || on_done(work()))
 | 响应是 `@type == "error"` | `Tdlib { code, message }` |
 | `updateMessageSendFailed` | `SendFailed { code, message }` |
 | 到期没结局（**已先撤回**过） | `Timeout(u64)` |
-| 本地校验挡下来的（相册项数、空的富消息 / 按钮行、源不是块树） | `AlbumSize` / `EmptyRichMessage` / `RichSourceNotBlocks` / `EmptyButtonRow` |
+| 本地校验挡下来的（相册项数、空的富消息 / 按钮行、源不是块树、转发条数） | `AlbumSize` / `EmptyRichMessage` / `RichSourceNotBlocks` / `EmptyButtonRow` / `EmptyForward` / `TooManyForward` |
+
+身份类查询（`me` / `chat_member`）走的是另一条路：**不把错误往上传**。
+调用方只想要「有 / 没有管理权」，不该被迫处理 TDLib 的错误码，所以内部 `soften`
+把 `error` 响应记一行 `Warn` 之后当成「没拿到」，再由上层的 `bool` 方法折成 `false`。
 
 区分 `Tdlib` 与 `SendFailed` 是有意的：**方法被拒绝**和**发出去了但没发成**是两回事，
 调用方的处理也不一样（前者通常是用法错，后者通常是限流 / 权限）。
@@ -180,9 +186,85 @@ std::thread::spawn(move || on_done(work()))
 - `block_syntax_covers_the_official_table` / `input_page_block_coverage_is_accounted_for`
   （在 `rich.rs`）：本地 Markdown 转换器对着官方 Rich Markdown 表一类一例，加块 / 删块会让它失败。
 
+上面第一条只覆盖「离线也发得出去」的那些请求。**要走账号分支的**（比如 bot 专用的
+`setMessageReactions`）离线根本走不到，所以 `chat.rs` 里另有一条
+`new_request_shapes_pass_the_real_schema`：直接把 `*_params` 函数拼出来的形状喂给
+`check_request`。加新方法时**两边都要接**：前者靠在 schema 测试里补一次调用，后者靠补一个 case。
+
+嵌套构造器的名字同样要验：`every_message_topic_constructor_is_reachable` 检查四个
+`MessageTopic` 构造器的 `@type` 与字段名都还在真 `td_api.tl` 里（见下一节）。
+
 在线行为（`cargo test -p fuyubot-tdlib -- --ignored`）验证的是「真库认不认这些值」，与上面这层互补。
 
-## 11. 加一个新方法 / 新字段的清单 [#11-加一个新方法--新字段的清单]
+## 11. 后加的四个子系统：各自为什么这么实现 [#11-后加的四个子系统各自为什么这么实现]
+
+### 管理权：为什么返回 `bool` [#管理权为什么返回-bool]
+
+TDLib 里没有「这个人是不是管理员」这种字段：`user` 连 `is_bot` 都没有（身份在 `user.type`），
+管理权只在 `getChatMember` 的 `ChatMember.status` 里。所以：
+
+- `chat_member()` 拿原始 `ChatMember`（想要细节就用它）；
+- `is_chat_admin` / `am_i_chat_admin` 直接返回 `bool`——**不是 `Result<bool>`**。
+  查不到的四种情况（超时 / TDLib 报错 / 不是群聊 / 拿不到自己 id）答案都一样：
+  「不确定」时说「没有」比说「有」安全，让调用方处理一堆「其实是没查到」的 `Err` 没有价值。
+- 「自己」没有捷径：`getChat` 不带「我是不是管理员」，只能 `getMe` 拿 id 再 `getChatMember`。
+  两次等待**各用一份** `timeout_ms`。
+
+群主（`chatMemberStatusCreator`）**没有** `rights` 结构，所以除了 `is_anonymous`（它在 creator
+自己的字段上）以外一律算「有」——`is_admin_status` 里这个分支是显式的。
+
+### 转发：为什么不等发送结局 [#转发为什么不等发送结局]
+
+`forwardMessages` 的响应是 `Messages`，和 `sendMessage` 一样是**还没发完**的临时消息。
+这里刻意只等响应：转发的成败通常不参与后续逻辑，多等一轮（N 条 `updateMessageSend*`）不划算。
+TDLib 单项失败时在对应位置放 `null`，所以调用方仍能按位判断。
+
+`message_ids` 在 `forward_params` 里**排序去重**：TDLib 要求严格递增，而调用方手里的 id 多半
+是从若干条更新里攒出来的。
+
+### 表情反应：bot 与用户号是两套方法 [#表情反应bot-与用户号是两套方法]
+
+| | 用户号 | bot |
+| --- | --- | --- |
+| 加一个 | `addMessageReaction` | `setMessageReactions`（**bot 只能用这个**） |
+| 去掉 | `removeMessageReaction` | `setMessageReactions` 传空列表 |
+
+语义差别是真实的：用户是「在已有反应上追加 / 删掉指定的一个」，bot 是「整组覆盖」。
+所以 bot 侧的 `unreact` **忽略** `reaction` 参数直接清空——这一点写在方法文档里，不要当 bug 修。
+
+判定靠 `getMe` 的 `user.type`，也就是每次 `react` 多一次往返。**这里刻意不做缓存**：
+`Simplify` 是 `Copy` 且无状态，加个进程级 `OnceLock` 会让「离线环境拿到过什么」变成隐藏状态，
+测试也会被污染。调用方已经知道自己是哪种时，直接调 `add_reaction` / `set_reactions` 就绕开了。
+
+### 连接状态：只能订阅 [#连接状态只能订阅]
+
+TDLib 没有 `getConnectionState`，状态只以 `updateConnectionState` 出现且**不重放**——
+所以只能订阅并记住最新那条，`ConnectionTracker` 就是干这个的：
+
+```rust
+let mut latest: Box<Mutex<Value>> = Box::new(Mutex::new(Value::Null));
+let user_data = (&raw mut *latest).cast::<c_void>();
+```
+
+与[第 7 节](#7-命令订阅为什么两层-box)的「两层 Box」同一个道理：结构体会**按值返回**（被移动），
+只有堆上那一份的地址能交出去给 ABI。所有权压在 `ConnectionTracker` 上，所以 **drop = 退订**。
+
+`is_ready()` 对「还没收到过任何更新」也返回 `false`——宁可保守，别把「不知道」当「连上了」。
+⚠️ 这是**连接**状态，不是授权状态：`connectionStateReady` 也可能还没登录。
+
+### 话题：`MessageTopic` 有四个构造器 [#话题messagetopic-有四个构造器]
+
+`sendMessage` / `sendMessageAlbum` / `forwardMessages` 的 `topic_id` 是 `MessageTopic`，
+**不是**一个裸 id：
+
+- `messageTopicForum { forum_topic_id: int32 }` —— **论坛**群组，以及与 bot 的私聊；
+- `messageTopicThread { message_thread_id: int53 }` —— **非论坛**群组的评论串；
+- `messageTopicDirectMessages` / `messageTopicSavedMessages`。
+
+这一层以前固定按 `messageTopicThread` 拼，等于在非论坛群以外全错，所以改成 `Topic` 枚举并
+**不给 `From<i64>`**：论坛话题是 `int32`、评论串是 `int53`，一个裸数字说不清是哪一种。
+
+## 12. 加一个新方法 / 新字段的清单 [#12-加一个新方法--新字段的清单]
 
 1. **参数结构体**（一个方法一个，字段用短名字）→ `Default`（`timeout_ms` 用 `DEFAULT_TIMEOUT_MS`）；
 2. **请求组装函数** `xxx_params(.., render)`：`@type` 不要自己写（那是宿主补的），
@@ -194,6 +276,7 @@ std::thread::spawn(move || on_done(work()))
 
 <Callout type="warn">
   方法名 / 字段名**不要按 Telegram Bot API 的直觉写**。TDLib 里一切发送都是 `sendMessage`，
-  媒体类型在 `input_message_content.@type` 里；话题是 `topic_id`、回复是 `reply_to`、
+  媒体类型在 `input_message_content.@type` 里；话题是 `topic_id`（而且是 `MessageTopic`，
+  论坛话题是 `messageTopicForum` **不是** `messageTopicThread`）、回复是 `reply_to`、
   没有顶层 `caption`。要查就查真 `td_api.tl`（或 `fuyubot-sdk td-method <名字>`）。
 </Callout>

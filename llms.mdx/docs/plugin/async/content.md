@@ -1,0 +1,153 @@
+# 异步等待（await） (/docs/plugin/async)
+
+`wait_for_update` 是**阻塞**原语：调用线程停下来等。要 JS `async/await` 那种语义，
+用下面这层**不阻塞**的封装——任务挂起，事件到了再唤醒。
+
+> ⚠️ 这里有两套脚本 SDK，先确认你在哪一套：
+>
+> | 路径 | 入口 | 本文的 await |
+> | --- | --- | --- |
+> | `script_plugin!` 内嵌脚本（`fuyubot-sdk-script`） | `fuyubot_plugin.py` / `fuyubot_plugin.js` | ✅ 有 |
+> | `fuyubot-python-host` 托管脚本（`fuyubot-sdk-native`） | `fuyubot.py` | ✅ 有（`run_async`） |
+> | `fuyubot-js-host` 托管脚本（`fuyubot-sdk-native`） | `fuyubot.js` | ✅ 有（`runAsync`） |
+>
+> 选错文件会出现「方法不存在」——先看插件目录里拷的是哪一个。
+
+## Rust：`ResponseRouter` [#rustresponserouter]
+
+`fuyubot-plugin-api` 从 ABI v4 起重导出 `ResponseRouter` / `ResponseFuture` / `UpdateFuture`：
+
+```rust
+use fuyubot_plugin_api::ResponseRouter;
+use serde_json::json;
+use std::time::Duration;
+
+// 插件 start 里建一次，活到 stop
+let router = ResponseRouter::new(self.host)?;
+
+// 等一条请求自己的响应
+let (_id, fut) = router.invoke_simplified("getMe", "{}")?;
+let me = tokio::time::timeout(Duration::from_secs(5), fut).await??;
+
+// 等一条任意更新（async 版 wait_for_update）
+let fut = router.wait_for_update(json!({"@type": "updateNewMessage"}))?;
+let update = tokio::time::timeout(Duration::from_secs(30), fut).await??;
+```
+
+要点：
+
+- **必须在插件自己的 executor 上 await**，别在宿主事件回调里 await（那是接收线程）。
+- `router.invoke*` 从插件自己的线程发请求时会用 scope service 把归属切回插件，
+  响应不会丢；不需要手动 `scope_enter`。
+- 取消 = `drop(fut)`；关闭 = drop router（所有 pending 立刻 `RouterClosed`）。
+- 超时不内建，用 `tokio::time::timeout` 或你运行时的等价物。
+
+## JS / TS：`invokeAsync` / `waitAsync` [#js--tsinvokeasync--waitasync]
+
+`fuyubot_plugin.js`（`script_plugin!` 内嵌路径）在回调协议上包了 Promise：
+
+```js
+import * as host from "./fuyubot_plugin.js";
+
+async function main() {
+  const me = await host.invokeAsync("getMe", {});
+  const update = await host.waitAsync({ "@type": "updateNewMessage" }, 30_000);
+  if (update === null) {
+    // 超时/取消
+  }
+}
+
+void main();   // 先跑到第一个 await
+host.run();    // 再开 stdin 循环——顺序反了会死锁
+```
+
+- TDLib 业务错误（`@type: "error"`）也 **resolve**；只有宿主拒绝请求才 reject。
+- `waitAsync` 超时/取消返回 `null`。
+- 老的 `invoke(..., onResponse)` / `waitForUpdate(..., onMatch)` 是底层/兼容 API。
+
+## Python：`run_async` + `invoke_async` / `wait_async` [#pythonrun_async--invoke_async--wait_async]
+
+`fuyubot_plugin.py`（`script_plugin!` 内嵌路径）提供 asyncio 版，**不改老的 `run()`**：
+
+```python
+import asyncio
+import fuyubot_plugin as host
+
+async def main():
+    me = await host.invoke_async("getMe", {})
+    upd = await host.wait_async({"@type": "updateNewMessage"}, 30_000)
+    if upd is None:
+        host.log("等更新超时")
+    asyncio.get_running_loop().stop()   # 测试/收尾时可主动停
+
+host.run_async(main)
+```
+
+- `run_async` 建 asyncio 事件循环，后台线程读 stdin；`main` 在 `ready` 之后作为任务启动。
+- `invoke_async` 的业务错误也 resolve，宿主拒绝请求才抛异常。
+- `wait_async` 超时/取消返回 `None`。
+- **仍然可以用 `run()`**：同步循环、没有事件循环，`invoke_async` 会直接报错。
+
+### 托管路径：`fuyubot.py` [#托管路径fuyubotpy]
+
+`fuyubot-python-host` 用 `uv run` 起的脚本，导入的是 `fuyubot.py`（ctypes 原生桥），
+API 名字一样，只是 `import` 不同：
+
+```python
+import asyncio
+from fuyubot import invoke_async, wait_async, run_async
+
+async def main():
+    me = await invoke_async("getMe", {})
+    upd = await wait_async({"@type": "updateNewMessage"}, 30_000)
+    asyncio.get_running_loop().stop()
+
+run_async(main)
+```
+
+- `run_async` 把原生桥的阻塞 `run()` 放到后台线程，主线程跑 asyncio 循环。
+- `invoke_async` 的回调从原生桥线程 `call_soon_threadsafe` 回事件循环。
+- `wait_async` 是**一次性** `on("update", ...)` 订阅，命中/超时后自动退订；
+  `timeout_ms=0` 表示一直等。
+- 老的 `run()` / `invoke(..., on_response)` 原样保留。
+
+### 托管路径：`fuyubot.js` [#托管路径fuyubotjs]
+
+`fuyubot-js-host` 用 `bun` 起的脚本，导入的是 `fuyubot.ts` / `fuyubot.js`：
+
+```ts
+import { invokeAsync, waitAsync, runAsync } from "./fuyubot";
+
+async function main() {
+  const me = await invokeAsync("getMe", {});
+  const update = await waitAsync({ "@type": "updateNewMessage" }, 30_000);
+  if (update === null) {
+    // 超时/取消
+  }
+}
+
+await runAsync(main);
+```
+
+- `runAsync` 把原生桥的 stdin 读取放后台线程，但**回调在主线程的 `step()` 里分发**
+  （bun 的 JSCallback 不能跨线程调用）；`main` 与 step 循环并行跑。
+- `invokeAsync` 仍走 `invoke` 的 request/response 配对；`waitAsync` 是一次性
+  `on("update", ...)`，超时/命中后自动退订。
+- 老的 `run()` / `invoke(..., onResponse)` 原样保留。
+
+## 选哪个 [#选哪个]
+
+| 场景 | 用什么 |
+| --- | --- |
+| 同步代码 / 宿主内部 / 登录状态机 | `wait_for_update`（阻塞） |
+| Rust 插件、有 tokio 等 executor | `ResponseRouter`（await） |
+| JS/TS 内嵌脚本 | `invokeAsync` / `waitAsync` |
+| Python 内嵌脚本 | `run_async` + `invoke_async` / `wait_async` |
+| Python 托管脚本（`fuyubot.py`，uv） | `run_async` + `invoke_async` / `wait_async` |
+| JS 托管脚本（`fuyubot.js`，bun） | `runAsync` + `invokeAsync` / `waitAsync` |
+| C / C++ / Go | 回调 `on`（语言没有 await） |
+
+## 工具结果 [#工具结果]
+
+工具调用没有“等响应”这一层：ABI v4 的 `call_tool_result` / `callTool` 是**同步**返回结果的。
+详见 [工具与中间件](./tools.mdx)。

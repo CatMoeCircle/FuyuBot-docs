@@ -42,8 +42,9 @@ graph LR
 ## 发送与编辑 [#发送与编辑]
 
 参数是 `RichMessageParams`——与 `SendMessageParams` **分开的类型**（那边是「文本 + 媒体」
-二选一，混在一起互斥规则没人记得住）：`message` / `reply_to_message_id` / `topic_id` /
-`reply_markup` / `clear_draft` / `timeout_ms`。
+二选一，混在一起互斥规则没人记得住）：`message` / `reply_to_message_id` / `topic_id`
+（`Option<Topic>`，见[Simplify 封装](./simplify.mdx#话题topic)）/ `reply_markup` /
+`clear_draft` / `timeout_ms`。
 
 和 `Simplify` 的其它方法一样，**等到结果才返回**（详见[调用 TDLib](./tdlib.mdx)）：
 

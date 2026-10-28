@@ -127,7 +127,7 @@ fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
 | `--name` | `fuyubot` | 只影响配置里的 `name` |
 | `--api-id` | `0` | TDLib api_id（不是秘密，可以写进配置）；`0` = 没配，`run` 会问 |
 
-`init` **只写 `api_id`**：`api_hash` 是凭据，这个命令连参数都没有，配置里也没有这个字段。
+`init` **只写 `api_id`**：`api_hash` 这个命令连参数都不收（init 阶段手上不该有它）——`run` 首次会问，问完写回配置。
 重复 `init` 会被挡住（不覆盖你改过的配置）。
 
 ```text
@@ -208,12 +208,13 @@ $ fuyubot config --config demo\fuyubot.toml
 [bot]       name         = mybot
 [telegram]  account_type = bot
 [telegram]  api_id       = 12345
+[telegram]  api_hash     = 已保存在本文件（不回显）
 [telegram]  data_dir     = demo\data
 [plugins]   dir          = demo\plugins
 [plugins]   log_level    = info（默认）
 [tdlib]     path         = 自动（TDLIB_TDJSON_PATH → 自带 → exe 同级 → 系统库 → 裸库名）
 [tdlib]     log_verbosity= 1
-凭据        api_hash / token / 手机号不读配置（TG_API_HASH 等环境变量或交互输入）
+凭据        Bot Token / 手机号 / 密码不落盘（TG_BOT_TOKEN 或交互输入）
 [plugin.fuyubot.manage] = { reply_prefix = "已安装插件：" }
 ```
 
@@ -235,8 +236,8 @@ $ fuyubot plugin install ./my-plugin
 已安装 plugins\scripts\my-plugin
 
 $ fuyubot plugin list
-fuyubot.js-host  ABI 3  plugins\fuyubot_js_host.dll
-fuyubot.python-host  ABI 3  plugins\fuyubot_python_host.dll
+fuyubot.js-host  ABI 4  plugins\fuyubot_js_host.dll
+fuyubot.python-host  ABI 4  plugins\fuyubot_python_host.dll
 脚本插件（1 个，由中间插件托管）：
   mybot.my-plugin  python  plugins\scripts\my-plugin\main.py
 
@@ -376,7 +377,7 @@ graph TD
 
 ```mermaid
 graph TD
-  P["插件：on / invoke / emit / use_middleware / get_config / set_config / …"] --> V["HostApiVTable<br/>20 字段 = version / size / host_ctx<br/>+ 17 个函数指针（全 Option，首参 host）"]
+  P["插件：on / invoke / emit / use_middleware / get_config / set_config / …"] --> V["HostApiVTable<br/>2 个 u32 + host_ctx<br/>+ 19 个函数指针（全 Option，首参 host）"]
   V --> H["HostRuntime：翻译成事件总线 / 服务容器<br/>/ 工具表 / 中间件管线 / TdClient"]
   H -->|"td_invoke* → td_send"| S["TdClient::send（注入 @extra）<br/>没接 TDLib：留档 + 合成请求号"]
   H -->|"td_execute（同步）"| X["TdClient::execute<br/>只给不碰网络的方法用"]
@@ -790,7 +791,9 @@ GitHub Pages 是项目页（挂在 `/FuyuBot-docs/` 下）：构建前设 `NEXT_
 1. **只简化输入，不改变输出。** 返回值永远是 TDLib 的原始 JSON（`Value` / `Vec<Value>`），
    不带自己的包装类型。插件要能随时退回手写请求。
 2. **一个方法一个参数结构体 + 短字段名。** `text` / `media` / `topic_id` 这些名字只服务于「人好写」，
-   到 TDLib 字段名的映射**只有一处实现**（`send_params` / `edit_*_params`）。
+   到 TDLib 字段名的映射**只有一处实现**（`send_params` / `edit_*_params` / `put_common`）。
+   短名字不代表裸标量：`topic_id` 是 [`Topic`](../plugin/simplify.mdx#话题topic)，
+   `media` 是 `Media`——凡是有「选哪个构造器」问题的一律用枚举，不用 `i64` 让人猜。
 3. **公开方法都等到结果**（唯一例外是同步的 `formatted`）。请求号不外泄——泄漏就意味着调用方要自己管
    `old_message_id` / `request_id` 那一套，而这正是这一层要替人扛的东西。
 
@@ -942,7 +945,11 @@ std::thread::spawn(move || on_done(work()))
 | 响应是 `@type == "error"` | `Tdlib { code, message }` |
 | `updateMessageSendFailed` | `SendFailed { code, message }` |
 | 到期没结局（**已先撤回**过） | `Timeout(u64)` |
-| 本地校验挡下来的（相册项数、空的富消息 / 按钮行、源不是块树） | `AlbumSize` / `EmptyRichMessage` / `RichSourceNotBlocks` / `EmptyButtonRow` |
+| 本地校验挡下来的（相册项数、空的富消息 / 按钮行、源不是块树、转发条数） | `AlbumSize` / `EmptyRichMessage` / `RichSourceNotBlocks` / `EmptyButtonRow` / `EmptyForward` / `TooManyForward` |
+
+身份类查询（`me` / `chat_member`）走的是另一条路：**不把错误往上传**。
+调用方只想要「有 / 没有管理权」，不该被迫处理 TDLib 的错误码，所以内部 `soften`
+把 `error` 响应记一行 `Warn` 之后当成「没拿到」，再由上层的 `bool` 方法折成 `false`。
 
 区分 `Tdlib` 与 `SendFailed` 是有意的：**方法被拒绝**和**发出去了但没发成**是两回事，
 调用方的处理也不一样（前者通常是用法错，后者通常是限流 / 权限）。
@@ -962,9 +969,85 @@ std::thread::spawn(move || on_done(work()))
 - `block_syntax_covers_the_official_table` / `input_page_block_coverage_is_accounted_for`
   （在 `rich.rs`）：本地 Markdown 转换器对着官方 Rich Markdown 表一类一例，加块 / 删块会让它失败。
 
+上面第一条只覆盖「离线也发得出去」的那些请求。**要走账号分支的**（比如 bot 专用的
+`setMessageReactions`）离线根本走不到，所以 `chat.rs` 里另有一条
+`new_request_shapes_pass_the_real_schema`：直接把 `*_params` 函数拼出来的形状喂给
+`check_request`。加新方法时**两边都要接**：前者靠在 schema 测试里补一次调用，后者靠补一个 case。
+
+嵌套构造器的名字同样要验：`every_message_topic_constructor_is_reachable` 检查四个
+`MessageTopic` 构造器的 `@type` 与字段名都还在真 `td_api.tl` 里（见下一节）。
+
 在线行为（`cargo test -p fuyubot-tdlib -- --ignored`）验证的是「真库认不认这些值」，与上面这层互补。
 
-## 11. 加一个新方法 / 新字段的清单 [#11-加一个新方法--新字段的清单]
+## 11. 后加的四个子系统：各自为什么这么实现 [#11-后加的四个子系统各自为什么这么实现]
+
+### 管理权：为什么返回 `bool` [#管理权为什么返回-bool]
+
+TDLib 里没有「这个人是不是管理员」这种字段：`user` 连 `is_bot` 都没有（身份在 `user.type`），
+管理权只在 `getChatMember` 的 `ChatMember.status` 里。所以：
+
+- `chat_member()` 拿原始 `ChatMember`（想要细节就用它）；
+- `is_chat_admin` / `am_i_chat_admin` 直接返回 `bool`——**不是 `Result<bool>`**。
+  查不到的四种情况（超时 / TDLib 报错 / 不是群聊 / 拿不到自己 id）答案都一样：
+  「不确定」时说「没有」比说「有」安全，让调用方处理一堆「其实是没查到」的 `Err` 没有价值。
+- 「自己」没有捷径：`getChat` 不带「我是不是管理员」，只能 `getMe` 拿 id 再 `getChatMember`。
+  两次等待**各用一份** `timeout_ms`。
+
+群主（`chatMemberStatusCreator`）**没有** `rights` 结构，所以除了 `is_anonymous`（它在 creator
+自己的字段上）以外一律算「有」——`is_admin_status` 里这个分支是显式的。
+
+### 转发：为什么不等发送结局 [#转发为什么不等发送结局]
+
+`forwardMessages` 的响应是 `Messages`，和 `sendMessage` 一样是**还没发完**的临时消息。
+这里刻意只等响应：转发的成败通常不参与后续逻辑，多等一轮（N 条 `updateMessageSend*`）不划算。
+TDLib 单项失败时在对应位置放 `null`，所以调用方仍能按位判断。
+
+`message_ids` 在 `forward_params` 里**排序去重**：TDLib 要求严格递增，而调用方手里的 id 多半
+是从若干条更新里攒出来的。
+
+### 表情反应：bot 与用户号是两套方法 [#表情反应bot-与用户号是两套方法]
+
+| | 用户号 | bot |
+| --- | --- | --- |
+| 加一个 | `addMessageReaction` | `setMessageReactions`（**bot 只能用这个**） |
+| 去掉 | `removeMessageReaction` | `setMessageReactions` 传空列表 |
+
+语义差别是真实的：用户是「在已有反应上追加 / 删掉指定的一个」，bot 是「整组覆盖」。
+所以 bot 侧的 `unreact` **忽略** `reaction` 参数直接清空——这一点写在方法文档里，不要当 bug 修。
+
+判定靠 `getMe` 的 `user.type`，也就是每次 `react` 多一次往返。**这里刻意不做缓存**：
+`Simplify` 是 `Copy` 且无状态，加个进程级 `OnceLock` 会让「离线环境拿到过什么」变成隐藏状态，
+测试也会被污染。调用方已经知道自己是哪种时，直接调 `add_reaction` / `set_reactions` 就绕开了。
+
+### 连接状态：只能订阅 [#连接状态只能订阅]
+
+TDLib 没有 `getConnectionState`，状态只以 `updateConnectionState` 出现且**不重放**——
+所以只能订阅并记住最新那条，`ConnectionTracker` 就是干这个的：
+
+```rust
+let mut latest: Box<Mutex<Value>> = Box::new(Mutex::new(Value::Null));
+let user_data = (&raw mut *latest).cast::<c_void>();
+```
+
+与[第 7 节](#7-命令订阅为什么两层-box)的「两层 Box」同一个道理：结构体会**按值返回**（被移动），
+只有堆上那一份的地址能交出去给 ABI。所有权压在 `ConnectionTracker` 上，所以 **drop = 退订**。
+
+`is_ready()` 对「还没收到过任何更新」也返回 `false`——宁可保守，别把「不知道」当「连上了」。
+⚠️ 这是**连接**状态，不是授权状态：`connectionStateReady` 也可能还没登录。
+
+### 话题：`MessageTopic` 有四个构造器 [#话题messagetopic-有四个构造器]
+
+`sendMessage` / `sendMessageAlbum` / `forwardMessages` 的 `topic_id` 是 `MessageTopic`，
+**不是**一个裸 id：
+
+- `messageTopicForum { forum_topic_id: int32 }` —— **论坛**群组，以及与 bot 的私聊；
+- `messageTopicThread { message_thread_id: int53 }` —— **非论坛**群组的评论串；
+- `messageTopicDirectMessages` / `messageTopicSavedMessages`。
+
+这一层以前固定按 `messageTopicThread` 拼，等于在非论坛群以外全错，所以改成 `Topic` 枚举并
+**不给 `From<i64>`**：论坛话题是 `int32`、评论串是 `int53`，一个裸数字说不清是哪一种。
+
+## 12. 加一个新方法 / 新字段的清单 [#12-加一个新方法--新字段的清单]
 
 1. **参数结构体**（一个方法一个，字段用短名字）→ `Default`（`timeout_ms` 用 `DEFAULT_TIMEOUT_MS`）；
 2. **请求组装函数** `xxx_params(.., render)`：`@type` 不要自己写（那是宿主补的），
@@ -976,7 +1059,8 @@ std::thread::spawn(move || on_done(work()))
 
 <Callout type="warn">
   方法名 / 字段名**不要按 Telegram Bot API 的直觉写**。TDLib 里一切发送都是 `sendMessage`，
-  媒体类型在 `input_message_content.@type` 里；话题是 `topic_id`、回复是 `reply_to`、
+  媒体类型在 `input_message_content.@type` 里；话题是 `topic_id`（而且是 `MessageTopic`，
+  论坛话题是 `messageTopicForum` **不是** `messageTopicThread`）、回复是 `reply_to`、
   没有顶层 `caption`。要查就查真 `td_api.tl`（或 `fuyubot-sdk td-method <名字>`）。
 </Callout>
 
@@ -1047,7 +1131,10 @@ std::thread::spawn(move || on_done(work()))
 `fuyubot_plugin.h` 由 cbindgen 从它生成（**产物，不是源码**，别手改）。宿主侧所有桥在
 `fuyubot-loader/src/runtime.rs`。**改 ABI = 改那个文件 + 加版本号。**
 
-## 插件必须导出的四个符号 [#插件必须导出的四个符号]
+## 插件必须导出的符号 [#插件必须导出的符号]
+
+v3 的四个契约符号仍是必需/可选的底线；v4 另外导出三个**静态符号**，让
+`fuyubot-sdk check` 不 dlopen 也能看见插件是按哪个 ABI 编的（版本值仍只能运行时判定）。
 
 | 符号 | 类型 | 必须吗 | 说明 |
 | --- | --- | --- | --- |
@@ -1055,9 +1142,13 @@ std::thread::spawn(move || on_done(work()))
 | `plugin_start` | `unsafe extern "C" fn(PluginHandle, *const c_char) -> i32` | 可选 | 拿到配置 JSON，注册订阅 / 工具 / 中间件；返回 `0` 成功 |
 | `plugin_stop` | `unsafe extern "C" fn(PluginHandle)` | 可选 | 卸载前调一次，回收自己的状态 |
 | `plugin_free_string` | `unsafe extern "C" fn(*mut c_char)` | **必须** | 释放**插件自己**分配的字符串（宿主从不 free 插件的指针） |
+| `plugin_free_handle` | `unsafe extern "C" fn(PluginHandle)` | v4 可选 | 版本不匹配、不能调 `plugin_stop` 时，用来释放 `plugin_init` 分配的状态 |
+| `fuyubot_abi_version` | `unsafe extern "C" fn() -> u32` | v4 可选 | 返回编译期 `ABI_VERSION`；静态工具只检查“存在”，值要运行时看 |
+| `plugin_manifest` | `unsafe extern "C" fn() -> *const c_char` | v4 可选 | 自描述 JSON（名字 + `inject` / `soft_inject`）；宿主接线仍在进行中 |
 
 符号名由常量钉住（`SYM_PLUGIN_INIT` / `SYM_PLUGIN_START` / `SYM_PLUGIN_STOP` /
-`SYM_PLUGIN_FREE_STRING`），`PluginLoader::load_with_config` 按这些名字 `lib.get(...)`。
+`SYM_PLUGIN_FREE_STRING` / `SYM_PLUGIN_FREE_HANDLE` / `SYM_PLUGIN_ABI_VERSION` /
+`SYM_PLUGIN_MANIFEST`），`PluginLoader::load_with_config` 按这些名字 `lib.get(...)`。
 C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 dlsym 不到。
 
 `PluginHandle` = `{ abi_version: u32, size: u32, context: *mut c_void, name: *const c_char }`；
@@ -1065,11 +1156,11 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `NULL`。`PluginHandle::FAILED` 是全零版本号，`const _` 里有
 `assert!(PluginHandle::FAILED.abi_version == 0)`。
 
-## HostApiVTable：20 个字段 [#hostapivtable20-个字段]
+## HostApiVTable：`host_ctx` + 19 个函数指针 [#hostapivtablehost_ctx--19-个函数指针]
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 17 个是函数指针，全是 `Option<...>`；
-总大小 = `2 * size_of::<u32>() + 18 * size_of::<*const c_void>()`，由 `const _` 里的
-`offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **19 个是函数指针**，全是 `Option<...>`；
+总大小 = `2 * size_of::<u32>() + 20 * size_of::<*const c_void>()`（`host_ctx` + 19 个函数），
+由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
 下表签名省略第一个参数 `host`：
 
@@ -1081,27 +1172,29 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 1 | `on` | `(update_type, filter_json, callback, user_data) -> SubscriptionHandle` | `api_on` | 订阅；`filter_json` 里的 `event_type` 选通道，其余键做负载匹配；`NULL` / 空串 / `"null"` = 收全部 |
 | 2 | `off` | `(handle) -> ()` | `api_off` | 退订；句柄 drop 时宿主也会整批回滚 |
 | 3 | `emit` | `(event_type, payload_json) -> i32` | `api_emit` | 发自定义事件；对插件而言是 `emit_scoped(自己, …)`，只送自己 + 全局订阅者 |
-| 4 | `register_tool` | `(descriptor_json) -> ToolHandle` | `api_register_tool` | 只登记元数据；本版 ABI 没有处理器指针，登记出来的一律是 `handler: None` 的声明型工具 |
-| 5 | `call_tool` | `(name, input_json) -> RequestId` | `api_call_tool` | 走 `ToolRegistry::call_tool`（查表 → 权限门 → schema → 处理器）；没有处理器就返回无效请求号 |
-| 6 | `list_tools` | `() -> *const c_char` | `api_list_tools` | 全部工具的元数据 JSON 数组。**宿主线程局部缓冲**，读完即弃 |
-| 7 | `provide_service` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service` | 注册命名服务；`vtable` 必须活到注销为止 |
-| 8 | `get_service` | `(name) -> *const ServiceVTable` | `api_get_service` | 取回同一个指针；没有就是 `NULL` |
-| 9 | `td_invoke` | `(method_json) -> RequestId` | `api_td_invoke` | 发完整 TDLib 请求 JSON（含 `@type`） |
-| 10 | `td_invoke_simplified` | `(method_name, params_json) -> RequestId` | `api_td_invoke_simplified` | 给参数补上 `@type = method_name`；参数不是对象就整份替换成 `{"@type": …}` |
-| 11 | `td_execute` | `(request_json) -> *const c_char` | `api_td_execute` | **同步**执行不碰网络的方法（`td_json_client_execute`），当场返回响应 JSON。**不发请求号、不进请求留档、不等响应通道**——所以能在事件回调里用；宿主没接 TDLib 时返回 `NULL` |
-| 12 | `use_middleware` | `(stage: u32, callback, user_data) -> MiddlewareHandle` | `api_use_middleware` | 挂在某个阶段；回调返回非 0 → 本阶段中断 |
-| 13 | `wait_for_update` | `(filter_json, timeout_ms: u64) -> WaitHandle` | `api_wait_for_update` | **阻塞**当前线程；`timeout_ms == 0` 表示只检查当前状态 |
-| 14 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
-| 15 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
-| 16 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
-| 17 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + 回写 `fuyubot.toml`）；非 0 = 越权 / 解析失败 / 写盘失败 |
+| 4 | `register_tool` | `(descriptor_json, handler, user_data) -> ToolHandle` | `api_register_tool` | 登记元数据 + 可选处理器；处理器是 `C-unwind fn(user_data, input_json) -> *const c_char`，只登记元数据用 `register_tool_meta` |
+| 5 | `call_tool` | `(name, input_json) -> RequestId` | `api_call_tool` | 走 `ToolRegistry::call_tool` 的请求号路径（兼容/异步工具） |
+| 6 | `call_tool_result` | `(name, input_json) -> *const c_char` | `api_call_tool_result` | **同步**执行工具并返回结果 JSON（失败 `{"error":…}`）。宿主线程局部缓冲，读完即弃 |
+| 7 | `list_tools` | `() -> *const c_char` | `api_list_tools` | 全部工具的元数据 JSON 数组。**宿主线程局部缓冲**，读完即弃 |
+| 8 | `list_plugins` | `() -> *const c_char` | `api_list_plugins` | 进程内插件报告 JSON 数组（名字 / 状态 / 缺依赖 / 失败原因） |
+| 9 | `provide_service` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service` | 注册命名服务；`vtable` 必须活到注销为止 |
+| 10 | `get_service` | `(name) -> *const ServiceVTable` | `api_get_service` | 取回同一个指针；没有就是 `NULL` |
+| 11 | `td_invoke` | `(method_json) -> RequestId` | `api_td_invoke` | 发完整 TDLib 请求 JSON（含 `@type`） |
+| 12 | `td_invoke_simplified` | `(method_name, params_json) -> RequestId` | `api_td_invoke_simplified` | 给参数补上 `@type = method_name`；参数不是对象就整份替换成 `{"@type": …}` |
+| 13 | `td_execute` | `(request_json) -> *const c_char` | `api_td_execute` | **同步**执行不碰网络的方法（`td_json_client_execute`），当场返回响应 JSON。**不发请求号、不进请求留档、不等响应通道**——所以能在事件回调里用；宿主没接 TDLib 时返回 `NULL` |
+| 14 | `use_middleware` | `(stage: u32, callback, user_data) -> MiddlewareHandle` | `api_use_middleware` | 挂在某个阶段；回调返回非 0 → 本阶段中断 |
+| 15 | `wait_for_update` | `(filter_json, timeout_ms: u64) -> WaitHandle` | `api_wait_for_update` | **阻塞**当前线程；`timeout_ms == 0` 表示只检查当前状态。Rust 插件优先用 `ResponseRouter` 的 await 版 |
+| 16 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
+| 17 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
+| 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
+| 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + 回写 `fuyubot.toml`）；非 0 = 越权 / 解析失败 / 写盘失败 |
 
 两条形状上的硬要求：
 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
   不给显式上下文就只能靠进程级全局，那样一个进程只能有一个宿主、测试也没法并行。
 - **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
-  Rust 侧 `HostApi::from_raw` 一次解包校验全部 17 个，之后调用路径上没有 `Option`、也没有 panic 分支。
+  Rust 侧 `HostApi::from_raw` 一次解包校验全部 19 个，之后调用路径上没有 `Option`、也没有 panic 分支。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
 都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；
@@ -1122,26 +1215,34 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 | 位置 | 谁比 | 不匹配的后果 |
 | --- | --- | --- |
-| `ABI_VERSION`（当前 `3`） | 编译期常量，两侧共同引用 | — |
+| `ABI_VERSION`（当前 `4`） | 编译期常量，两侧共同引用 | — |
 | `HostApiVTable::version` | 插件侧 `HostApi::from_raw` | `AbiError::VersionMismatch` |
 | `HostApiVTable::size` | 同上 | `AbiError::VTableTooSmall` |
 | 某个函数指针是 `NULL` | 同上 | `AbiError::MissingFunction("<字段名>")` |
 | `PluginHandle::abi_version` | 宿主侧 `PluginLoader` | `AbiMismatch`：**拒绝加载** |
 
-版本不兼容时宿主**不能**调 `plugin_stop`——那是对一个不认识的 ABI 下手，所以插件在 `init` 里
-分配的状态这一版回收不了。字段只增不改，新增一律追加在尾部。
+版本不兼容时宿主**不能**调 `plugin_stop`——那是对一个不认识的 ABI 下手。v4 起插件可以
+导出 `plugin_free_handle`，让宿主在版本不匹配时释放 `plugin_init` 分配的状态；老插件没有
+这个符号，那部分内存仍然回收不了。字段只增不改，新增一律追加在尾部。
 
-**版本 2 的改动**：尾部追加了 `td_execute`（同步执行，见上表第 11 项）。
+**版本 2 的改动**：尾部追加了 `td_execute`（同步执行，见上表第 13 项）。
 
-**版本 3 的改动**：尾部追加了 `get_config` / `set_config`（第 16 / 17 项），让插件能读全局配置、
-写自己的段。追加字段本身不破坏老插件（它们先比 `size`），但按契约「改 ABI 就加版本号」，
-`ABI_VERSION` 一起跳到 3——**用旧版本编出来的插件会被宿主拒绝加载**，重新编一次即可
+**版本 3 的改动**：尾部追加了 `get_config` / `set_config`（第 18 / 19 项），让插件能读全局配置、
+写自己的段。
+
+**版本 4 的改动**：
+- `register_tool` 增加 `handler` / `user_data`，工具终于能真的执行；
+- 尾部追加 `call_tool_result`（同步拿工具结果）与 `list_plugins`（插件报告）；
+- 新增静态导出 `plugin_free_handle` / `fuyubot_abi_version` / `plugin_manifest`。
+
+追加字段本身不破坏老插件（它们先比 `size`），但按契约「改 ABI 就加版本号」，
+`ABI_VERSION` 一起跳到 4——**用旧版本编出来的插件会被宿主拒绝加载**，重新编一次即可
 （仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
 
 ## 为什么本 ABI 一个可变参数函数指针都没有 [#为什么本-abi-一个可变参数函数指针都没有]
 
 Rust 的 `extern "C" fn(.., ...)` 确实稳定（能写、cbindgen 也能生成），但**本 ABI 一个都没用**，
-理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 17 个函数的参数都是固定的，
+理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 19 个函数的参数都是固定的，
 用 `...` 只会让 C 侧传错参数从编译错误降级成运行期 UB。
 
 将来真要加，正确的声明形状是（C 侧）：
@@ -1164,10 +1265,10 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 
 | 语言 | 声明在哪 | 值 | 怎么生效 |
 | --- | --- | --- | --- |
-| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 3` | 3 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
-| C++ | 同一份 `fuyubot_plugin.h` | 3 | 同上（四个符号放 `extern "C"`） |
-| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 3 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
-| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v3 cdylib），`abi_version` 它填 |
+| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 4` | 4 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
+| C++ | 同一份 `fuyubot_plugin.h` | 4 | 同上（导出符号放 `extern "C"`） |
+| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 4 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
+| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v4 cdylib），`abi_version` 它填 |
 | JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
 
 脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
@@ -1191,6 +1292,161 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 ```bash
 fuyubot-sdk abi-version   # 打印 3
 ```
+
+
+# 异步等待（await） (/docs/plugin/async)
+
+`wait_for_update` 是**阻塞**原语：调用线程停下来等。要 JS `async/await` 那种语义，
+用下面这层**不阻塞**的封装——任务挂起，事件到了再唤醒。
+
+> ⚠️ 这里有两套脚本 SDK，先确认你在哪一套：
+>
+> | 路径 | 入口 | 本文的 await |
+> | --- | --- | --- |
+> | `script_plugin!` 内嵌脚本（`fuyubot-sdk-script`） | `fuyubot_plugin.py` / `fuyubot_plugin.js` | ✅ 有 |
+> | `fuyubot-python-host` 托管脚本（`fuyubot-sdk-native`） | `fuyubot.py` | ✅ 有（`run_async`） |
+> | `fuyubot-js-host` 托管脚本（`fuyubot-sdk-native`） | `fuyubot.js` | ✅ 有（`runAsync`） |
+>
+> 选错文件会出现「方法不存在」——先看插件目录里拷的是哪一个。
+
+## Rust：`ResponseRouter` [#rustresponserouter]
+
+`fuyubot-plugin-api` 从 ABI v4 起重导出 `ResponseRouter` / `ResponseFuture` / `UpdateFuture`：
+
+```rust
+use fuyubot_plugin_api::ResponseRouter;
+use serde_json::json;
+use std::time::Duration;
+
+// 插件 start 里建一次，活到 stop
+let router = ResponseRouter::new(self.host)?;
+
+// 等一条请求自己的响应
+let (_id, fut) = router.invoke_simplified("getMe", "{}")?;
+let me = tokio::time::timeout(Duration::from_secs(5), fut).await??;
+
+// 等一条任意更新（async 版 wait_for_update）
+let fut = router.wait_for_update(json!({"@type": "updateNewMessage"}))?;
+let update = tokio::time::timeout(Duration::from_secs(30), fut).await??;
+```
+
+要点：
+
+- **必须在插件自己的 executor 上 await**，别在宿主事件回调里 await（那是接收线程）。
+- `router.invoke*` 从插件自己的线程发请求时会用 scope service 把归属切回插件，
+  响应不会丢；不需要手动 `scope_enter`。
+- 取消 = `drop(fut)`；关闭 = drop router（所有 pending 立刻 `RouterClosed`）。
+- 超时不内建，用 `tokio::time::timeout` 或你运行时的等价物。
+
+## JS / TS：`invokeAsync` / `waitAsync` [#js--tsinvokeasync--waitasync]
+
+`fuyubot_plugin.js`（`script_plugin!` 内嵌路径）在回调协议上包了 Promise：
+
+```js
+import * as host from "./fuyubot_plugin.js";
+
+async function main() {
+  const me = await host.invokeAsync("getMe", {});
+  const update = await host.waitAsync({ "@type": "updateNewMessage" }, 30_000);
+  if (update === null) {
+    // 超时/取消
+  }
+}
+
+void main();   // 先跑到第一个 await
+host.run();    // 再开 stdin 循环——顺序反了会死锁
+```
+
+- TDLib 业务错误（`@type: "error"`）也 **resolve**；只有宿主拒绝请求才 reject。
+- `waitAsync` 超时/取消返回 `null`。
+- 老的 `invoke(..., onResponse)` / `waitForUpdate(..., onMatch)` 是底层/兼容 API。
+
+## Python：`run_async` + `invoke_async` / `wait_async` [#pythonrun_async--invoke_async--wait_async]
+
+`fuyubot_plugin.py`（`script_plugin!` 内嵌路径）提供 asyncio 版，**不改老的 `run()`**：
+
+```python
+import asyncio
+import fuyubot_plugin as host
+
+async def main():
+    me = await host.invoke_async("getMe", {})
+    upd = await host.wait_async({"@type": "updateNewMessage"}, 30_000)
+    if upd is None:
+        host.log("等更新超时")
+    asyncio.get_running_loop().stop()   # 测试/收尾时可主动停
+
+host.run_async(main)
+```
+
+- `run_async` 建 asyncio 事件循环，后台线程读 stdin；`main` 在 `ready` 之后作为任务启动。
+- `invoke_async` 的业务错误也 resolve，宿主拒绝请求才抛异常。
+- `wait_async` 超时/取消返回 `None`。
+- **仍然可以用 `run()`**：同步循环、没有事件循环，`invoke_async` 会直接报错。
+
+### 托管路径：`fuyubot.py` [#托管路径fuyubotpy]
+
+`fuyubot-python-host` 用 `uv run` 起的脚本，导入的是 `fuyubot.py`（ctypes 原生桥），
+API 名字一样，只是 `import` 不同：
+
+```python
+import asyncio
+from fuyubot import invoke_async, wait_async, run_async
+
+async def main():
+    me = await invoke_async("getMe", {})
+    upd = await wait_async({"@type": "updateNewMessage"}, 30_000)
+    asyncio.get_running_loop().stop()
+
+run_async(main)
+```
+
+- `run_async` 把原生桥的阻塞 `run()` 放到后台线程，主线程跑 asyncio 循环。
+- `invoke_async` 的回调从原生桥线程 `call_soon_threadsafe` 回事件循环。
+- `wait_async` 是**一次性** `on("update", ...)` 订阅，命中/超时后自动退订；
+  `timeout_ms=0` 表示一直等。
+- 老的 `run()` / `invoke(..., on_response)` 原样保留。
+
+### 托管路径：`fuyubot.js` [#托管路径fuyubotjs]
+
+`fuyubot-js-host` 用 `bun` 起的脚本，导入的是 `fuyubot.ts` / `fuyubot.js`：
+
+```ts
+import { invokeAsync, waitAsync, runAsync } from "./fuyubot";
+
+async function main() {
+  const me = await invokeAsync("getMe", {});
+  const update = await waitAsync({ "@type": "updateNewMessage" }, 30_000);
+  if (update === null) {
+    // 超时/取消
+  }
+}
+
+await runAsync(main);
+```
+
+- `runAsync` 把原生桥的 stdin 读取放后台线程，但**回调在主线程的 `step()` 里分发**
+  （bun 的 JSCallback 不能跨线程调用）；`main` 与 step 循环并行跑。
+- `invokeAsync` 仍走 `invoke` 的 request/response 配对；`waitAsync` 是一次性
+  `on("update", ...)`，超时/命中后自动退订。
+- 老的 `run()` / `invoke(..., onResponse)` 原样保留。
+
+## 选哪个 [#选哪个]
+
+| 场景 | 用什么 |
+| --- | --- |
+| 同步代码 / 宿主内部 / 登录状态机 | `wait_for_update`（阻塞） |
+| Rust 插件、有 tokio 等 executor | `ResponseRouter`（await） |
+| JS/TS 内嵌脚本 | `invokeAsync` / `waitAsync` |
+| Python 内嵌脚本 | `run_async` + `invoke_async` / `wait_async` |
+| Python 托管脚本（`fuyubot.py`，uv） | `run_async` + `invoke_async` / `wait_async` |
+| JS 托管脚本（`fuyubot.js`，bun） | `runAsync` + `invokeAsync` / `waitAsync` |
+| C / C++ / Go | 回调 `on`（语言没有 await） |
+
+## 工具结果 [#工具结果]
+
+工具调用没有“等响应”这一层：ABI v4 的 `call_tool_result` / `callTool` 是**同步**返回结果的。
+详见 [工具与中间件](./tools.mdx)。
 
 
 # 订阅与事件 (/docs/plugin/events)
@@ -1403,7 +1659,7 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录
 
 ## 相关 [#相关]
 
-- ABI 细节（20 个字段、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
+- ABI 细节（2 个 u32 + `host_ctx` + 19 个函数指针、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
 - C / C++ 的写法（同一份头文件）：[C 与 C++ 插件](./native.mdx)
 - 订阅与过滤器：[订阅与事件](./events.mdx)
 
@@ -1511,6 +1767,12 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 JS / TS 插件就是一个目录：`package.json` 写身份，入口文件写逻辑，`fuyubot.ts`（单文件薄 SDK）
 管通信。运行时是 [bun](https://bun.sh)，**TS 不需要 `tsc`**。上手三步见
 [脚本插件](./scripts.mdx)。本页是**方法手册 + 示例**。
+
+<Callout type="info">
+  本页讲托管路径的 `fuyubot.js` / `fuyubot.ts`（`fuyubot-js-host`），它也支持
+  `runAsync` / `invokeAsync` / `waitAsync`。`script_plugin!` 内嵌的
+  `fuyubot_plugin.js` 有同名 API，见 [异步等待](./async.mdx)。
+</Callout>
 
 ```text
 my-plugin/
@@ -1850,6 +2112,12 @@ C 与 C++ 用**同一份头文件** `fuyubot_plugin.h`，差别只有两条：�
 以及用什么拼 JSON。头文件是**产物**，不是源码——它由 cbindgen 从 Rust 定义生成，
 用 `fuyubot-sdk codegen` 落盘，别手改（改了下次就被覆盖）。
 
+<Callout type="info">
+  C / C++ / Go 没有 async 运行时：请求与更新用回调（`on`），工具结果用
+  `call_tool_result` 同步拿。可 await 的版本只在 Rust / JS / TS / Python 的脚本 SDK 里，
+  见 [异步等待](./async.mdx)。
+</Callout>
+
 ```bash
 fuyubot-sdk init ping --lang c --dir .        # 生成 ping.c + fuyubot_plugin.h
 fuyubot-sdk init ping --lang cpp --dir .      # 生成 plugin.cpp + fuyubot_plugin.h
@@ -1989,6 +2257,12 @@ if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
 
 Python 插件就是一个目录：`pyproject.toml` 写身份，`main.py` 写逻辑，`fuyubot.py`（单文件薄 SDK）
 管通信。上手三步见 [脚本插件](./scripts.mdx)。本页是**方法手册 + 示例**。
+
+<Callout type="info">
+  本页的 `fuyubot.py`（`fuyubot-python-host`）和 `script_plugin!` 内嵌的
+  `fuyubot_plugin.py` 都支持 `run_async` / `invoke_async` / `wait_async`，
+  见 [异步等待](./async.mdx)。
+</Callout>
 
 ```text
 my-plugin/
@@ -2332,8 +2606,9 @@ graph LR
 ## 发送与编辑 [#发送与编辑]
 
 参数是 `RichMessageParams`——与 `SendMessageParams` **分开的类型**（那边是「文本 + 媒体」
-二选一，混在一起互斥规则没人记得住）：`message` / `reply_to_message_id` / `topic_id` /
-`reply_markup` / `clear_draft` / `timeout_ms`。
+二选一，混在一起互斥规则没人记得住）：`message` / `reply_to_message_id` / `topic_id`
+（`Option<Topic>`，见[Simplify 封装](./simplify.mdx#话题topic)）/ `reply_markup` /
+`clear_draft` / `timeout_ms`。
 
 和 `Simplify` 的其它方法一样，**等到结果才返回**（详见[调用 TDLib](./tdlib.mdx)）：
 
@@ -2395,7 +2670,8 @@ Markdown 语法能覆盖 21 个，剩下 10 个（`mention` / `hashtag` / `casht
 
 Rust 插件只依赖一个 crate：`fuyubot-plugin-api`。它把 `fuyubot-abi` 的形状转成用着不疼的样子——
 `HostApi`（已解包、调用路径上没有 `Option` 和 panic 分支）、`HostExt` 便利方法、
-drop 即退订的 `Subscription`、以及 `define_plugin!` 宏。
+drop 即退订的 `Subscription`、`ResponseRouter`（可 `await` 的请求/更新等待），以及
+`define_plugin!` 宏。异步写法见 [异步等待](./async.mdx)。
 
 ## 依赖 [#依赖]
 
@@ -2742,6 +3018,10 @@ let simplify = Simplify::new(host); // HostApi 是 Copy，随手复制
 本文按**功能范围**分组；想知道这些方法内部怎么实现（为什么这么拼、为什么这么等），
 看[开发 › simplify 封装是怎么实现的](../dev/simplify-internals.mdx)。
 
+除了发/改/删，这一层还收了四件「TDLib 里没有直觉上那个方法」的事：
+[管理权](#11-管理权adminright) / [转发](#12-转发forwardparams) /
+[表情反应](#13-表情反应reaction) / [连接状态](#14-连接状态connectiontracker)。
+
 ## 1. 文本内容：`Text` 与 `ParseMode` [#1-文本内容text-与-parsemode]
 
 带标记的文本**不由本 crate 解析**——经**同步**的 `td_execute` 问 TDLib 的 `parseTextEntities`
@@ -2802,8 +3082,8 @@ let simplify = Simplify::new(host); // HostApi 是 Copy，随手复制
       default: 'None',
     },
     topic_id: {
-      description: '发到哪个话题/楼层 → TDLib 的 topic_id（不是 Bot API 的 message_thread_id）。',
-      type: 'Option<i64>',
+      description: '发到哪个话题 → TDLib 的 topic_id。**不是** Bot API 的 message_thread_id：论坛话题是 Topic::forum(..)，非论坛群组的评论串才是 Topic::thread(..)。',
+      type: 'Option<Topic>',
       default: 'None',
     },
     reply_markup: {
@@ -2838,6 +3118,20 @@ let sent = simplify.send_message(
     },
 )?;
 ```
+
+### 话题：`Topic` [#话题topic]
+
+`topic_id` 不是裸 id，是 TDLib 的 `MessageTopic`——**四个构造器各有各的 id 类型**，选错了 TDLib 就拒：
+
+| 构造 | 用在哪 | 发出的 `topic_id` |
+| --- | --- | --- |
+| `Topic::forum(id)` | **论坛**群组，以及与 bot 的私聊 | `{"@type":"messageTopicForum","forum_topic_id":…}` |
+| `Topic::thread(id)` | **非论坛**群组的评论串 | `{"@type":"messageTopicThread","message_thread_id":…}` |
+| `Topic::direct_messages(id)` | 频道的私信话题 | `{"@type":"messageTopicDirectMessages","direct_messages_chat_topic_id":…}` |
+| `Topic::saved_messages(id)` | 收藏夹话题 | `{"@type":"messageTopicSavedMessages","saved_messages_topic_id":…}` |
+
+⚠️ 刻意**没有** `From<i64>`：论坛话题是 `int32`、评论串是 `int53`，一个裸数字说不清是哪一种，
+隐式转任何一个都会在另一种群里静默发错。（这一层以前固定按 `messageTopicThread` 拼，非论坛群以外全是错的。）
 
 ## 3. 媒体：`Media` / `InputFile` / `Thumbnail` [#3-媒体media--inputfile--thumbnail]
 
@@ -2918,7 +3212,7 @@ Media::video("/tmp/a.mp4")
       default: 'None',
     },
     reply_to_message_id: { description: '整组回复同一条消息。', type: 'Option<i64>', default: 'None' },
-    topic_id: { description: '发到哪个话题。', type: 'Option<i64>', default: 'None' },
+    topic_id: { description: '发到哪个话题（见「话题：Topic」）。', type: 'Option<Topic>', default: 'None' },
     timeout_ms: {
       description: '整组共用的一个预算：先等 Messages 响应、再等 N 条结局，不是每项各等一次。',
       type: 'u64',
@@ -3094,20 +3388,168 @@ let _guard = on_command(host, |command| {
 一套独立的参数类型（`RichMessageParams`），是因为它跟「文本 + 媒体」的互斥规则完全不同
 （那边二选一，这边是块树）。API 见[富消息](./rich.mdx)，本文不重复。
 
-## 11. 不挂在 `Simplify` 上的公开函数 [#11-不挂在-simplify-上的公开函数]
+## 11. 管理权：`AdminRight` [#11-管理权adminright]
+
+TDLib 里 `user` **连 `is_bot` 都没有**（身份在 `user.type`），管理权也不在任何「用户信息」上——
+它只在 `getChatMember` 给的 `ChatMember.status` 里。
+
+<TypeTable
+  type={{
+    'is_chat_admin(chat_id, user_id, right, timeout_ms)': {
+      description: '这个用户在这个聊天里有没有管理权。right: None 只看身份，Some(..) 还要求那一项权限为真。',
+      type: 'bool',
+    },
+    'am_i_chat_admin(chat_id, right, timeout_ms)': {
+      description: '自己有没有管理权（先 getMe 拿 id 再查成员；getChat 不带这个字段，没有捷径）。',
+      type: 'bool',
+    },
+    'chat_member(chat_id, user_id, timeout_ms)': {
+      description: '原始 ChatMember；超时 / TDLib 报错都是 None。',
+      type: 'Option<Value>',
+    },
+    'is_admin_status(&status, right)': {
+      description: '纯函数：手上已有 ChatMember / updateChatMember 时直接判，省一次往返。',
+      type: 'bool',
+    },
+  }}
+/>
+
+判定规则（[`is_admin_status`](#11-管理权adminright)）：
+
+| `status.@type` | `right: None` | `right: Some(x)` |
+| --- | --- | --- |
+| `chatMemberStatusCreator`（群主） | `true` | `true`——群主拥有一切（唯一例外见下） |
+| `chatMemberStatusAdministrator` | `true` | `status.rights.<x>` 必须为 `true`，字段缺失按 `false` |
+| 其余四种（`member` / `restricted` / `left` / `banned`） | `false` | `false` |
+
+⚠️ 群主的**匿名**是 `status.is_anonymous`，不在 `rights` 里——所以 `Some(AdminRight::IsAnonymous)`
+对群主读的是前者。`AdminRight` 共 18 项，名字就是 `chatAdministratorRights` 的字段名
+（`can_manage_chat` / `can_delete_messages` / `can_pin_messages` / …），认不出的字段名
+`AdminRight::from_key` 返回 `None`。
+
+拿不到成员信息（超时 / TDLib 报错 / 不是群聊）一律 `false`：**不确定时说「没有」比说「有」安全**。
+
+## 12. 转发：`ForwardParams` [#12-转发forwardparams]
+
+`simplify.forward_messages(chat_id, from_chat_id, &params)` → `Result<Vec<Value>>`。
+
+<TypeTable
+  type={{
+    message_ids: {
+      description: '要转发的消息 id。**会排序去重**——TDLib 要求严格递增、最多 100 条。',
+      type: 'Vec<i64>',
+      required: true,
+    },
+    topic_id: { description: '转发到哪个话题。', type: 'Option<Topic>', default: 'None' },
+    send_copy: {
+      description: '不带原作者地复制内容（发到私密聊天时必为 true）。',
+      type: 'bool',
+      default: 'false',
+    },
+    remove_caption: {
+      description: '去掉媒体标题（只在 send_copy 为真时有意义）。',
+      type: 'bool',
+      default: 'false',
+    },
+    timeout_ms: { description: '等响应的上限。', type: 'u64', default: '30000' },
+  }}
+/>
+
+走的是 `forwardMessages`（一次一组，**不是** Bot API 的 `forwardMessage`）。返回的是**还没发完**的临时消息
+——这里只等**响应**，不等发送结局，最终消息照旧经 `updateMessageSendSucceeded` / `updateMessageSendFailed`
+回来。单项没转发成功时 TDLib 在对应位置放 `null`，所以数组长度与排序后的 `message_ids` 一致、
+但元素可能是 `Null`。
+
+空列表 → `SimplifyError::EmptyForward`，超过 100 条 → `TooManyForward`，两者都在发请求**之前**挡掉。
+
+## 13. 表情反应：`Reaction` [#13-表情反应reaction]
+
+bot 与用户号**不是同一个方法**，这一点没有「通用写法」可言：
+
+| 方法 | 用哪个 TDLib 方法 | 语义 |
+| --- | --- | --- |
+| `react(chat_id, msg, &reaction, is_big, timeout_ms)` | **自动**：bot → `setMessageReactions`，用户 → `addMessageReaction` | 加一个反应 |
+| `unreact(chat_id, msg, &reaction, timeout_ms)` | **自动**：bot → `setMessageReactions` 传空列表，用户 → `removeMessageReaction` | 去掉反应 |
+| `add_reaction(..)` | 固定 `addMessageReaction` | 已知自己是用户号时省掉 `getMe` |
+| `set_reactions(..)` | 固定 `setMessageReactions` | 已知自己是 bot 时；空切片 = 清空 |
+
+自动判定靠 `getMe` 的 `user.type.@type == "userTypeBot"`，也就是说 `react` / `unreact` 每次会多一次
+`getMe` 往返（它不碰服务器，TDLib 本地应答）。⚠️ bot 侧没有「删一个」的说法，只能整组覆盖——
+所以 **bot 的 `unreact` 会忽略 `reaction` 参数**，直接清空。
+
+`Reaction::emoji("👍")` → `reactionTypeEmoji`；`Reaction::custom_emoji(id)` → `reactionTypeCustomEmoji`。
+付费反应（`reactionTypePaid`）不在这套里。
+
+## 14. 连接状态：`ConnectionTracker` [#14-连接状态connectiontracker]
+
+TDLib **没有** `getConnectionState`——连接状态只以 `updateConnectionState` 的形式出现，
+所以「现在连上了吗」只能自己订阅并记住最新那条。
+
+<TypeTable
+  type={{
+    'track_connection_state()': {
+      description: '订阅并记住最新一条 updateConnectionState → ConnectionTracker（drop 即退订）。把它存进插件状态。',
+      type: 'Option<ConnectionTracker>',
+    },
+    'ConnectionTracker.is_ready()': {
+      description: '当前是不是 connectionStateReady。没收到过任何更新也算没连上。',
+      type: 'bool',
+    },
+    'ConnectionTracker.connection()': {
+      description: '解析过的状态：WaitingForNetwork / ConnectingToProxy / Connecting / Updating / Ready。',
+      type: 'Option<ConnectionState>',
+    },
+    'ConnectionTracker.state()': { description: '更新里的 state 字段原始 JSON。', type: 'Value' },
+    'ConnectionTracker.update()': { description: '整条 updateConnectionState（一条都没收到过时是 Null）。', type: 'Value' },
+    'ConnectionTracker.wait_ready(timeout_ms)': {
+      description: '阻塞等到 Ready（已经是就直接 true），全程只认这一个预算。',
+      type: 'bool',
+    },
+    'next_connection_state(timeout_ms)': {
+      description: '一次性：等**下一条** updateConnectionState；超时返回 None。',
+      type: 'Option<Value>',
+    },
+    'wait_until_connected(timeout_ms)': {
+      description: '不订阅、纯等待到 Ready。已有订阅时优先用 ConnectionTracker::wait_ready。',
+      type: 'bool',
+    },
+  }}
+/>
+
+两个坑：
+
+- **订阅之前推过的更新补不回来**（TDLib 的状态更新不重放），所以在插件 `start` 里尽早调；
+  晚订阅只会漏掉开头的 `Connecting` / `Updating`。
+- 这是**连接**状态（到 Telegram 的链路），**不是**授权状态（`updateAuthorizationState`，登录那一套）。
+  两者独立：`connectionStateReady` 也可能还没登录。
+
+```rust
+struct MyPlugin {
+    connection: Option<ConnectionTracker>,
+}
+// start 里
+self.connection = simplify.track_connection_state();
+// 之后
+if self.connection.as_ref().is_some_and(|c| c.is_ready()) { /* … */ }
+```
+
+## 15. 不挂在 `Simplify` 上的公开函数 [#15-不挂在-simplify-上的公开函数]
 
 纯函数，随手支配——想绕过某些方法的等待语义、自己拼请求时尤其有用：
 
 | 函数 | 作用 |
 | --- | --- |
 | `send_params` / `album_params` / `edit_text_params` / `edit_caption_params` / `edit_media_params` / `edit_markup_params` | 组装参数（**不含 `@type`**，那是宿主补的） |
+| `chat_member_params(chat_id, user_id)` / `forward_params(chat_id, from_chat_id, &params)` | 管理权 / 转发的参数（含 `MessageTopic` 与 `MessageSender` 的嵌套形状） |
+| `reaction_params` / `set_reactions_params` / `remove_reaction_params` | 三种反应请求的参数（user 分支与 bot 分支分开） |
+| `is_admin_status(&status, right)` | 判一份 `ChatMemberStatus` 有没有管理权，不发请求 |
 | `content_json(&Media, render)` | 媒体 → `InputMessageContent` |
 | `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
 | `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(..)` | 响应 → `formattedText`；拿不到退回纯文本 |
 | `plain_text(&Text)` | 纯文本 → `formattedText`（不花往返），也是默认渲染器 |
 | `command_of(&Value)` / `on_command(host, handler)` | 见[第 7 节](#7-命令与输入) |
 
-## 12. 参数名为什么是这几个 [#12-参数名为什么是这几个]
+## 16. 参数名为什么是这几个 [#16-参数名为什么是这几个]
 
 真 `td_api.tl`：`sendMessage chat_id topic_id reply_to options reply_markup input_message_content`
 ——**没有** `message_thread_id` / 顶层 `disable_notification` / 顶层 `caption`（那些是 Bot API 的名字）。
@@ -3115,17 +3557,20 @@ let _guard = on_command(host, |command| {
 
 | 参数结构体的字段 | 落到的 TDLib 字段 |
 | --- | --- |
-| `topic_id` | `topic_id` = `{"@type":"messageTopicThread","message_thread_id":…}` |
+| `topic_id: Some(Topic::forum(n))` | `topic_id` = `{"@type":"messageTopicForum","forum_topic_id":n}` |
+| `topic_id: Some(Topic::thread(n))` | `topic_id` = `{"@type":"messageTopicThread","message_thread_id":n}` |
 | `reply_to_message_id` | `reply_to` = `{"@type":"inputMessageReplyToMessage","message_id":…}` |
 | `reply_markup` | `reply_markup` = `{"@type":"replyMarkupInlineKeyboard","rows":…}` |
 | `link_preview: Some(false)` | `inputMessageText.link_preview_options.is_disabled = true` |
 | `text` / `media.caption` | `formattedText`（经 `parseTextEntities`） |
+| `is_chat_admin` 的 `user_id` | `getChatMember.member_id` = `{"@type":"messageSenderUser","user_id":…}` |
 
-## 13. 异步版：`*_then` [#13-异步版_then]
+## 17. 异步版：`*_then` [#17-异步版_then]
 
 每个等待版都有一个 `*_then`（`send_message_then` / `send_message_album_then` /
 `edit_message_text_then` / `edit_message_caption_then` / `edit_message_media_then` /
-`edit_message_reply_markup_then` / `delete_message_then` / `answer_callback_query_then`）：
+`edit_message_reply_markup_then` / `delete_message_then` / `answer_callback_query_then` /
+`forward_messages_then` / `react_then` / `unreact_then`）：
 把等待挪到另一个线程，**立刻返回**，结局交给闭包。
 
 ```rust
@@ -3137,7 +3582,7 @@ simplify.send_message_then(chat_id, &params, |result| match result {
 
 ⚠️ 它们返回那个线程的 `JoinHandle`——**插件要在 `stop()` 里 join 掉**，否则动态库卸载之后线程还在跑库里的代码。
 
-## 14. 返回值与错误 [#14-返回值与错误]
+## 18. 返回值与错误 [#18-返回值与错误]
 
 方法成功时返回的就是 TDLib 原始 JSON（`Value` / `Vec<Value>` / `()`），没有额外包装。
 带状态的返回类型只有 `EntitiesResolution` / `EntityResult` / `FileDownload` 三个（见[第 9 节](#9-实体与下载)）。
@@ -3147,6 +3592,8 @@ simplify.send_message_then(chat_id, &params, |result| match result {
     'SimplifyError::Abi': { description: 'ABI 层出错（宿主没接 TDLib、请求号无效等）。', type: 'AbiError' },
     'SimplifyError::BadString': { description: '参数串里含 NUL 字节。', type: '—' },
     'SimplifyError::AlbumSize': { description: '相册不是 2–10 项——发之前就挡掉，不会发出请求。', type: 'usize' },
+    'SimplifyError::EmptyForward': { description: '转发的 message_ids 是空的——发之前就挡掉。', type: '—' },
+    'SimplifyError::TooManyForward': { description: '一次转发超过 100 条（TDLib 的硬上限）。', type: 'usize' },
     'SimplifyError::SendFailed': {
       description: '发出去了但 TDLib 说没发成（updateMessageSendFailed），例如限流 429。',
       type: '{ code, message }',
@@ -3170,7 +3617,7 @@ simplify.send_message_then(chat_id, &params, |result| match result {
 
 编辑类**刻意不重试**——限流该等多久是调用方的事。
 
-## 15. 简化事件 [#15-简化事件]
+## 19. 简化事件 [#19-简化事件]
 
 封装层额外推的两条事件（不想用就订阅原始 `@type`，两者不冲突）：
 
@@ -3237,7 +3684,7 @@ let filter = json!({ "event_type": "response", "request_id": request.id });
 | 你在 Bot API 里习惯的 | 在 TDLib 里这么写 |
 | --- | --- |
 | `sendPhoto` / `sendDocument` / `sendLocation` | `sendMessage` + `input_message_content.@type` = `inputMessagePhoto` / `inputMessageDocument` / `inputMessageLocation` |
-| `message_thread_id` | `topic_id`（`{"@type":"messageTopicThread","message_thread_id":N}`） |
+| `message_thread_id` | `topic_id`，类型是 `MessageTopic`——**论坛**群组用 `{"@type":"messageTopicForum","forum_topic_id":N}`，**非论坛**群组的评论串才是 `{"@type":"messageTopicThread","message_thread_id":N}`（用 [`Topic`](./simplify.mdx#话题topic) 就不会选错） |
 | `reply_to_message_id` | `reply_to`（`{"@type":"inputMessageReplyToMessage","message_id":N}`） |
 | 顶层 `disable_notification` / `protect_content` | `options`（`@type: messageSendOptions`）里 |
 | 顶层 `caption` | 在内容类型里（`inputMessageText` / `inputMessagePhoto` …） |
@@ -3476,12 +3923,45 @@ fuyubot plugin list
 是流经更新管线时的洋葱式拦截点。两者的注册都记在**当前插件的作用域**下：
 插件卸载（或加载失败）时宿主一次性回滚这批注册。
 
-## 注册工具：只登记元数据 [#注册工具只登记元数据]
+## 注册工具：元数据 + 处理器 [#注册工具元数据--处理器]
 
-<Callout type="warn">
-  本版 ABI **只登记元数据**：`register_tool` 收的是一份 JSON 描述，里面没有函数指针的位置，
-  登记出来的工具一律是 `handler: None` 的**声明型工具**。插件无法让宿主回调进自己来执行工具。
-</Callout>
+ABI v4 的 `register_tool` 收三个东西：JSON 描述、可选的处理器、处理器要用的 `user_data`。
+处理器是 `C-unwind` 的 `fn(user_data, input_json) -> *const c_char`，返回 JSON 字符串。
+
+```rust
+use std::cell::RefCell;
+use std::ffi::{CStr, CString};
+
+// 处理器返回的是**插件自己的**线程局部缓冲：宿主会立刻读走，不负责释放。
+thread_local! {
+    static REPLY: RefCell<CString> = RefCell::new(CString::default());
+}
+
+fn reply(json: &str) -> *const std::ffi::c_char {
+    REPLY.with(|slot| {
+        *slot.borrow_mut() = CString::new(json).unwrap_or_default();
+        slot.borrow().as_ptr()
+    })
+}
+
+unsafe extern "C-unwind" fn echo(
+    _user: *mut std::ffi::c_void,
+    input: *const std::ffi::c_char,
+) -> *const std::ffi::c_char {
+    let raw = unsafe { CStr::from_ptr(input) }.to_string_lossy();
+    reply(&format!(r#"{{"echo":{raw}}}"#))
+}
+
+let handle = host.register_tool(
+    r#"{"name":"demo.echo","description":"回显入参","input_schema":{"type":"object"}}"#,
+    Some(echo),
+    std::ptr::null_mut(),
+);
+```
+
+只登记元数据（不提供执行能力）用 `register_tool_meta(descriptor)`，等价于
+`register_tool(descriptor, None, null)`。`handle` 无效（`id == 0`）表示登记被拒
+（重名、schema 不合法等）。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -3496,38 +3976,28 @@ fuyubot plugin list
 | `is_async` | bool | 默认 `false` |
 | `callable` | bool | **读出时才有**：本进程里有没有可调处理器 |
 
-```rust
-let handle = host.register_tool(&json!({
-    "name": "demo.echo",
-    "version": "0.1.0",
-    "description": "把入参原样回出去",
-    "input_schema": {
-        "type": "object",
-        "properties": { "text": { "type": "string" } },
-        "required": ["text"]
-    },
-}).to_string());
-```
+## 调用工具：请求号或同步结果 [#调用工具请求号或同步结果]
 
-`handle` 无效（`id == 0`）表示登记被拒（重名、schema 不合法等）。
+两条入口，按需选：
 
-## 调用工具：走注册表 [#调用工具走注册表]
+| 入口 | 返回 | 用途 |
+| --- | --- | --- |
+| `call_tool(name, input_json)` | `RequestId` | 只需要“发出去”，或将来接异步工具 |
+| `call_tool_result(name, input_json)` | 结果 JSON 字符串 | **同步**拿结果（失败是 `{"error": "…"}`） |
 
-`call_tool(name, input_json)` 返回**请求号**（和 `td_invoke*` 一样，不是结果）。宿主把它交给
-`ToolRegistry::call_tool`，顺序是：
+`call_tool_result` 的顺序是：
 
 ```text
 查表 → 权限门 → input_schema 校验 → 处理器 → output_schema 校验
 ```
 
-本版 ABI 登记的工具没有处理器，所以对**这类**工具调 `call_tool` 只会拿到**无效请求号**
-（`id == 0`）——声明型工具的用途是「让它出现在 `list_tools` 里、被别人发现」，不是被真的执行。
-
 `list_tools()` 返回全部工具的元数据 JSON 数组。**宿主线程局部缓冲**：读完即弃，
 要留就当场拷走，**不要试图释放它**。
 
-脚本侧的名字不同：Python 是 `host.register_tool(...)`，JS 是 `host.registerTool(...)`，
-都只收 `name` / `description` / `input_schema`。
+脚本侧（`fuyubot_plugin.*` 内嵌桥）：Python `host.call_tool(name, input, on_response)`、
+JS `host.callTool(name, input, onResponse)` 现在都走同步结果，回调收到 `output`
+（失败是 `{"error": …}`）。脚本注册工具仍只有元数据（`registerTool` / `register_tool`），
+没有处理器指针——脚本进程不能把函数指针交回宿主。
 
 ## 中间件：六阶段洋葱 [#中间件六阶段洋葱]
 
@@ -3708,7 +4178,7 @@ api_key = "……"      # 密钥这类东西别写进全局配置——它会被
 （`plugin_config()` / `pluginConfig()`），`run()` 之前就能用。
 
 <Callout type="warn">
-  **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。
+  **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。唯一会被保住的是 `[telegram].api_hash`——它不在插件能读到的配置树里，回写时会从磁盘补回来。
 </Callout>
 
 模板（`fuyubot init` 生成的就是它）：
@@ -3721,6 +4191,7 @@ name = "mybot"
 account_type = "bot"
 api_id = 12345
 data_dir = "data"
+api_hash = ""      # run 首次问过之后会把明文写回这里（见下）
 
 [plugins]
 dir = "plugins"
@@ -3732,7 +4203,7 @@ log_verbosity = 1
 ```
 
 <Callout type="warn">
-  **凭据一律不落盘**：`api_hash`、Bot Token、手机号、验证码、两步验证密码都不许写进配置文件（连日志也不行）。`api_hash` 在配置里**根本没有字段**，写了也会被 serde 忽略——它只认环境变量 `TG_API_HASH` 或 `fuyubot run` 的交互式输入。session 由 TDLib 自己落在 `data_dir`，配置里不记任何登录态。
+  **凭据的边界**：`api_id` 与 `api_hash` 是**例外**——它们**每次冷启动**都要随 `setTdlibParameters` 发给 TDLib（session 还有效也一样），不记住就得每次手输，所以 `fuyubot run` 交互式问过之后会把它们**明文写回** `[telegram]` 段。这意味着这份文件从此带着你的应用密钥：**别提交进版本库、别整份发给别人**。不想落盘就设 `TG_API_ID` / `TG_API_HASH`（环境变量优先，且不会被写回）。Bot Token、手机号、验证码、两步验证密码仍然**一律不落盘**，只认环境变量或交互输入（连日志也不许出现）。session 由 TDLib 自己落在 `data_dir`，配置里不记任何登录态。
 </Callout>
 
 ## 几条约定 [#几条约定]
@@ -3767,7 +4238,7 @@ log_verbosity = 1
 | `FUYUBOT_TDLIB_RELEASES_REPO` | `build.rs`（**构建期**） | 覆盖 `[package.metadata.fuyubot] releases-repo`（默认 `CatMoeCircle/Fuyu-Bot`） |
 | `TDLIB_TDJSON_PATH` | 加载器（**运行期**） | tdjson 的目录或文件，查找优先级 1；嫌四级排查麻烦就直接设它 |
 | `TG_API_ID` | `fuyubot run` | TDLib api_id（**不是**秘密）。也顺手带进自动生成的配置 |
-| `TG_API_HASH` | `fuyubot run` / 集成测试 | api_hash，**凭据**。只认环境变量或交互式输入 |
+| `TG_API_HASH` | `fuyubot run` / 集成测试 | api_hash，**凭据**。它优先于配置里已保存的值，且不会被写回 |
 | `TG_BOT_TOKEN` | `fuyubot run` / 集成测试 | bot 账号的 token；有值就不问 Bot Token，后台运行也能登 |
 | `FUYUBOT_NAME` | `fuyubot run` 的自动 init | 自动生成配置时的 `[bot].name`（默认 `fuyubot`） |
 | `FUYUBOT_SDK_PATH` | `fuyubot-sdk init` | **可选**：指向 SDK 仓库里放着 crate 的目录（`crates/`）。设了生成的插件用 `path = …` 对着源码开发；不设就写 crates.io 版本号（`fuyubot-plugin-api = "0.1.0"`） |
@@ -3796,12 +4267,12 @@ $env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
 ## 凭据 [#凭据]
 
 <Callout type="warn">
-  **凭据一律不落盘**：`api_hash`、Bot Token、手机号、验证码、两步验证密码不得写进仓库任何文件、`fuyubot.toml`、测试夹具或日志。只允许两个来源——**环境变量**（上表那几个）与**交互式输入**（`fuyubot run` 问）。
+  **Bot Token、手机号、验证码、两步验证密码一律不落盘**：不得写进仓库任何文件、`fuyubot.toml`、测试夹具或日志，只允许**环境变量**与**交互式输入**两个来源。`api_id` / `api_hash` 是例外——它们每次冷启动都要发给 TDLib，`run` 问过之后会明文写回 `fuyubot.toml`（见 [配置文件](./config.mdx)），所以那份文件要当密钥看待。
 </Callout>
 
 - `api_id` **不是**凭据，写进配置没问题（`[telegram].api_id`）。
-- `api_hash` 在配置里根本没有字段；写了也被忽略，运行时会改用 `TG_API_HASH` 或提问。
-- 后台运行没有 stdin：没有 session、也没 `TG_BOT_TOKEN` 时会直接失败，先把前台 `run` 登一次。
+- `api_hash` 三个来源，按序：`TG_API_HASH` → 配置里已保存的（`[telegram].api_hash`）→ 交互提问。问出来的会被写回配置，之后就不用再输。
+- 后台运行没有 stdin：没有 session、也没 `TG_BOT_TOKEN` 时会直接失败；首次连 `api_id` / `api_hash` 也问不了，先在前台 `run` 一次（或设好上表那两个环境变量）。
 
 ## 只在自动 init 那一次生效 [#只在自动-init-那一次生效]
 
@@ -3883,7 +4354,8 @@ fuyubot 0.1.0
 ```
 
 `api_id` 到 [my.telegram.org](https://my.telegram.org) 申请，**它不是秘密**，可以直接写进配置；`api_hash` 是凭据，
-不落盘——只认环境变量 `TG_API_HASH` 或运行时的交互式输入（见 [配置文件](./config.mdx)）。
+但每次启动都要发给 TDLib，所以 `run` 首次问过之后会把明文写回 `fuyubot.toml`（也可以事先设环境变量 `TG_API_HASH`
+让它一次都不问）——那份文件要当密钥看待，别提交进版本库（见 [配置文件](./config.mdx)）。
 
 ## 跑起来 [#跑起来]
 
@@ -4058,7 +4530,7 @@ fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
 | `--background` | 放到后台跑 |
 | `--replay <JSON>` / `--replay-wait <MS>` | 见 [离线回放](./replay.mdx) |
 
-凭据来源：`TG_API_ID` / `TG_API_HASH`（Bot Token 还认 `TG_BOT_TOKEN`），缺了才交互式提问。凭据不落盘，详见 [环境变量](./env.mdx)。
+凭据来源（按序）：`TG_API_ID` / `TG_API_HASH` → 配置里已保存的 `[telegram].api_id` / `.api_hash` → 交互式提问。**交互问出来的会被写回配置文件**，下次冷启动不用再输（这两个值每次都要随 `setTdlibParameters` 发出去，session 有效也一样）。Bot Token 仍只认 `TG_BOT_TOKEN` 或交互输入、不落盘，详见 [环境变量](./env.mdx)。
 
 ## 后台运行 [#后台运行]
 
@@ -4074,7 +4546,7 @@ fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
 它派生一个没有终端的自己，stdout/stderr 追加进 `<目录>logs\fuyubot.log`；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
 
 <Callout type="warn">
-  后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 登一次，session 会落在 `data/`。
+  后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 登一次，session 会落在 `data/`。首次连 `api_id` / `api_hash` 也问不了：先在前台跑一次让它写回配置，或设好 `TG_API_ID` / `TG_API_HASH`。
 </Callout>
 
 ## 看状态 [#看状态]

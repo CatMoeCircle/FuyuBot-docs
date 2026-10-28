@@ -19,8 +19,9 @@
   - [订阅与事件](/docs/plugin/events): on/off/emit、过滤器、双通道与归属
   - [调用 TDLib](/docs/plugin/tdlib): td_invoke、请求号与 response 通道、便捷封装
   - [Simplify 封装](/docs/plugin/simplify): fuyubot-simplify 的 API 参考：按功能范围分组的参数结构体、链式设置器与返回值
-  - [工具与中间件](/docs/plugin/tools): 注册工具元数据、call_tool、六阶段洋葱管线
-  - [ABI 契约](/docs/plugin/abi): HostApiVTable、四个符号、内存所有权与版本协商
+  - [工具与中间件](/docs/plugin/tools): 注册工具（元数据 + 处理器）、call_tool / call_tool_result、六阶段洋葱管线
+  - [异步等待（await）](/docs/plugin/async): Rust / JS / TS / Python 里可 await 的请求与更新等待
+  - [ABI 契约](/docs/plugin/abi): HostApiVTable、导出符号、内存所有权与版本协商
   - [调试与安装](/docs/plugin/testing): 回放验证、静态检查、装进插件目录
 - 开发文档: 改框架本身：架构、封装层的实现、构建、陷阱、发布
   - [开发文档](/docs/dev): 改框架本身：结构、构建测试、踩过的坑、发布

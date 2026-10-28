@@ -60,7 +60,7 @@ graph TD
 
 ```mermaid
 graph TD
-  P["插件：on / invoke / emit / use_middleware / get_config / set_config / …"] --> V["HostApiVTable<br/>20 字段 = version / size / host_ctx<br/>+ 17 个函数指针（全 Option，首参 host）"]
+  P["插件：on / invoke / emit / use_middleware / get_config / set_config / …"] --> V["HostApiVTable<br/>2 个 u32 + host_ctx<br/>+ 19 个函数指针（全 Option，首参 host）"]
   V --> H["HostRuntime：翻译成事件总线 / 服务容器<br/>/ 工具表 / 中间件管线 / TdClient"]
   H -->|"td_invoke* → td_send"| S["TdClient::send（注入 @extra）<br/>没接 TDLib：留档 + 合成请求号"]
   H -->|"td_execute（同步）"| X["TdClient::execute<br/>只给不碰网络的方法用"]

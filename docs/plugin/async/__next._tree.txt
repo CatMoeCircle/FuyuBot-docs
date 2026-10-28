@@ -1,0 +1,6 @@
+:HL["/FuyuBot-docs/_next/static/chunks/0rabvgug3mlqu.css","style"]
+:HL["/FuyuBot-docs/icon.png","image"]
+3:[["children",{"s":"__PAGE__","h":160}]]
+2:[["children",{"s":{"n":"slug","t":"oc","k":"plugin/async","s":[]},"h":65600,"c":"$Q3"}]]
+1:[["children",{"s":"docs","h":131104,"c":"$Q2"}]]
+0:{"b":"cKMMRsE6Uqib8w7jOmhbd","t":{"t":{"s":"","h":131152,"c":"$Q1"}}}

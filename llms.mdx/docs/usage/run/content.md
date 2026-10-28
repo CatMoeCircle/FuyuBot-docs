@@ -31,7 +31,7 @@
 | `--background` | 放到后台跑 |
 | `--replay <JSON>` / `--replay-wait <MS>` | 见 [离线回放](./replay.mdx) |
 
-凭据来源：`TG_API_ID` / `TG_API_HASH`（Bot Token 还认 `TG_BOT_TOKEN`），缺了才交互式提问。凭据不落盘，详见 [环境变量](./env.mdx)。
+凭据来源（按序）：`TG_API_ID` / `TG_API_HASH` → 配置里已保存的 `[telegram].api_id` / `.api_hash` → 交互式提问。**交互问出来的会被写回配置文件**，下次冷启动不用再输（这两个值每次都要随 `setTdlibParameters` 发出去，session 有效也一样）。Bot Token 仍只认 `TG_BOT_TOKEN` 或交互输入、不落盘，详见 [环境变量](./env.mdx)。
 
 ## 后台运行 [#后台运行]
 
@@ -47,7 +47,7 @@
 它派生一个没有终端的自己，stdout/stderr 追加进 `<目录>logs\fuyubot.log`；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
 
 <Callout type="warn">
-  后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 登一次，session 会落在 `data/`。
+  后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 登一次，session 会落在 `data/`。首次连 `api_id` / `api_hash` 也问不了：先在前台跑一次让它写回配置，或设好 `TG_API_ID` / `TG_API_HASH`。
 </Callout>
 
 ## 看状态 [#看状态]

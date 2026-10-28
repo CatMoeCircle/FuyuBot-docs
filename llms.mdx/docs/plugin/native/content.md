@@ -4,6 +4,12 @@ C 与 C++ 用**同一份头文件** `fuyubot_plugin.h`，差别只有两条：�
 以及用什么拼 JSON。头文件是**产物**，不是源码——它由 cbindgen 从 Rust 定义生成，
 用 `fuyubot-sdk codegen` 落盘，别手改（改了下次就被覆盖）。
 
+<Callout type="info">
+  C / C++ / Go 没有 async 运行时：请求与更新用回调（`on`），工具结果用
+  `call_tool_result` 同步拿。可 await 的版本只在 Rust / JS / TS / Python 的脚本 SDK 里，
+  见 [异步等待](./async.mdx)。
+</Callout>
+
 ```bash
 fuyubot-sdk init ping --lang c --dir .        # 生成 ping.c + fuyubot_plugin.h
 fuyubot-sdk init ping --lang cpp --dir .      # 生成 plugin.cpp + fuyubot_plugin.h

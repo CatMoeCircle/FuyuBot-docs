@@ -26,7 +26,7 @@ fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
 | `--name` | `fuyubot` | 只影响配置里的 `name` |
 | `--api-id` | `0` | TDLib api_id（不是秘密，可以写进配置）；`0` = 没配，`run` 会问 |
 
-`init` **只写 `api_id`**：`api_hash` 是凭据，这个命令连参数都没有，配置里也没有这个字段。
+`init` **只写 `api_id`**：`api_hash` 这个命令连参数都不收（init 阶段手上不该有它）——`run` 首次会问，问完写回配置。
 重复 `init` 会被挡住（不覆盖你改过的配置）。
 
 ```text
@@ -107,12 +107,13 @@ $ fuyubot config --config demo\fuyubot.toml
 [bot]       name         = mybot
 [telegram]  account_type = bot
 [telegram]  api_id       = 12345
+[telegram]  api_hash     = 已保存在本文件（不回显）
 [telegram]  data_dir     = demo\data
 [plugins]   dir          = demo\plugins
 [plugins]   log_level    = info（默认）
 [tdlib]     path         = 自动（TDLIB_TDJSON_PATH → 自带 → exe 同级 → 系统库 → 裸库名）
 [tdlib]     log_verbosity= 1
-凭据        api_hash / token / 手机号不读配置（TG_API_HASH 等环境变量或交互输入）
+凭据        Bot Token / 手机号 / 密码不落盘（TG_BOT_TOKEN 或交互输入）
 [plugin.fuyubot.manage] = { reply_prefix = "已安装插件：" }
 ```
 
@@ -134,8 +135,8 @@ $ fuyubot plugin install ./my-plugin
 已安装 plugins\scripts\my-plugin
 
 $ fuyubot plugin list
-fuyubot.js-host  ABI 3  plugins\fuyubot_js_host.dll
-fuyubot.python-host  ABI 3  plugins\fuyubot_python_host.dll
+fuyubot.js-host  ABI 4  plugins\fuyubot_js_host.dll
+fuyubot.python-host  ABI 4  plugins\fuyubot_python_host.dll
 脚本插件（1 个，由中间插件托管）：
   mybot.my-plugin  python  plugins\scripts\my-plugin\main.py
 

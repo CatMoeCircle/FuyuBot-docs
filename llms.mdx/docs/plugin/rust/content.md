@@ -2,7 +2,8 @@
 
 Rust 插件只依赖一个 crate：`fuyubot-plugin-api`。它把 `fuyubot-abi` 的形状转成用着不疼的样子——
 `HostApi`（已解包、调用路径上没有 `Option` 和 panic 分支）、`HostExt` 便利方法、
-drop 即退订的 `Subscription`、以及 `define_plugin!` 宏。
+drop 即退订的 `Subscription`、`ResponseRouter`（可 `await` 的请求/更新等待），以及
+`define_plugin!` 宏。异步写法见 [异步等待](./async.mdx)。
 
 ## 依赖 [#依赖]
 

@@ -3,6 +3,12 @@
 Python 插件就是一个目录：`pyproject.toml` 写身份，`main.py` 写逻辑，`fuyubot.py`（单文件薄 SDK）
 管通信。上手三步见 [脚本插件](./scripts.mdx)。本页是**方法手册 + 示例**。
 
+<Callout type="info">
+  本页的 `fuyubot.py`（`fuyubot-python-host`）和 `script_plugin!` 内嵌的
+  `fuyubot_plugin.py` 都支持 `run_async` / `invoke_async` / `wait_async`，
+  见 [异步等待](./async.mdx)。
+</Callout>
+
 ```text
 my-plugin/
   pyproject.toml   ← 身份（[tool.fuyubot]：name / entry）

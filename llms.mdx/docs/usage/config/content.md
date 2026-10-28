@@ -56,7 +56,7 @@ api_key = "……"      # 密钥这类东西别写进全局配置——它会被
 （`plugin_config()` / `pluginConfig()`），`run()` 之前就能用。
 
 <Callout type="warn">
-  **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。
+  **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。唯一会被保住的是 `[telegram].api_hash`——它不在插件能读到的配置树里，回写时会从磁盘补回来。
 </Callout>
 
 模板（`fuyubot init` 生成的就是它）：
@@ -69,6 +69,7 @@ name = "mybot"
 account_type = "bot"
 api_id = 12345
 data_dir = "data"
+api_hash = ""      # run 首次问过之后会把明文写回这里（见下）
 
 [plugins]
 dir = "plugins"
@@ -80,7 +81,7 @@ log_verbosity = 1
 ```
 
 <Callout type="warn">
-  **凭据一律不落盘**：`api_hash`、Bot Token、手机号、验证码、两步验证密码都不许写进配置文件（连日志也不行）。`api_hash` 在配置里**根本没有字段**，写了也会被 serde 忽略——它只认环境变量 `TG_API_HASH` 或 `fuyubot run` 的交互式输入。session 由 TDLib 自己落在 `data_dir`，配置里不记任何登录态。
+  **凭据的边界**：`api_id` 与 `api_hash` 是**例外**——它们**每次冷启动**都要随 `setTdlibParameters` 发给 TDLib（session 还有效也一样），不记住就得每次手输，所以 `fuyubot run` 交互式问过之后会把它们**明文写回** `[telegram]` 段。这意味着这份文件从此带着你的应用密钥：**别提交进版本库、别整份发给别人**。不想落盘就设 `TG_API_ID` / `TG_API_HASH`（环境变量优先，且不会被写回）。Bot Token、手机号、验证码、两步验证密码仍然**一律不落盘**，只认环境变量或交互输入（连日志也不许出现）。session 由 TDLib 自己落在 `data_dir`，配置里不记任何登录态。
 </Callout>
 
 ## 几条约定 [#几条约定]

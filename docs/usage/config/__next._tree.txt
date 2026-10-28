@@ -3,4 +3,4 @@
 3:[["children",{"s":"__PAGE__","h":160}]]
 2:[["children",{"s":{"n":"slug","t":"oc","k":"usage/config","s":[]},"h":65600,"c":"$Q3"}]]
 1:[["children",{"s":"docs","h":131104,"c":"$Q2"}]]
-0:{"b":"HiUxG5SI4nnhrX3pjdl0C","t":{"t":{"s":"","h":131152,"c":"$Q1"}}}
+0:{"b":"cKMMRsE6Uqib8w7jOmhbd","t":{"t":{"s":"","h":131152,"c":"$Q1"}}}

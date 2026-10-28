@@ -4,12 +4,45 @@
 是流经更新管线时的洋葱式拦截点。两者的注册都记在**当前插件的作用域**下：
 插件卸载（或加载失败）时宿主一次性回滚这批注册。
 
-## 注册工具：只登记元数据 [#注册工具只登记元数据]
+## 注册工具：元数据 + 处理器 [#注册工具元数据--处理器]
 
-<Callout type="warn">
-  本版 ABI **只登记元数据**：`register_tool` 收的是一份 JSON 描述，里面没有函数指针的位置，
-  登记出来的工具一律是 `handler: None` 的**声明型工具**。插件无法让宿主回调进自己来执行工具。
-</Callout>
+ABI v4 的 `register_tool` 收三个东西：JSON 描述、可选的处理器、处理器要用的 `user_data`。
+处理器是 `C-unwind` 的 `fn(user_data, input_json) -> *const c_char`，返回 JSON 字符串。
+
+```rust
+use std::cell::RefCell;
+use std::ffi::{CStr, CString};
+
+// 处理器返回的是**插件自己的**线程局部缓冲：宿主会立刻读走，不负责释放。
+thread_local! {
+    static REPLY: RefCell<CString> = RefCell::new(CString::default());
+}
+
+fn reply(json: &str) -> *const std::ffi::c_char {
+    REPLY.with(|slot| {
+        *slot.borrow_mut() = CString::new(json).unwrap_or_default();
+        slot.borrow().as_ptr()
+    })
+}
+
+unsafe extern "C-unwind" fn echo(
+    _user: *mut std::ffi::c_void,
+    input: *const std::ffi::c_char,
+) -> *const std::ffi::c_char {
+    let raw = unsafe { CStr::from_ptr(input) }.to_string_lossy();
+    reply(&format!(r#"{{"echo":{raw}}}"#))
+}
+
+let handle = host.register_tool(
+    r#"{"name":"demo.echo","description":"回显入参","input_schema":{"type":"object"}}"#,
+    Some(echo),
+    std::ptr::null_mut(),
+);
+```
+
+只登记元数据（不提供执行能力）用 `register_tool_meta(descriptor)`，等价于
+`register_tool(descriptor, None, null)`。`handle` 无效（`id == 0`）表示登记被拒
+（重名、schema 不合法等）。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -24,38 +57,28 @@
 | `is_async` | bool | 默认 `false` |
 | `callable` | bool | **读出时才有**：本进程里有没有可调处理器 |
 
-```rust
-let handle = host.register_tool(&json!({
-    "name": "demo.echo",
-    "version": "0.1.0",
-    "description": "把入参原样回出去",
-    "input_schema": {
-        "type": "object",
-        "properties": { "text": { "type": "string" } },
-        "required": ["text"]
-    },
-}).to_string());
-```
+## 调用工具：请求号或同步结果 [#调用工具请求号或同步结果]
 
-`handle` 无效（`id == 0`）表示登记被拒（重名、schema 不合法等）。
+两条入口，按需选：
 
-## 调用工具：走注册表 [#调用工具走注册表]
+| 入口 | 返回 | 用途 |
+| --- | --- | --- |
+| `call_tool(name, input_json)` | `RequestId` | 只需要“发出去”，或将来接异步工具 |
+| `call_tool_result(name, input_json)` | 结果 JSON 字符串 | **同步**拿结果（失败是 `{"error": "…"}`） |
 
-`call_tool(name, input_json)` 返回**请求号**（和 `td_invoke*` 一样，不是结果）。宿主把它交给
-`ToolRegistry::call_tool`，顺序是：
+`call_tool_result` 的顺序是：
 
 ```text
 查表 → 权限门 → input_schema 校验 → 处理器 → output_schema 校验
 ```
 
-本版 ABI 登记的工具没有处理器，所以对**这类**工具调 `call_tool` 只会拿到**无效请求号**
-（`id == 0`）——声明型工具的用途是「让它出现在 `list_tools` 里、被别人发现」，不是被真的执行。
-
 `list_tools()` 返回全部工具的元数据 JSON 数组。**宿主线程局部缓冲**：读完即弃，
 要留就当场拷走，**不要试图释放它**。
 
-脚本侧的名字不同：Python 是 `host.register_tool(...)`，JS 是 `host.registerTool(...)`，
-都只收 `name` / `description` / `input_schema`。
+脚本侧（`fuyubot_plugin.*` 内嵌桥）：Python `host.call_tool(name, input, on_response)`、
+JS `host.callTool(name, input, onResponse)` 现在都走同步结果，回调收到 `output`
+（失败是 `{"error": …}`）。脚本注册工具仍只有元数据（`registerTool` / `register_tool`），
+没有处理器指针——脚本进程不能把函数指针交回宿主。
 
 ## 中间件：六阶段洋葱 [#中间件六阶段洋葱]
 
