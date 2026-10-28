@@ -202,6 +202,110 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 对这类库 `plugin_stop` 与注册回滚照跑，但**故意不卸载那个 `Library`**，让它映射到进程退出。
 代价是「同一进程内反复加载同一个 Go 插件」不可靠（热重载路径），收益是 Go 插件能正常用。
 
+## 依赖与激活顺序
+
+每个插件有两个依赖列表：`inject`（硬）与 `soft_inject`（软）。它们**只影响准入与顺序**，
+不影响加载——插件已经 `dlopen` 进来了，只是还没轮到它跑。
+
+<svg viewBox="0 0 680 478" width="100%" role="img" aria-label="依赖解析：硬依赖管准入，软依赖管排序" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>依赖解析：硬依赖管准入，软依赖管排序</title>
+  <desc>每轮先退掉依赖已消失的，再激活一个：硬依赖不齐就停在 Pending，齐了就按「软依赖也齐的先」排序后激活；激活失败会级联到依赖它的插件。</desc>
+  <defs>
+    <marker id="dep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="140" y="16" width="400" height="48" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="340" y="35" fontSize="12.5" fontWeight="500" textAnchor="middle" fill="currentColor">插件清单</text>
+  <text x="340" y="53" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">注册顺序 = 文件名字典序，所以同层 tie-break 是确定的</text>
+
+  <path d="M340 64 L340 88" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="140" y="92" width="400" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="340" y="112" fontSize="12.5" fontWeight="500" textAnchor="middle" fill="currentColor">每轮 reconcile：先退后进</text>
+  <text x="340" y="130" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">依赖不再满足的先 Deactivate，然后只推进一个 fiber</text>
+
+  <path d="M340 148 L340 172" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="140" y="176" width="400" height="48" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="340" y="200" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">硬依赖（inject）全可用？</text>
+
+  <path d="M240 224 L180 246" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+  <text x="196" y="240" fontSize="10.5" fill="#E24B4A">不齐</text>
+  <path d="M440 224 L490 246" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.55" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+  <text x="470" y="240" fontSize="10.5" fill="var(--color-fd-primary)">齐了</text>
+
+  <rect x="40" y="250" width="280" height="60" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="180" y="270" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">Pending：等着</text>
+  <text x="180" y="288" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">不是失败——提供者可能只是还没起来</text>
+
+  <rect x="340" y="250" width="300" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="490" y="270" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">按软依赖排序</text>
+  <text x="490" y="287" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">软依赖也齐的先，其余排后面</text>
+
+  <path d="M490 302 L490 322" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="340" y="326" width="300" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="490" y="346" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">激活这一个 fiber</text>
+  <text x="490" y="363" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">跑 apply，注册落进它自己的作用域</text>
+
+  <path d="M430 378 L400 398" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+  <path d="M550 378 L580 398" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="340" y="402" width="130" height="48" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="405" y="426" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Active</text>
+
+  <rect x="490" y="402" width="150" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="565" y="420" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Failed</text>
+  <text x="565" y="438" fontSize="10" textAnchor="middle" dominantBaseline="central" fill="#E24B4A">级联到依赖它的</text>
+</svg>
+
+四条规则：
+
+- **硬依赖不齐 → 不激活**，停在 `Pending`。这是「等」，不是「错」——提供者可能只是排在后面还没轮到。
+- **软依赖不齐 → 照样激活**，只是排在有软依赖的后面（两轮扫描：先扫软的也齐了的，再扫其余）。
+- **每轮只推进一个 fiber**，先退后进。一轮的推进量有保险丝（`2n + 16`），万一依赖图构了环也不会卡死。
+- **激活失败 → 级联**：依赖它的插件一并标 `Failed`，因为那个提供者永远回不来了。
+
+<svg viewBox="0 0 680 210" width="100%" role="img" aria-label="四种状态怎么走" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>四种状态怎么走</title>
+  <desc>Pending 等到依赖齐了才进 Activating；apply 成功是 Active，报错是 Failed；Active 的依赖消失会退回 Pending。Failed 是终态。</desc>
+  <defs>
+    <marker id="state-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="50" width="140" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="110" y="74" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Pending</text>
+
+  <rect x="240" y="50" width="140" height="48" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="310" y="74" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Activating</text>
+
+  <rect x="440" y="50" width="140" height="48" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="510" y="74" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Active</text>
+
+  <rect x="240" y="150" width="140" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="310" y="174" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Failed</text>
+
+  <path d="M180 74 L236 74" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="208" y="64" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.6">依赖齐</text>
+
+  <path d="M380 74 L436 74" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="408" y="64" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.6">成功</text>
+
+  <path d="M310 98 L310 146" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="318" y="126" fontSize="10" fill="#E24B4A">apply 报错</text>
+
+  <path d="M510 98 L510 120 L110 120 L110 98" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="310" y="114" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.55">依赖消失 → Deactivate（退回等着）</text>
+</svg>
+
+`Pending` 与 `Failed` 的分界就是「还可能好」和「不会好了」：`is_permanently_missing` 只在
+提供者**已经 Failed** 时返回真。服务表里没有、也没有同名 fiber 的依赖，一律保持 `Pending`——
+它可能是以后才出现的服务（比如另一个插件在外层作用域里 later 才 provide）。
+
 ## 两种插件形态
 
 <svg viewBox="0 0 680 348" width="100%" role="img" aria-label="进程边界：动态库插件同进程，脚本插件一进程一脚本" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
