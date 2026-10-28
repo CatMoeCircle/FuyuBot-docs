@@ -399,31 +399,37 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 
 ## 绑定层与运行时（`fuyubot-tdlib-sys` / `fuyubot-tdlib`）
 
-```text
-crates/fuyubot-tdlib-sys/  ← 绑定层（-sys）：只出类型，不做加载
-  build.rs：必需输入 td_api.tl 的获取 + 编译期两份产物（无条件执行，没有 feature 早退）
-  src/：build_support.rs（两个构建脚本共享的缓存/下载设施，#[path] 同一份）
-        ffi.rs（函数指针 + 符号名 + 指针形状 const assert）
-        tl_schema.rs（解析与 JSON 互转，build.rs 与运行时共用）
-        tl_codegen.rs + docs.rs（→ Rust 类型 / TL 标记 → rustdoc）
-        schema.rs（TdApiSchema）、td_api.rs（include! 生成物）
-crates/fuyubot-tdlib/  ← 运行时半边（依赖并重导出 sys）
-  build.rs：只管 vendored 动态库 + 把库 staging 到可执行文件旁边
-  src/：loader.rs / loader/vendored.rs / client.rs / authorize.rs
-```
+两个 crate 一人一半：`-sys` 只出类型、不做加载，`tdlib` 才是运行时。
 
-`fuyubot_tdlib::` 根上重导出 sys 的 `ffi` / `schema` / `td_api` / `tl_schema` 模块与 `TdApiSchema` /
-`EntryKind` / `TlEntry` / `TlParam` / `SchemaError` / `TdApi` / `DEFAULT_LOG_VERBOSITY`——**既有调用方的
-路径全部不变**。`src/build_support.rs` 与 `src/loader/vendored.rs` 都被**两边共用**（各自的 build.rs 用
-`#[path]` 引同一份源码），所以它们只能依赖 std 与可选依赖；`[package.metadata.fuyubot]` 有两份，值必须
-一致（守卫测试 `metadata_is_in_sync_between_the_two_crates`）。
+| crate | `build.rs` 做什么 | `src/` 里有什么 |
+| --- | --- | --- |
+| `fuyubot-tdlib-sys`<br/>绑定层 | 拿 `td_api.tl` + 生成编译期两份产物（无条件执行，没有 feature 早退） | `build_support.rs`（与另一个 crate 共用的缓存/下载设施）、`ffi.rs`（函数指针 + 符号名 + 指针形状 `const assert`）、`tl_schema.rs`（解析与 JSON 互转）、`tl_codegen.rs` + `docs.rs`、`schema.rs`、`td_api.rs`（`include!` 生成物） |
+| `fuyubot-tdlib`<br/>运行时 | 只管 vendored 动态库 + 把库 staging 到可执行文件旁边 | `loader.rs` / `loader/vendored.rs` / `client.rs` / `authorize.rs` |
 
-运行时加载优先级（`loader::resolve`）：`TDLIB_TDJSON_PATH` 文件/目录 → **vendored 目录 →
-可执行文件所在目录（ExeDir）** → Linux 带版本号系统库 → 裸库名（真去 dlopen 试一次）；全失败返回
-`TdlibLoadError::NotFound`，消息里逐条列出 `[1]`…`[4]` 的尝试与原因。真正加载走
-`loader::open_library`（Windows 绝对路径走 `LOAD_WITH_ALTERED_SEARCH_PATH`），**不是 `Library::new`**
-——新增任何加载动态库的地方都走它。`@extra` 是**字符串**（`RequestId::to_extra()`），`route()`
-遇到非数字 `@extra` 会退化成更新而不是 panic。
+三条边界约定：
+
+- **重导出的路径不变**：`fuyubot_tdlib::` 根上重导出 `-sys` 的 `ffi` / `schema` / `td_api` /
+  `tl_schema` 与 `TdApiSchema` / `EntryKind` / `TlEntry` / `TlParam` / `SchemaError` / `TdApi` /
+  `DEFAULT_LOG_VERBOSITY`，所以既有调用方一行都不用改。
+- **两份源码被两边共用**：`build_support.rs` 与 `loader/vendored.rs` 各自的 `build.rs` 都用 `#[path]`
+  引同一份，因此它们只能依赖 std 与可选依赖。
+- **两份 metadata 必须一致**：`[package.metadata.fuyubot]` 在两个 crate 里各有一份，值要对得上
+  （守卫测试 `metadata_is_in_sync_between_the_two_crates`）。
+
+`loader::resolve` 按这个顺序找动态库：
+
+1. `TDLIB_TDJSON_PATH`（文件或目录）
+2. **vendored 目录**
+3. **可执行文件所在目录**（ExeDir）
+4. Linux 带版本号的系统库
+5. 裸库名（真去 `dlopen` 试一次）
+
+全失败返回 `TdlibLoadError::NotFound`，消息里逐条列出 `[1]`…`[4]` 的尝试与原因。
+
+真正加载**必须**走 `loader::open_library`（Windows 绝对路径会走 `LOAD_WITH_ALTERED_SEARCH_PATH`），
+**不要直接用 `Library::new`**——以后任何新增的加载动态库的地方都走它。
+
+`@extra` 是**字符串**（`RequestId::to_extra()`）；`route()` 遇到非数字的 `@extra` 会退化成更新，不 panic。
 
 ### `td_api.tl` 转成了什么（**只在编译期**）
 
