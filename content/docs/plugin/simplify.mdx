@@ -20,6 +20,10 @@ let simplify = Simplify::new(host); // HostApi 是 Copy，随手复制
 本文按**功能范围**分组；想知道这些方法内部怎么实现（为什么这么拼、为什么这么等），
 看[开发 › simplify 封装是怎么实现的](../dev/simplify-internals.mdx)。
 
+除了发/改/删，这一层还收了四件「TDLib 里没有直觉上那个方法」的事：
+[管理权](#11-管理权adminright) / [转发](#12-转发forwardparams) /
+[表情反应](#13-表情反应reaction) / [连接状态](#14-连接状态connectiontracker)。
+
 ## 1. 文本内容：`Text` 与 `ParseMode`
 
 带标记的文本**不由本 crate 解析**——经**同步**的 `td_execute` 问 TDLib 的 `parseTextEntities`
@@ -80,8 +84,8 @@ let simplify = Simplify::new(host); // HostApi 是 Copy，随手复制
       default: 'None',
     },
     topic_id: {
-      description: '发到哪个话题/楼层 → TDLib 的 topic_id（不是 Bot API 的 message_thread_id）。',
-      type: 'Option<i64>',
+      description: '发到哪个话题 → TDLib 的 topic_id。**不是** Bot API 的 message_thread_id：论坛话题是 Topic::forum(..)，非论坛群组的评论串才是 Topic::thread(..)。',
+      type: 'Option<Topic>',
       default: 'None',
     },
     reply_markup: {
@@ -116,6 +120,20 @@ let sent = simplify.send_message(
     },
 )?;
 ```
+
+### 话题：`Topic`
+
+`topic_id` 不是裸 id，是 TDLib 的 `MessageTopic`——**四个构造器各有各的 id 类型**，选错了 TDLib 就拒：
+
+| 构造 | 用在哪 | 发出的 `topic_id` |
+| --- | --- | --- |
+| `Topic::forum(id)` | **论坛**群组，以及与 bot 的私聊 | `{"@type":"messageTopicForum","forum_topic_id":…}` |
+| `Topic::thread(id)` | **非论坛**群组的评论串 | `{"@type":"messageTopicThread","message_thread_id":…}` |
+| `Topic::direct_messages(id)` | 频道的私信话题 | `{"@type":"messageTopicDirectMessages","direct_messages_chat_topic_id":…}` |
+| `Topic::saved_messages(id)` | 收藏夹话题 | `{"@type":"messageTopicSavedMessages","saved_messages_topic_id":…}` |
+
+⚠️ 刻意**没有** `From<i64>`：论坛话题是 `int32`、评论串是 `int53`，一个裸数字说不清是哪一种，
+隐式转任何一个都会在另一种群里静默发错。（这一层以前固定按 `messageTopicThread` 拼，非论坛群以外全是错的。）
 
 ## 3. 媒体：`Media` / `InputFile` / `Thumbnail`
 
@@ -196,7 +214,7 @@ Media::video("/tmp/a.mp4")
       default: 'None',
     },
     reply_to_message_id: { description: '整组回复同一条消息。', type: 'Option<i64>', default: 'None' },
-    topic_id: { description: '发到哪个话题。', type: 'Option<i64>', default: 'None' },
+    topic_id: { description: '发到哪个话题（见「话题：Topic」）。', type: 'Option<Topic>', default: 'None' },
     timeout_ms: {
       description: '整组共用的一个预算：先等 Messages 响应、再等 N 条结局，不是每项各等一次。',
       type: 'u64',
@@ -372,20 +390,168 @@ let _guard = on_command(host, |command| {
 一套独立的参数类型（`RichMessageParams`），是因为它跟「文本 + 媒体」的互斥规则完全不同
 （那边二选一，这边是块树）。API 见[富消息](./rich.mdx)，本文不重复。
 
-## 11. 不挂在 `Simplify` 上的公开函数
+## 11. 管理权：`AdminRight`
+
+TDLib 里 `user` **连 `is_bot` 都没有**（身份在 `user.type`），管理权也不在任何「用户信息」上——
+它只在 `getChatMember` 给的 `ChatMember.status` 里。
+
+<TypeTable
+  type={{
+    'is_chat_admin(chat_id, user_id, right, timeout_ms)': {
+      description: '这个用户在这个聊天里有没有管理权。right: None 只看身份，Some(..) 还要求那一项权限为真。',
+      type: 'bool',
+    },
+    'am_i_chat_admin(chat_id, right, timeout_ms)': {
+      description: '自己有没有管理权（先 getMe 拿 id 再查成员；getChat 不带这个字段，没有捷径）。',
+      type: 'bool',
+    },
+    'chat_member(chat_id, user_id, timeout_ms)': {
+      description: '原始 ChatMember；超时 / TDLib 报错都是 None。',
+      type: 'Option<Value>',
+    },
+    'is_admin_status(&status, right)': {
+      description: '纯函数：手上已有 ChatMember / updateChatMember 时直接判，省一次往返。',
+      type: 'bool',
+    },
+  }}
+/>
+
+判定规则（[`is_admin_status`](#11-管理权adminright)）：
+
+| `status.@type` | `right: None` | `right: Some(x)` |
+| --- | --- | --- |
+| `chatMemberStatusCreator`（群主） | `true` | `true`——群主拥有一切（唯一例外见下） |
+| `chatMemberStatusAdministrator` | `true` | `status.rights.<x>` 必须为 `true`，字段缺失按 `false` |
+| 其余四种（`member` / `restricted` / `left` / `banned`） | `false` | `false` |
+
+⚠️ 群主的**匿名**是 `status.is_anonymous`，不在 `rights` 里——所以 `Some(AdminRight::IsAnonymous)`
+对群主读的是前者。`AdminRight` 共 18 项，名字就是 `chatAdministratorRights` 的字段名
+（`can_manage_chat` / `can_delete_messages` / `can_pin_messages` / …），认不出的字段名
+`AdminRight::from_key` 返回 `None`。
+
+拿不到成员信息（超时 / TDLib 报错 / 不是群聊）一律 `false`：**不确定时说「没有」比说「有」安全**。
+
+## 12. 转发：`ForwardParams`
+
+`simplify.forward_messages(chat_id, from_chat_id, &params)` → `Result<Vec<Value>>`。
+
+<TypeTable
+  type={{
+    message_ids: {
+      description: '要转发的消息 id。**会排序去重**——TDLib 要求严格递增、最多 100 条。',
+      type: 'Vec<i64>',
+      required: true,
+    },
+    topic_id: { description: '转发到哪个话题。', type: 'Option<Topic>', default: 'None' },
+    send_copy: {
+      description: '不带原作者地复制内容（发到私密聊天时必为 true）。',
+      type: 'bool',
+      default: 'false',
+    },
+    remove_caption: {
+      description: '去掉媒体标题（只在 send_copy 为真时有意义）。',
+      type: 'bool',
+      default: 'false',
+    },
+    timeout_ms: { description: '等响应的上限。', type: 'u64', default: '30000' },
+  }}
+/>
+
+走的是 `forwardMessages`（一次一组，**不是** Bot API 的 `forwardMessage`）。返回的是**还没发完**的临时消息
+——这里只等**响应**，不等发送结局，最终消息照旧经 `updateMessageSendSucceeded` / `updateMessageSendFailed`
+回来。单项没转发成功时 TDLib 在对应位置放 `null`，所以数组长度与排序后的 `message_ids` 一致、
+但元素可能是 `Null`。
+
+空列表 → `SimplifyError::EmptyForward`，超过 100 条 → `TooManyForward`，两者都在发请求**之前**挡掉。
+
+## 13. 表情反应：`Reaction`
+
+bot 与用户号**不是同一个方法**，这一点没有「通用写法」可言：
+
+| 方法 | 用哪个 TDLib 方法 | 语义 |
+| --- | --- | --- |
+| `react(chat_id, msg, &reaction, is_big, timeout_ms)` | **自动**：bot → `setMessageReactions`，用户 → `addMessageReaction` | 加一个反应 |
+| `unreact(chat_id, msg, &reaction, timeout_ms)` | **自动**：bot → `setMessageReactions` 传空列表，用户 → `removeMessageReaction` | 去掉反应 |
+| `add_reaction(..)` | 固定 `addMessageReaction` | 已知自己是用户号时省掉 `getMe` |
+| `set_reactions(..)` | 固定 `setMessageReactions` | 已知自己是 bot 时；空切片 = 清空 |
+
+自动判定靠 `getMe` 的 `user.type.@type == "userTypeBot"`，也就是说 `react` / `unreact` 每次会多一次
+`getMe` 往返（它不碰服务器，TDLib 本地应答）。⚠️ bot 侧没有「删一个」的说法，只能整组覆盖——
+所以 **bot 的 `unreact` 会忽略 `reaction` 参数**，直接清空。
+
+`Reaction::emoji("👍")` → `reactionTypeEmoji`；`Reaction::custom_emoji(id)` → `reactionTypeCustomEmoji`。
+付费反应（`reactionTypePaid`）不在这套里。
+
+## 14. 连接状态：`ConnectionTracker`
+
+TDLib **没有** `getConnectionState`——连接状态只以 `updateConnectionState` 的形式出现，
+所以「现在连上了吗」只能自己订阅并记住最新那条。
+
+<TypeTable
+  type={{
+    'track_connection_state()': {
+      description: '订阅并记住最新一条 updateConnectionState → ConnectionTracker（drop 即退订）。把它存进插件状态。',
+      type: 'Option<ConnectionTracker>',
+    },
+    'ConnectionTracker.is_ready()': {
+      description: '当前是不是 connectionStateReady。没收到过任何更新也算没连上。',
+      type: 'bool',
+    },
+    'ConnectionTracker.connection()': {
+      description: '解析过的状态：WaitingForNetwork / ConnectingToProxy / Connecting / Updating / Ready。',
+      type: 'Option<ConnectionState>',
+    },
+    'ConnectionTracker.state()': { description: '更新里的 state 字段原始 JSON。', type: 'Value' },
+    'ConnectionTracker.update()': { description: '整条 updateConnectionState（一条都没收到过时是 Null）。', type: 'Value' },
+    'ConnectionTracker.wait_ready(timeout_ms)': {
+      description: '阻塞等到 Ready（已经是就直接 true），全程只认这一个预算。',
+      type: 'bool',
+    },
+    'next_connection_state(timeout_ms)': {
+      description: '一次性：等**下一条** updateConnectionState；超时返回 None。',
+      type: 'Option<Value>',
+    },
+    'wait_until_connected(timeout_ms)': {
+      description: '不订阅、纯等待到 Ready。已有订阅时优先用 ConnectionTracker::wait_ready。',
+      type: 'bool',
+    },
+  }}
+/>
+
+两个坑：
+
+- **订阅之前推过的更新补不回来**（TDLib 的状态更新不重放），所以在插件 `start` 里尽早调；
+  晚订阅只会漏掉开头的 `Connecting` / `Updating`。
+- 这是**连接**状态（到 Telegram 的链路），**不是**授权状态（`updateAuthorizationState`，登录那一套）。
+  两者独立：`connectionStateReady` 也可能还没登录。
+
+```rust
+struct MyPlugin {
+    connection: Option<ConnectionTracker>,
+}
+// start 里
+self.connection = simplify.track_connection_state();
+// 之后
+if self.connection.as_ref().is_some_and(|c| c.is_ready()) { /* … */ }
+```
+
+## 15. 不挂在 `Simplify` 上的公开函数
 
 纯函数，随手支配——想绕过某些方法的等待语义、自己拼请求时尤其有用：
 
 | 函数 | 作用 |
 | --- | --- |
 | `send_params` / `album_params` / `edit_text_params` / `edit_caption_params` / `edit_media_params` / `edit_markup_params` | 组装参数（**不含 `@type`**，那是宿主补的） |
+| `chat_member_params(chat_id, user_id)` / `forward_params(chat_id, from_chat_id, &params)` | 管理权 / 转发的参数（含 `MessageTopic` 与 `MessageSender` 的嵌套形状） |
+| `reaction_params` / `set_reactions_params` / `remove_reaction_params` | 三种反应请求的参数（user 分支与 bot 分支分开） |
+| `is_admin_status(&status, right)` | 判一份 `ChatMemberStatus` 有没有管理权，不发请求 |
 | `content_json(&Media, render)` | 媒体 → `InputMessageContent` |
 | `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
 | `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(..)` | 响应 → `formattedText`；拿不到退回纯文本 |
 | `plain_text(&Text)` | 纯文本 → `formattedText`（不花往返），也是默认渲染器 |
 | `command_of(&Value)` / `on_command(host, handler)` | 见[第 7 节](#7-命令与输入) |
 
-## 12. 参数名为什么是这几个
+## 16. 参数名为什么是这几个
 
 真 `td_api.tl`：`sendMessage chat_id topic_id reply_to options reply_markup input_message_content`
 ——**没有** `message_thread_id` / 顶层 `disable_notification` / 顶层 `caption`（那些是 Bot API 的名字）。
@@ -393,17 +559,20 @@ let _guard = on_command(host, |command| {
 
 | 参数结构体的字段 | 落到的 TDLib 字段 |
 | --- | --- |
-| `topic_id` | `topic_id` = `{"@type":"messageTopicThread","message_thread_id":…}` |
+| `topic_id: Some(Topic::forum(n))` | `topic_id` = `{"@type":"messageTopicForum","forum_topic_id":n}` |
+| `topic_id: Some(Topic::thread(n))` | `topic_id` = `{"@type":"messageTopicThread","message_thread_id":n}` |
 | `reply_to_message_id` | `reply_to` = `{"@type":"inputMessageReplyToMessage","message_id":…}` |
 | `reply_markup` | `reply_markup` = `{"@type":"replyMarkupInlineKeyboard","rows":…}` |
 | `link_preview: Some(false)` | `inputMessageText.link_preview_options.is_disabled = true` |
 | `text` / `media.caption` | `formattedText`（经 `parseTextEntities`） |
+| `is_chat_admin` 的 `user_id` | `getChatMember.member_id` = `{"@type":"messageSenderUser","user_id":…}` |
 
-## 13. 异步版：`*_then`
+## 17. 异步版：`*_then`
 
 每个等待版都有一个 `*_then`（`send_message_then` / `send_message_album_then` /
 `edit_message_text_then` / `edit_message_caption_then` / `edit_message_media_then` /
-`edit_message_reply_markup_then` / `delete_message_then` / `answer_callback_query_then`）：
+`edit_message_reply_markup_then` / `delete_message_then` / `answer_callback_query_then` /
+`forward_messages_then` / `react_then` / `unreact_then`）：
 把等待挪到另一个线程，**立刻返回**，结局交给闭包。
 
 ```rust
@@ -415,7 +584,7 @@ simplify.send_message_then(chat_id, &params, |result| match result {
 
 ⚠️ 它们返回那个线程的 `JoinHandle`——**插件要在 `stop()` 里 join 掉**，否则动态库卸载之后线程还在跑库里的代码。
 
-## 14. 返回值与错误
+## 18. 返回值与错误
 
 方法成功时返回的就是 TDLib 原始 JSON（`Value` / `Vec<Value>` / `()`），没有额外包装。
 带状态的返回类型只有 `EntitiesResolution` / `EntityResult` / `FileDownload` 三个（见[第 9 节](#9-实体与下载)）。
@@ -425,6 +594,8 @@ simplify.send_message_then(chat_id, &params, |result| match result {
     'SimplifyError::Abi': { description: 'ABI 层出错（宿主没接 TDLib、请求号无效等）。', type: 'AbiError' },
     'SimplifyError::BadString': { description: '参数串里含 NUL 字节。', type: '—' },
     'SimplifyError::AlbumSize': { description: '相册不是 2–10 项——发之前就挡掉，不会发出请求。', type: 'usize' },
+    'SimplifyError::EmptyForward': { description: '转发的 message_ids 是空的——发之前就挡掉。', type: '—' },
+    'SimplifyError::TooManyForward': { description: '一次转发超过 100 条（TDLib 的硬上限）。', type: 'usize' },
     'SimplifyError::SendFailed': {
       description: '发出去了但 TDLib 说没发成（updateMessageSendFailed），例如限流 429。',
       type: '{ code, message }',
@@ -448,7 +619,7 @@ simplify.send_message_then(chat_id, &params, |result| match result {
 
 编辑类**刻意不重试**——限流该等多久是调用方的事。
 
-## 15. 简化事件
+## 19. 简化事件
 
 封装层额外推的两条事件（不想用就订阅原始 `@type`，两者不冲突）：
 

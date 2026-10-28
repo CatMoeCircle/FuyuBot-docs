@@ -49,7 +49,7 @@ let filter = json!({ "event_type": "response", "request_id": request.id });
 | 你在 Bot API 里习惯的 | 在 TDLib 里这么写 |
 | --- | --- |
 | `sendPhoto` / `sendDocument` / `sendLocation` | `sendMessage` + `input_message_content.@type` = `inputMessagePhoto` / `inputMessageDocument` / `inputMessageLocation` |
-| `message_thread_id` | `topic_id`（`{"@type":"messageTopicThread","message_thread_id":N}`） |
+| `message_thread_id` | `topic_id`，类型是 `MessageTopic`——**论坛**群组用 `{"@type":"messageTopicForum","forum_topic_id":N}`，**非论坛**群组的评论串才是 `{"@type":"messageTopicThread","message_thread_id":N}`（用 [`Topic`](./simplify.mdx#话题topic) 就不会选错） |
 | `reply_to_message_id` | `reply_to`（`{"@type":"inputMessageReplyToMessage","message_id":N}`） |
 | 顶层 `disable_notification` / `protect_content` | `options`（`@type: messageSendOptions`）里 |
 | 顶层 `caption` | 在内容类型里（`inputMessageText` / `inputMessagePhoto` …） |
