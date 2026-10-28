@@ -3,5 +3,5 @@
   "description": "Rust / C / C++ / Go / Python / JS / TS 写插件",
   "icon": "Puzzle",
   "root": true,
-  "pages": ["index", "scripts", "rust", "native", "go", "python", "js-ts", "events", "tdlib", "simplify", "tools", "abi", "testing"]
+  "pages": ["index", "scripts", "rust", "native", "go", "python", "js-ts", "events", "tdlib", "simplify", "tools", "async", "abi", "testing"]
 }

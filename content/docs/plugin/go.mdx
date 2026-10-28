@@ -96,6 +96,6 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录
 
 ## 相关
 
-- ABI 细节（20 个字段、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
+- ABI 细节（2 个 u32 + `host_ctx` + 19 个函数指针、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
 - C / C++ 的写法（同一份头文件）：[C 与 C++ 插件](./native.mdx)
 - 订阅与过滤器：[订阅与事件](./events.mdx)

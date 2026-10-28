@@ -7,6 +7,12 @@ JS / TS 插件就是一个目录：`package.json` 写身份，入口文件写逻
 管通信。运行时是 [bun](https://bun.sh)，**TS 不需要 `tsc`**。上手三步见
 [脚本插件](./scripts.mdx)。本页是**方法手册 + 示例**。
 
+<Callout type="info">
+  本页讲托管路径的 `fuyubot.js` / `fuyubot.ts`（`fuyubot-js-host`）。如果用的是
+  `script_plugin!` 内嵌的 `fuyubot_plugin.js`，它还支持 `invokeAsync` / `waitAsync`，
+  见 [异步等待](./async.mdx)。
+</Callout>
+
 ```text
 my-plugin/
   package.json   ← 身份（"fuyubot" 段：name / entry）
