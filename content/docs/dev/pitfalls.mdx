@@ -9,7 +9,7 @@ description: 编号即引用锚：这些坑真踩过，别再踩回去
 
 - **`extern "C"` 边界逃出去的 panic 直接 abort**，宿主来不及 `catch_unwind`：插件与中间件回调必须是
   `unsafe extern "C-unwind"`，`define_plugin!` 自己也要包一层。
-- **一个 crate 只能展开一次 `define_plugin!`**：四个导出符号名是 ABI 定死的，展开两次必然重复定义。
+- **一个 crate 只能展开一次 `define_plugin!`**：七个导出符号名是 ABI 定死的，展开两次必然重复定义。
 - **订阅句柄必须活着**：每轮循环里 `let _h = …` 就是每轮退订；`for` 里注册要把句柄收进循环外的 `Vec`。
 - **`Effect` / `Subscription` 是 `#[must_use]`**：`let _ =` 会立刻回滚；`drop` 就是注销。
 

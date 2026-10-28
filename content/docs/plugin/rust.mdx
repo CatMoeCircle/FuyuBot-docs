@@ -24,7 +24,7 @@ rust-version = "1.99"
 crate-type = ["cdylib"]          # 宿主 dlopen 的就是它
 
 [dependencies]
-fuyubot-plugin-api = "0.1.0"        # crates.io；对 SDK 源码开发时换成 path = "…/crates/fuyubot-plugin-api"
+fuyubot-plugin-api = "0.1.1"        # crates.io；对 SDK 源码开发时换成 path = "…/crates/fuyubot-plugin-api"
 ```
 
 那个空的 `[workspace]` 不是多余的：没有它，cargo 会一路往上找父目录的 workspace 声明然后报错。
@@ -156,7 +156,7 @@ fuyubot plugin install target/release/fuyubot_demo.dll
 
 <Callout type="error">
   `define_plugin!` **一个 crate 只能展开一次**。一个 cdylib 就是一个插件——这不是限制，是设计：
-  四个导出符号名由 ABI 定死，展开两次就是重复定义。
+  七个导出符号名由 ABI 定死，展开两次就是重复定义。
 </Callout>
 
 要发消息、调 TDLib、等响应，见 [调用 TDLib](./tdlib.mdx)；要按字段过滤更新，见

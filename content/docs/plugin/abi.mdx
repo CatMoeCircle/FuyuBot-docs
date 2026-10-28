@@ -20,7 +20,7 @@ v3 的四个契约符号仍是必需/可选的底线；v4 另外导出三个**�
 | `plugin_free_string` | `unsafe extern "C" fn(*mut c_char)` | **必须** | 释放**插件自己**分配的字符串（宿主从不 free 插件的指针） |
 | `plugin_free_handle` | `unsafe extern "C" fn(PluginHandle)` | v4 可选 | 版本不匹配、不能调 `plugin_stop` 时，用来释放 `plugin_init` 分配的状态 |
 | `fuyubot_abi_version` | `unsafe extern "C" fn() -> u32` | v4 可选 | 返回编译期 `ABI_VERSION`；静态工具只检查“存在”，值要运行时看 |
-| `plugin_manifest` | `unsafe extern "C" fn() -> *const c_char` | v4 可选 | 自描述 JSON（名字 + `inject` / `soft_inject`）；宿主接线仍在进行中 |
+| `plugin_manifest` | `unsafe extern "C" fn() -> *const c_char` | v4 可选 | 自描述 JSON（名字 / 版本 / `inject` / `soft_inject`）。宿主在 `plugin_init` **之前**读；名字与 `init` 不一致只告警，依赖以 manifest 为准 |
 
 符号名由常量钉住（`SYM_PLUGIN_INIT` / `SYM_PLUGIN_START` / `SYM_PLUGIN_STOP` /
 `SYM_PLUGIN_FREE_STRING` / `SYM_PLUGIN_FREE_HANDLE` / `SYM_PLUGIN_ABI_VERSION` /
@@ -32,10 +32,10 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `NULL`。`PluginHandle::FAILED` 是全零版本号，`const _` 里有
 `assert!(PluginHandle::FAILED.abi_version == 0)`。
 
-## HostApiVTable：`host_ctx` + 19 个函数指针
+## HostApiVTable：`host_ctx` + 20 个函数指针
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **19 个是函数指针**，全是 `Option<...>`；
-总大小 = `2 * size_of::<u32>() + 20 * size_of::<*const c_void>()`（`host_ctx` + 19 个函数），
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **20 个是函数指针**，全是 `Option<...>`；
+总大小 = `2 * size_of::<u32>() + 21 * size_of::<*const c_void>()`（`host_ctx` + 20 个函数），
 由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
 下表签名省略第一个参数 `host`：
@@ -53,8 +53,8 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 6 | `call_tool_result` | `(name, input_json) -> *const c_char` | `api_call_tool_result` | **同步**执行工具并返回结果 JSON（失败 `{"error":…}`）。宿主线程局部缓冲，读完即弃 |
 | 7 | `list_tools` | `() -> *const c_char` | `api_list_tools` | 全部工具的元数据 JSON 数组。**宿主线程局部缓冲**，读完即弃 |
 | 8 | `list_plugins` | `() -> *const c_char` | `api_list_plugins` | 进程内插件报告 JSON 数组（名字 / 状态 / 缺依赖 / 失败原因） |
-| 9 | `provide_service` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service` | 注册命名服务；`vtable` 必须活到注销为止 |
-| 10 | `get_service` | `(name) -> *const ServiceVTable` | `api_get_service` | 取回同一个指针；没有就是 `NULL` |
+| 9 | `provide_service` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service` | 注册命名服务到**调用者自己的作用域**（默认私有，兄弟插件看不见）；`vtable` 必须活到注销为止 |
+| 10 | `get_service` | `(name) -> *const ServiceVTable` | `api_get_service` | 从调用者自己的作用域**沿父链**向上查找；没有就是 `NULL` |
 | 11 | `td_invoke` | `(method_json) -> RequestId` | `api_td_invoke` | 发完整 TDLib 请求 JSON（含 `@type`） |
 | 12 | `td_invoke_simplified` | `(method_name, params_json) -> RequestId` | `api_td_invoke_simplified` | 给参数补上 `@type = method_name`；参数不是对象就整份替换成 `{"@type": …}` |
 | 13 | `td_execute` | `(request_json) -> *const c_char` | `api_td_execute` | **同步**执行不碰网络的方法（`td_json_client_execute`），当场返回响应 JSON。**不发请求号、不进请求留档、不等响应通道**——所以能在事件回调里用；宿主没接 TDLib 时返回 `NULL` |
@@ -64,6 +64,18 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 17 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
 | 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
 | 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + 回写 `fuyubot.toml`）；非 0 = 越权 / 解析失败 / 写盘失败 |
+| 20 | `provide_service_shared` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service_shared` | 注册到**进程级**（所有插件可见，这也是宿主那四个机制所在的层级）。同名会撞，只在真要共享时用。v4 起追加在 VTable **尾部** |
+
+## 服务作用域
+
+每个插件加载时拿到**自己的一层 `Context`**，于是：
+
+- `provide_service` 注册的服务只对本插件（和它更深的子作用域）可见——**默认私有**。
+  两个插件注册同名服务**不冲突**，各用各的实现。
+- 宿主注册在根上的公共服务（事件总线 / 服务容器 / 工具表 / 中间件管线）沿父链照样看得到。
+- 真要跨插件共享才用 `provide_service_shared`：它写进程级的根表，同名会和别人撞
+  （直接报 `ServiceNameExists`）。
+- 插件卸载时，它那层作用域连同里面的服务一起消失。
 
 两条形状上的硬要求：
 
@@ -109,6 +121,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 **版本 4 的改动**：
 - `register_tool` 增加 `handler` / `user_data`，工具终于能真的执行；
 - 尾部追加 `call_tool_result`（同步拿工具结果）与 `list_plugins`（插件报告）；
+- 尾部追加 `provide_service_shared`（第 20 项）：服务默认按插件作用域隔离，要共享得显式走它；
 - 新增静态导出 `plugin_free_handle` / `fuyubot_abi_version` / `plugin_manifest`。
 
 追加字段本身不破坏老插件（它们先比 `size`），但按契约「改 ABI 就加版本号」，

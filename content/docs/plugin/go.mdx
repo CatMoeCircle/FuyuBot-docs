@@ -3,7 +3,7 @@ title: Go 插件
 description: cgo 编 c-shared，逻辑用 Go 写、ABI 用一层 C 薄壳
 ---
 
-Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态库，宿主只要看到四个导出符号
+Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态库，宿主只要看到七个导出符号
 就认它。完整可跑的示例在 [`examples/go-ping`](https://github.com/CatMoeCircle/FuyuBot-SDK/tree/main/examples/go-ping)。
 
 <Callout type="info">

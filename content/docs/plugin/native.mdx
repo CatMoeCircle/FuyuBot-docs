@@ -19,14 +19,19 @@ fuyubot-sdk init ping --lang cpp --dir .      # 生成 plugin.cpp + fuyubot_plug
 fuyubot-sdk codegen --lang c --dir <工程目录>   # 只刷新头文件（C++ 用 --lang cpp，同一份）
 ```
 
-## 四个符号
+## 七个符号
+
+v3 是四件套，v4 又加了三个（都可以不写，但写了才有对应能力）。
 
 | 符号 | 必须吗 | 说明 |
 | --- | --- | --- |
 | `plugin_init` | **必须** | 比 `host->version != ABI_VERSION`，存下 VTable，返回 `PluginHandle` |
 | `plugin_start` | 可选 | 订阅/注册；返回 `0` 表示成功 |
 | `plugin_stop` | 可选 | 清状态；只登记元数据的插件可以不写 |
-| `plugin_free_string` | **必须** | 本插件不往外送字符串时也得有个空实现（宿主可能调它） |
+| `plugin_free_string` | **必须** | 释放本插件 `malloc` 出来的字符串（`plugin_manifest` 返回的那块也走它） |
+| `plugin_manifest` | v4 可选 | 返回自描述 JSON（名字 / 版本 / `inject` / `soft_inject`），宿主在 `init` 之前读 |
+| `fuyubot_abi_version` | v4 可选 | 静态返回 `ABI_VERSION`，`fuyubot-sdk check` 用它判断版本 |
+| `plugin_free_handle` | v4 可选 | ABI 版本不匹配时宿主靠它回收 `init` 分配的状态（那时不能调 `plugin_stop`） |
 
 `PluginHandle` 的判据是「`abi_version != 0` **且** `context` 非空」，所以 `context` 不能给 `NULL`。
 版本不对就返回全零句柄，宿主会把它当成拒绝加载。
@@ -72,7 +77,7 @@ FUYUBOT_EXPORT void plugin_free_string(char *ptr) { (void)ptr; }
 
 ## C++
 
-同 C，**唯一的硬差别**是四个导出符号必须在 `extern "C"` 里——C++ 会改函数名（mangling），
+同 C，**唯一的硬差别**是七个导出符号必须在 `extern "C"` 里——C++ 会改函数名（mangling），
 宿主按 ABI 定死的名字 `dlsym`，改了就找不到。
 
 ```cpp

@@ -38,7 +38,7 @@ $ fuyubot-sdk init demo --lang rust
 下一步：用你自己的工具链编译它（cargo build --release / gcc -shared / …）
 ```
 
-生成的 Rust 插件默认写 `fuyubot-plugin-api = "0.1.0"`（crates.io）。想对着 SDK 源码开发就设
+生成的 Rust 插件默认写 `fuyubot-plugin-api = "0.1.1"`（crates.io）。想对着 SDK 源码开发就设
 `FUYUBOT_SDK_PATH` 指向 SDK 仓库里放着 crate 的目录（`crates/`），生成器会改写成 `path = …`；
 没设且本地找不到源码时只写版本号。
 

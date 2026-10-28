@@ -43,7 +43,7 @@ graph TD
 | `fuyubot-loader` → 四个机制 + `tdlib` + `abi` + `core` | 允许（**只有它**） |
 
 组合只发生在两处：`HostRuntime::new`（把四个机制 `install` 进 `Context`）与 `HostRuntime` 里的
-17 个 `unsafe extern "C"` 桥。四个机制 crate 绝不彼此调用。
+20 个 `unsafe extern "C"` 桥（VTable 的 20 个函数指针各对应一个）。四个机制 crate 绝不彼此调用。
 
 ## 启动顺序：先 attach TDLib，再 load 插件
 
@@ -203,7 +203,7 @@ crates/fuyubot-tdlib/  ← 运行时半边（依赖并重导出 sys）
 
 ```mermaid
 graph LR
-  TL["td_api.tl<br/>TDLIB_TD_API_TL → 缓存 → Releases 下载"] --> P["tl_schema::parse"]
+  TL["td_api.tl<br/>TDLIB_TD_API_TL → 包内 vendor → 缓存 → 下载"] --> P["tl_schema::parse"]
   P --> G["tl_codegen::generate"] --> RS["$OUT_DIR/td_api_generated.rs"]
   RS --> TD["include! → fuyubot_tdlib_sys::td_api<br/>Rust 类型"]
   P --> J["$OUT_DIR/td_api.json"]
@@ -223,8 +223,8 @@ graph LR
 
 | 类型 / 函数 | 位置 | 作用 |
 | --- | --- | --- |
-| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（20 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
-| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 17 个桥的落点、请求留档、响应回投、`rollback_owner`、全局配置读写；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
+| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（21 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
+| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 20 个桥的落点、请求留档、响应回投、`rollback_owner`、全局配置读写；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
 | `TdClient` / `Routed` / `ReceiveLoop` | `fuyubot-tdlib` | TDLib 客户端；`route()` 分出 `Update` / `Response`；停止把手（`stop()` / `join()`，drop **不会**停） |
 | `Simplify` / `RichMessage` | `fuyubot-simplify` | 发消息 / 相册 / 编辑 / 删除 / Markdown 转 entities / 等响应 / **富消息**（`rich` 模块，本地 Markdown → 块树）；参数是**每个方法一个结构体** |
 | `TdApiSchema::compiled()` | `fuyubot-tdlib-sys` | 编译期烘焙的元数据；`check_request` 做本地方法名/参数名校验 |
