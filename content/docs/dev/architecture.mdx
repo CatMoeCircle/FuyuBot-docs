@@ -366,35 +366,36 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 
 ## 四大机制与内核
 
-```text
-core：lib.rs（Kernel：Created → Started → Stopped）/ context.rs（Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>）
-      effect.rs（Box<dyn FnOnce() + Send> 回滚守卫，#[must_use]，merge() 后注册者先撤销）
-      plugin.rs（Plugin trait + define_plugin!）/ manager.rs（PluginManager：load/load_all/unload/reload + DFS 三色拓扑排序）
-event：EventBus / Filter / SubscriptionHandle / EventContextExt
-service：ServiceContainer / ServiceHandle / ServiceContextExt
-tool：ToolDescriptor / ToolRegistry / ToolHandle / ffi 模块 / ToolContextExt
-middleware：Stage / Middleware / Next / Pipeline / MiddlewareHandle / MiddlewareContextExt
-```
+| crate | 里面有什么 |
+| --- | --- |
+| `fuyubot-core` | `lib.rs` 的 `Kernel`（Created → Started → Stopped）；`context.rs` 的 `Context`（`Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>`）；`effect.rs` 的 `Effect`（`Box<dyn FnOnce()>` 回滚守卫，`#[must_use]`，`merge()` 后注册者先撤销）；`plugin.rs` 的 `Plugin` trait + `define_plugin!`；`manager.rs` 的 `PluginManager`（load / load_all / unload / reload + DFS 三色拓扑排序） |
+| `fuyubot-event` | `EventBus` / `Filter` / `SubscriptionHandle` / `EventContextExt` |
+| `fuyubot-service` | `ServiceContainer` / `ServiceHandle` / `ServiceContextExt` |
+| `fuyubot-tool` | `ToolDescriptor` / `ToolRegistry` / `ToolHandle` / `ffi` 模块 / `ToolContextExt` |
+| `fuyubot-middleware` | `Stage` / `Middleware` / `Next` / `Pipeline` / `MiddlewareHandle` / `MiddlewareContextExt` |
 
-共用的三条约定：**回调错误类型由 core 定**（四个 crate 不能互相依赖，所以 `fuyubot_core::Result<T>`
-是全仓唯一允许 boxed error 的地方）；**与 Context 的集成 = `install(ctx)` + 扩展 trait**
-（返回的 `Effect` 要一直持有，否则服务立刻从 Context 消失）；**所有注册都返回句柄且 `#[must_use]`**
-（四个 Handle 内部都包着 `core::Effect`，drop 即回滚）。
+三条共用约定：
 
-- **事件**：`emit` 在锁**外面**调回调，所以回调里再 `on` / `emit` / `off` 不会自锁；某个回调返回
-  `Err` 会**中断**本次广播并把错误抛出去。`Filter` 用点分路径（`"message.chat.id"`）做字段相等匹配。
-- **服务**：命名容器（跨语言插件报不出 Rust 的 `TypeId`）。同名重复注册报错；`get::<T>` 类型不匹配
-  返回 `None`，用 `contains` + `type_of` 区分「没注册」和「类型不对」。
-- **工具**：`call_tool` = 查表 → 权限门 → input_schema → 处理器 → output_schema。
-  `handler: Option<ToolHandlerFn>`，`None` 表示「只有元数据的声明型工具」；注册/注销用 `on_change`
-  广播（**不认识事件系统**，要不要转成事件总线由宿主层做）。
-- **中间件**：洋葱模型，`next.run(ctx)` 前是进入段、后是退出段。`run(stage, ctx)` 会**先复制层列表
-  再执行**，所以中间件里再 `use_middleware` 不会自锁；不调 `next.run` 就是不往下走。
+- **回调错误类型由 core 定**：四个 crate 不能互相依赖，所以 `fuyubot_core::Result<T>` 是全仓唯一允许 boxed error 的地方。
+- **与 Context 的集成 = `install(ctx)` + 扩展 trait**：返回的 `Effect` 要一直持有，否则服务立刻从 Context 消失。
+- **所有注册都返回句柄且 `#[must_use]`**：四个 Handle 内部都包着 `core::Effect`，drop 即回滚。
 
-内核几条语义：**`Context` 只有 `&self`**（`provide` 返回 `Effect`，drop 即注销，必须持有）；
-**`Effect::merge` 是 LIFO**（`a.merge(b)` 撤销顺序 `b → a`）；**加载顺序由依赖决定，卸载是加载顺序
-的倒序**（`load_all` 报错会把本次已加载的卸掉，不留半加载）；**有依赖者时 `unload` 拒绝**
-（`HasDependents`，不级联）；`reload` 能工作是因为管理器存的是 `Arc<dyn Plugin>` 而不是 `Box`。
+各自的一条要点：
+
+| 机制 | 要点 |
+| --- | --- |
+| 事件 | `emit` 在锁**外面**调回调，所以回调里再 `on` / `emit` / `off` 不会自锁；某个回调返回 `Err` 会**中断**本次广播并把错误抛出去。`Filter` 用点分路径（`"message.chat.id"`）做字段相等匹配 |
+| 服务 | 命名容器（跨语言插件报不出 Rust 的 `TypeId`）。同名重复注册报错；`get::<T>` 类型不匹配返回 `None`，用 `contains` + `type_of` 区分「没注册」和「类型不对」 |
+| 工具 | `call_tool` = 查表 → 权限门 → input_schema → 处理器 → output_schema。`handler: Option<ToolHandlerFn>`，`None` 表示「只有元数据的声明型工具」；注册/注销用 `on_change` 广播（**不认识事件系统**，要不要转成事件总线由宿主层决定） |
+| 中间件 | 洋葱模型，`next.run(ctx)` 前是进入段、后是退出段。`run(stage, ctx)` 会**先复制层列表再执行**，所以中间件里再 `use_middleware` 不会自锁；不调 `next.run` 就是不往下走 |
+
+内核的几条语义：
+
+- **`Context` 只有 `&self`**：`provide` 返回 `Effect`，drop 即注销，所以调用方必须持有它。
+- **`Effect::merge` 是 LIFO**：`a.merge(b)` 的撤销顺序是 `b → a`。
+- **加载顺序由依赖决定，卸载是加载顺序的倒序**；`load_all` 报错会把本次已加载的卸掉，不留半加载。
+- **有依赖者时 `unload` 拒绝**（`HasDependents`），不级联。
+- **`reload` 之所以能工作**，是因为管理器存的是 `Arc<dyn Plugin>` 而不是 `Box`。
 
 ## 绑定层与运行时（`fuyubot-tdlib-sys` / `fuyubot-tdlib`）
 
