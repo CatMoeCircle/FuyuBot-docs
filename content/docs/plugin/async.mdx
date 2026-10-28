@@ -12,7 +12,7 @@ description: Rust / JS / TS / Python 里可 await 的请求与更新等待
 > | --- | --- | --- |
 > | `script_plugin!` 内嵌脚本（`fuyubot-sdk-script`） | `fuyubot_plugin.py` / `fuyubot_plugin.js` | ✅ 有 |
 > | `fuyubot-python-host` 托管脚本（`fuyubot-sdk-native`） | `fuyubot.py` | ✅ 有（`run_async`） |
-> | `fuyubot-js-host` 托管脚本（`fuyubot-sdk-native`） | `fuyubot.js` | ❌ 目前仍是回调式，用 `onResponse` |
+> | `fuyubot-js-host` 托管脚本（`fuyubot-sdk-native`） | `fuyubot.js` | ✅ 有（`runAsync`） |
 >
 > 选错文件会出现「方法不存在」——先看插件目录里拷的是哪一个。
 
@@ -113,7 +113,30 @@ run_async(main)
 - `wait_async` 是**一次性** `on("update", ...)` 订阅，命中/超时后自动退订；
   `timeout_ms=0` 表示一直等。
 - 老的 `run()` / `invoke(..., on_response)` 原样保留。
-- 托管 JS（`fuyubot.js`）暂未加 async，仍用 `invoke(..., onResponse)`。
+
+### 托管路径：`fuyubot.js`
+
+`fuyubot-js-host` 用 `bun` 起的脚本，导入的是 `fuyubot.ts` / `fuyubot.js`：
+
+```ts
+import { invokeAsync, waitAsync, runAsync } from "./fuyubot";
+
+async function main() {
+  const me = await invokeAsync("getMe", {});
+  const update = await waitAsync({ "@type": "updateNewMessage" }, 30_000);
+  if (update === null) {
+    // 超时/取消
+  }
+}
+
+await runAsync(main);
+```
+
+- `runAsync` 把原生桥的 stdin 读取放后台线程，但**回调在主线程的 `step()` 里分发**
+  （bun 的 JSCallback 不能跨线程调用）；`main` 与 step 循环并行跑。
+- `invokeAsync` 仍走 `invoke` 的 request/response 配对；`waitAsync` 是一次性
+  `on("update", ...)`，超时/命中后自动退订。
+- 老的 `run()` / `invoke(..., onResponse)` 原样保留。
 
 ## 选哪个
 
@@ -124,7 +147,7 @@ run_async(main)
 | JS/TS 内嵌脚本 | `invokeAsync` / `waitAsync` |
 | Python 内嵌脚本 | `run_async` + `invoke_async` / `wait_async` |
 | Python 托管脚本（`fuyubot.py`，uv） | `run_async` + `invoke_async` / `wait_async` |
-| JS 托管脚本（`fuyubot.js`） | 回调 `invoke(..., onResponse)` |
+| JS 托管脚本（`fuyubot.js`，bun） | `runAsync` + `invokeAsync` / `waitAsync` |
 | C / C++ / Go | 回调 `on`（语言没有 await） |
 
 ## 工具结果
