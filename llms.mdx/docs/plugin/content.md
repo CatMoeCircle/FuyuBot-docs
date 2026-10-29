@@ -63,7 +63,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | --- | --- |
 | 回调是 `extern "C-unwind"` | 用 `extern "C"` 的话，逃出去的 panic 直接 abort 整个进程，宿主来不及 `catch_unwind` |
 | 一个 crate 只展开一次 `define_plugin!` | 七个符号名是 ABI 定死的，展开两次就是重复定义 |
-| ABI 版本目前是 `4` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
+| ABI 版本目前是 `5` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
 | 订阅句柄必须活着 | Rust 侧是 `#[must_use]` 的守卫，drop 就是退订 |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
@@ -148,9 +148,11 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 <Cards>
   <Card title="订阅与事件" href="/docs/plugin/events/" />
   <Card title="调用 TDLib" href="/docs/plugin/tdlib/" />
+  <Card title="简化封装" href="/docs/plugin/simplify/" />
   <Card title="外部仓库插件" href="/docs/plugin/external/" />
   <Card title="富消息" href="/docs/plugin/rich/" />
   <Card title="工具与中间件" href="/docs/plugin/tools/" />
+  <Card title="异步等待" href="/docs/plugin/async/" />
   <Card title="ABI 契约" href="/docs/plugin/abi/" />
   <Card title="调试与安装" href="/docs/plugin/testing/" />
 </Cards>
