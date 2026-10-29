@@ -58,7 +58,7 @@ entry = "main.py"
 | `get_config(section, key="", on_config=None)` | `get_config` | 读**任意**插件段（异步，回调在 `run()` 之后） |
 | `set_config(key, value, on_done=None)` | `set_config` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
 | `simplify_invoke(op, on_response=None)` | `simplify_invoke` | 让宿主跑一个 simplify 操作（发消息等结局、超时撤回、Markdown→entities…）；结果经 `response` 通道回投，整条 `simplifyResult` 交 `on_response`（不传就只发不收） |
-| `simplify_invoke_async(op)` | `simplify_invoke` | 上一条的 future 版，`resolve` 整条 `simplifyResult`（`{ok, op, result|error}`），自己判 `ok`（**只能**在 `run_async` 里用） |
+| `simplify_invoke_async(op)` | `simplify_invoke` | 上一条的 future 版，`resolve` 整条 `simplifyResult`（`{ok, op, result\|error}`），自己判 `ok`（**只能**在 `run_async` 里用） |
 | `simplify_invoke_result(op, on_result=None)` | `simplify_invoke_result` | **同步**跑不碰网络的 op（`parse_text_entities` / `rich_from_markdown` / `list_ops`），回调收结果；传异步 op 拿到 `ok:False` / `code:"async_op"` |
 | `run()` | — | 握手并开始收事件——**永远是最后一行** |
 | `run_async(main=None)` | — | 同上，但跑 asyncio 事件循环，`invoke_async` / `wait_async` 要用它 |

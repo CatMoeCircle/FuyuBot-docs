@@ -58,7 +58,7 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 | `getConfig(section, key?, onConfig?)` | `get_config` | 读**任意**插件段（异步，回调在 `run()` 之后） |
 | `setConfig(key, value, onDone?)` | `set_config` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
 | `simplifyInvoke(op, onResponse?)` | `simplify_invoke` | 让宿主跑一个 simplify 操作（发消息等结局、超时撤回、Markdown→entities…）；结果经 `response` 通道回投，整条 `simplifyResult` 交 `onResponse`（不传就只发不收） |
-| `simplifyInvokeAsync(op)` | `simplify_invoke` | 上一条的 Promise 版，`resolve` 整条 `simplifyResult`（`{ok, op, result|error}`），自己判 `ok` |
+| `simplifyInvokeAsync(op)` | `simplify_invoke` | 上一条的 Promise 版，`resolve` 整条 `simplifyResult`（`{ok, op, result\|error}`），自己判 `ok` |
 | `simplifyInvokeResult(op, onResult?)` | `simplify_invoke_result` | **同步**跑不碰网络的 op（`parse_text_entities` / `rich_from_markdown` / `list_ops`），回调收结果；传异步 op 拿到 `ok:false` / `code:"async_op"` |
 | `run()` | — | 握手并开始收事件——**永远是最后一行** |
 
