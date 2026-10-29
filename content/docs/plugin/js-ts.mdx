@@ -34,18 +34,81 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 
 ## 方法一览
 
-| 方法 | 干什么 |
-| --- | --- |
-| `on(event, handler, filter?)` | 订阅事件：事件来了就调你的函数 |
-| `invoke(method, params?, onResponse?)` | 调一次 TDLib 接口（发消息、取资料……） |
-| `emit(event, payload?)` | 发一条自定义事件 |
-| `log(message, level = "info")` | 打日志 |
-| `registerTool(name, description = "", inputSchema?)` | 登记一个工具 |
-| `useMiddleware(stage, handler)` | 挂一个中间件 |
-| `pluginConfig()` | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
-| `getConfig(section, key?, onConfig?)` | 读**任意**插件段（异步，回调在 `run()` 之后） |
-| `setConfig(key, value, onDone?)` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
-| `run()` | 握手并开始收事件——**永远是最后一行** |
+薄 SDK 把 VTable 那 20 个函数包成了这些（`run()` 之前只能调同步的那几个）：
+
+| 方法 | 走的 ABI | 干什么 |
+| --- | --- | --- |
+| `on(event, handler, filter?)` | `on` | 订阅事件：事件来了就调你的函数 |
+| `off(event, handler)` | `off` | 退订一个订阅 |
+| `invoke(method, params?, onResponse?)` | `td_invoke_simplified` | 调一次 TDLib 接口；给了 `onResponse` 就在响应回来时调（按 `request_id` 配对，不用自己记请求号） |
+| `invokeAsync(method, params?)` | `td_invoke_simplified` | 同上，返回 Promise |
+| `emit(event, payload?)` | `emit` | 发一条自定义事件（自己 + 全局订阅者收到） |
+| `log(message, level = "info")` | `log` | 打日志（`debug` / `info` / `warn` / `error`） |
+| `registerTool(name, description = "", inputSchema?)` | `register_tool`（`meta` 版） | 登记工具**元数据**——脚本不能交函数指针，所以没有处理器 |
+| `callTool(name, input?, onResponse?)` | `call_tool_result` | 调用一个工具，**同步**拿输出（失败是 `{"error": …}`） |
+| `listTools(onTools?)` | `list_tools` | 同步列出全部工具的元数据 |
+| `tdExecute(request, onResult?)` | `td_execute` | **同步**执行不碰网络的 TDLib 方法（`parseTextEntities` 之类），发消息**不能**走它 |
+| `useMiddleware(stage, handler)` | `use_middleware` | 挂中间件（`stage` 是 0..5）；不能单独注销，随插件停止一起撤 |
+| `waitForUpdate(filter, timeoutMs?, onMatch?)` | `wait_for_update` | 等一条匹配的更新（在宿主侧独立线程里等），超时回调收到 `null` |
+| `waitAsync(filter, timeoutMs?)` | `wait_for_update` | 上一条的 Promise 版 |
+| `getService(name, onService?)` | `get_service` | 读一个服务的元数据；不存在时回调收到 `null` |
+| `callService(name, method, input?, onResult?)` | `get_service` | 同步调用服务的某个方法 |
+| `config()` | — | `plugin_start` 传进来的那份配置 JSON |
+| `pluginConfig()` | — | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
+| `getConfig(section, key?, onConfig?)` | `get_config` | 读**任意**插件段（异步，回调在 `run()` 之后） |
+| `setConfig(key, value, onDone?)` | `set_config` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
+| `run()` | — | 握手并开始收事件——**永远是最后一行** |
+
+## 一次看全：常用 ABI 怎么调
+
+```js
+import { on, invoke, tdExecute, callTool, listTools, emit, waitForUpdate,
+         getConfig, setConfig, log, run } from "./fuyubot";
+
+on("updateNewMessage", (payload) => {
+  const chatId = payload.message.chat_id;
+
+  // ① 发 TDLib 请求：响应按 request_id 配好对再回调
+  invoke("sendMessage", {
+    chat_id: chatId,
+    input_message_content: {
+      "@type": "inputMessageText",
+      text: { "@type": "formattedText", text: "pong", entities: [] },
+    },
+  }, (resp) => log(`发出去了：${JSON.stringify(resp)}`));
+
+  // ② 同步执行不碰网络的方法：当场拿结果，发消息不能走它
+  tdExecute({
+    "@type": "parseTextEntities",
+    text: "*粗体*",
+    parse_mode: { "@type": "textParseModeMarkdown", version: 2 },
+  }, (result) => log(`解析结果：${JSON.stringify(result)}`));
+
+  // ③ 调别人的工具 / 看有哪些工具
+  callTool("weather.now", { city: "上海" }, (out) => log(`天气：${JSON.stringify(out)}`));
+  listTools((tools) => log(`共 ${(tools || []).length} 个工具`));
+
+  // ④ 发自定义事件：自己 + 全局订阅者收得到
+  emit("ping.seen", { chat_id: chatId });
+
+  // ⑤ 等下一条更新（宿主侧独立线程里等，不阻塞脚本）
+  waitForUpdate({ "message.content.text.text": "/pong" }, 5000,
+    (p) => log(p ? "等到下一条" : "超时"));
+
+  // ⑥ 读写配置：读别人的异步，写自己的会回写 fuyubot.toml
+  getConfig("my.weather", "city", (v) => log(`天气插件 city=${v}`));
+  setConfig("last_seen", chatId, (ok) => log(`写入成功=${ok}`));
+}, { "message.content.text.text": "/ping" });
+
+run();
+```
+
+三条容易踩的：
+
+- `onResponse` / `onResult` 这类回调**只在 `run()` 之后才有**——宿主得先握手；模块顶层只能调
+  `pluginConfig()` 这种同步的。
+- `tdExecute` 只给不碰网络的方法用，拿它发消息会失败。
+- `waitForUpdate` 是在**宿主侧**线程里等的，脚本这边不阻塞；`timeoutMs` 省略表示只检查当前状态。
 
 ## 读 / 写配置
 
@@ -364,6 +427,76 @@ on("updateNewMessage", (update: any) => {
 
 run();
 ```
+
+## 发消息：手写 `sendMessage`（或者用 `simplify_invoke`）
+
+> ✅ **ABI v5 起，这一节只是「另一条路」，不再是唯一的路。** 宿主从 v5 开始自己跑
+> 同一份 `fuyubot-simplify` 代码，经 `simplify_invoke` / `simplify_invoke_result` 暴露成一张
+> **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
+> bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
+> 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
+> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
+> 或者照下面手写。
+
+
+| 想要的效果 | 手写的关键字段 |
+| --- | --- |
+| 纯文本 | `input_message_content` = `inputMessageText`，里面 `text` 是 `formattedText`（`text` + `entities`） |
+| Markdown / HTML | **不自己解析**：先 `tdExecute` 调 `parseTextEntities`（`version: 2` = MarkdownV2，`textParseModeHTML` = HTML），把返回的 `formattedText` 整个塞进去 |
+| 回复某条 | `reply_to` = `{"@type": "inputMessageReplyToMessage", "message_id": N}` |
+| 发到话题 | `topic_id` = `{"@type": "messageTopicForum", "forum_topic_id": N}`（论坛）；非论坛的评论串才是 `messageTopicThread` |
+| 内联按钮 | `reply_markup` = `replyMarkupInlineKeyboard`；⚠️ callback 按钮的 `data` 是 **base64**（TDLib 里它是 `bytes`） |
+| 静音 / 保护内容 | 都在 `options`（`messageSendOptions`）里，不是顶层字段 |
+| 等到「真发出去」 | `onResponse` 只到**临时消息**；要最终那条 `Message` 得再等一条 `updateMessageSendSucceeded` |
+
+```ts
+import { invoke, tdExecute, log } from "./fuyubot";
+
+/** 发一条 MarkdownV2 消息：先问 TDLib 要 entities，再发出去。 */
+function sendMarkdown(chatId: number, markdown: string, replyTo?: number) {
+  tdExecute({
+    "@type": "parseTextEntities",
+    text: markdown,
+    parse_mode: { "@type": "textParseModeMarkdown", version: 2 },
+  }, (result) => {
+    const body: Record<string, unknown> = {
+      chat_id: chatId,
+      input_message_content: {
+        "@type": "inputMessageText",
+        text: result ?? { "@type": "formattedText", text: markdown, entities: [] },
+      },
+    };
+    if (replyTo) {
+      body.reply_to = { "@type": "inputMessageReplyToMessage", message_id: replyTo };
+    }
+    invoke("sendMessage", body, (resp) => log(`已发：${JSON.stringify(resp)}`));
+  });
+}
+
+/** 带一个回调按钮；data 在 TDLib 里是 bytes，JSON 里要写 base64。 */
+function sendWithButton(chatId: number, label: string, payload: string) {
+  invoke("sendMessage", {
+    chat_id: chatId,
+    input_message_content: {
+      "@type": "inputMessageText",
+      text: { "@type": "formattedText", text: label, entities: [] },
+    },
+    reply_markup: {
+      "@type": "replyMarkupInlineKeyboard",
+      rows: [[{
+        "@type": "inlineKeyboardButton",
+        text: "确认",
+        type: {
+          "@type": "inlineKeyboardButtonTypeCallback",
+          data: Buffer.from(payload, "utf8").toString("base64"),
+        },
+      }]],
+    },
+  });
+}
+```
+
+方法名拿不准就问 SDK，它读的是真 `td_api.tl`：`fuyubot-sdk td-method sendMessage`。
 
 ## 常见问题
 

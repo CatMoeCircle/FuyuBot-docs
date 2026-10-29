@@ -15,11 +15,56 @@ description: td_invoke、请求号与 response 通道、便捷封装
 
 ## 请求号与 response 通道
 
-```text
-插件 ──td_invoke*──► 宿主 ──► TDLib
- ▲                             │
- └── "response" 通道 ◄─────────┘   只发给**发起这个请求**的插件
-```
+<svg viewBox="0 0 680 304" width="100%" role="img" aria-label="请求号把去程与回程对上" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>请求号把去程与回程对上</title>
+  <desc>插件调 td_invoke 拿到请求号，宿主注入字符串 @extra 后发给 TDLib；响应回来时接收循环按 @extra 认出归属，转成数值 request_id，再经 emit_scoped 只发回发起这个请求的插件。</desc>
+  <defs>
+    <marker id="req-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <text x="40" y="30" fontSize="10.5" fontWeight="500" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">去程</text>
+
+  <rect x="40" y="52" width="180" height="64" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="130" y="74" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">插件</text>
+  <text x="130" y="96" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">td_invoke → 请求号 N</text>
+
+  <rect x="250" y="52" width="180" height="64" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="340" y="74" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">HostRuntime</text>
+  <text x="340" y="96" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">注入 @extra = "N"</text>
+
+  <rect x="460" y="52" width="180" height="64" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="550" y="74" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">TDLib</text>
+  <text x="550" y="96" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">真的发出去</text>
+
+  <path d="M220 84 L246 84" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.6" strokeWidth="1.5" markerEnd="url(#req-arrow)" />
+  <path d="M430 84 L456 84" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.6" strokeWidth="1.5" markerEnd="url(#req-arrow)" />
+  <path d="M246 100 L224 100" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#req-arrow)" />
+  <text x="235" y="40" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">请求号</text>
+
+  <path d="M550 116 L550 196" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#req-arrow)" />
+  <text x="562" y="156" fontSize="10.5" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">响应回来</text>
+
+  <text x="40" y="176" fontSize="10.5" fontWeight="500" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">回程</text>
+
+  <rect x="460" y="200" width="180" height="64" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="550" y="222" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">接收循环 route()</text>
+  <text x="550" y="244" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">按 @extra 认出归属</text>
+
+  <rect x="250" y="200" width="180" height="64" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="340" y="222" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">emit_scoped</text>
+  <text x="340" y="244" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">response 通道</text>
+
+  <rect x="40" y="200" width="180" height="64" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="130" y="222" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">发起的插件</text>
+  <text x="130" y="244" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">过滤器 request_id = N</text>
+
+  <path d="M456 232 L430 232" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.5" markerEnd="url(#req-arrow)" />
+  <path d="M246 232 L224 232" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.5" markerEnd="url(#req-arrow)" />
+
+  <text x="40" y="286" fontSize="10.5" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">同一条 @extra 把去程和回程对上；没接 TDLib 时只发合成请求号，永远等不到响应</text>
+</svg>
 
 - 响应负载是 TDLib 原始 JSON，宿主额外挂一个**数值型** `request_id`（来自它注入的字符串 `@extra`，
   别自己设这个字段）。

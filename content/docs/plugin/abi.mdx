@@ -32,10 +32,77 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `NULL`。`PluginHandle::FAILED` 是全零版本号，`const _` 里有
 `assert!(PluginHandle::FAILED.abi_version == 0)`。
 
+宿主拿一个 cdylib 之后，按这个顺序敲你的符号——右边那条岔路是版本不匹配时的走法：
+
+<svg viewBox="0 0 680 416" width="100%" role="img" aria-label="插件符号的调用时序与版本不匹配时的岔路" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>插件符号的调用时序与版本不匹配时的岔路</title>
+  <desc>宿主先 dlopen 并按名字 dlsym 七个符号，然后读 manifest 决定激活顺序，再调 plugin_init 校验 VTable；版本不匹配时只能调 plugin_free_handle 而不能调 plugin_stop，匹配则进 plugin_start、运行、最后 plugin_stop 与回滚。</desc>
+  <defs>
+    <marker id="abi-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="16" width="380" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="60" y="38" fontSize="12.5" fontWeight="500" dominantBaseline="central" fill="currentColor">1 · dlopen + dlsym 七个符号</text>
+  <text x="404" y="38" fontSize="10.5" textAnchor="end" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">C++ 要放进 extern "C"</text>
+
+  <path d="M230 60 L230 68" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+
+  <rect x="40" y="72" width="380" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="60" y="94" fontSize="12.5" fontWeight="500" dominantBaseline="central" fill="currentColor">2 · plugin_manifest（v4 可选）</text>
+  <text x="404" y="94" fontSize="10.5" textAnchor="end" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">决定激活顺序</text>
+
+  <path d="M230 116 L230 124" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+
+  <rect x="40" y="128" width="380" height="44" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="60" y="150" fontSize="12.5" fontWeight="500" dominantBaseline="central" fill="currentColor">3 · plugin_init(&amp;VTable) → PluginHandle</text>
+  <text x="404" y="150" fontSize="10.5" textAnchor="end" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">先比 version 再比 size</text>
+
+  <path d="M420 150 L456 150" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+  <text x="438" y="138" fontSize="10.5" textAnchor="middle" fill="#E24B4A">不匹配</text>
+
+  <rect x="460" y="128" width="180" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="550" y="144" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">拒绝加载</text>
+  <text x="550" y="160" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="#E24B4A">abi_version == 0</text>
+
+  <path d="M550 172 L550 180" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+
+  <rect x="460" y="184" width="180" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="550" y="200" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">plugin_free_handle</text>
+  <text x="550" y="216" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">不能调 stop</text>
+
+  <path d="M230 172 L230 180" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+
+  <rect x="40" y="184" width="380" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="60" y="206" fontSize="12.5" fontWeight="500" dominantBaseline="central" fill="currentColor">4 · plugin_start(handle, config_json)</text>
+  <text x="404" y="206" fontSize="10.5" textAnchor="end" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">订阅 / 工具 / 中间件</text>
+
+  <path d="M230 228 L230 236" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+
+  <rect x="40" y="240" width="380" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="60" y="262" fontSize="12.5" fontWeight="500" dominantBaseline="central" fill="currentColor">5 · 运行：事件回调与 td_invoke</text>
+
+  <path d="M230 284 L230 292" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+
+  <rect x="40" y="296" width="380" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="60" y="318" fontSize="12.5" fontWeight="500" dominantBaseline="central" fill="currentColor">6 · plugin_stop → 回滚这批注册</text>
+  <text x="404" y="318" fontSize="10.5" textAnchor="end" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">最后才卸载 cdylib</text>
+
+  <path d="M230 340 L230 348" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#abi-arrow)" />
+
+  <rect x="40" y="352" width="380" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="60" y="374" fontSize="12.5" fontWeight="500" dominantBaseline="central" fill="currentColor">plugin_free_string：谁分配谁释放</text>
+</svg>
+
+三点值得记住：`plugin_manifest` 在 `plugin_init` **之前**读（宿主得先知道你的依赖才能排顺序）；
+版本不匹配时**只能**用 `plugin_free_handle` 收尾，那一刻 `plugin_stop` 不会被调；
+卸载顺序是 `plugin_stop` → 回滚注册 → 最后才 drop 那个 `Library`。
+
 ## HostApiVTable：`host_ctx` + 20 个函数指针
 
 `version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **20 个是函数指针**，全是 `Option<...>`；
-总大小 = `2 * size_of::<u32>() + 21 * size_of::<*const c_void>()`（`host_ctx` + 20 个函数），
+总大小 = `2 * size_of::<u32>() + 23 * size_of::<*const c_void>()`（`host_ctx` + 22 个函数），
 由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
 下表签名省略第一个参数 `host`：
@@ -65,6 +132,8 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
 | 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + 回写 `fuyubot.toml`）；非 0 = 越权 / 解析失败 / 写盘失败 |
 | 20 | `provide_service_shared` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service_shared` | 注册到**进程级**（所有插件可见，这也是宿主那四个机制所在的层级）。同名会撞，只在真要共享时用。v4 起追加在 VTable **尾部** |
+| 21 | `simplify_invoke` | `(op_json) -> RequestId` | `api_simplify_invoke` | **跨语言跑一个 simplify 操作**（v5）。宿主起工作线程执行，结果照 `@request_id` 回投到 `"response"` 通道。见[「simplify 操作表」](#simplify-操作表) |
+| 22 | `simplify_invoke_result` | `(op_json) -> *const c_char` | `api_simplify_invoke_result` | **同步**跑一个不碰网络的 simplify 操作，当场返回结果 JSON（线程局部缓冲）。回调里安全；传异步 op 返回 `ok:false` / `code:"async_op"` |
 
 ## 服务作用域
 
@@ -82,7 +151,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
   不给显式上下文就只能靠进程级全局，那样一个进程只能有一个宿主、测试也没法并行。
 - **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
-  Rust 侧 `HostApi::from_raw` 一次解包校验全部 19 个，之后调用路径上没有 `Option`、也没有 panic 分支。
+  Rust 侧 `HostApi::from_raw` 一次解包校验全部 22 个，之后调用路径上没有 `Option`、也没有 panic 分支。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
 都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；
@@ -103,7 +172,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 | 位置 | 谁比 | 不匹配的后果 |
 | --- | --- | --- |
-| `ABI_VERSION`（当前 `4`） | 编译期常量，两侧共同引用 | — |
+| `ABI_VERSION`（当前 `5`） | 编译期常量，两侧共同引用 | — |
 | `HostApiVTable::version` | 插件侧 `HostApi::from_raw` | `AbiError::VersionMismatch` |
 | `HostApiVTable::size` | 同上 | `AbiError::VTableTooSmall` |
 | 某个函数指针是 `NULL` | 同上 | `AbiError::MissingFunction("<字段名>")` |
@@ -118,6 +187,11 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 **版本 3 的改动**：尾部追加了 `get_config` / `set_config`（第 18 / 19 项），让插件能读全局配置、
 写自己的段。
 
+**版本 5 的改动**：尾部追加 `simplify_invoke` / `simplify_invoke_result`（第 21 / 22 项），
+把 `fuyubot-simplify` 的语义下沉到宿主——**所有语言**的插件都能用「发消息等结局 / 超时撤回 /
+bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地块树」，不再只有 Rust 有。
+详见[「simplify 操作表」](#simplify-操作表)。`ABI_VERSION` 跳到 5，旧插件重新编一次即可。
+
 **版本 4 的改动**：
 - `register_tool` 增加 `handler` / `user_data`，工具终于能真的执行；
 - 尾部追加 `call_tool_result`（同步拿工具结果）与 `list_plugins`（插件报告）；
@@ -128,10 +202,74 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `ABI_VERSION` 一起跳到 4——**用旧版本编出来的插件会被宿主拒绝加载**，重新编一次即可
 （仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
 
+## simplify 操作表
+
+`simplify_invoke` / `simplify_invoke_result` 收的是一张**操作表**而不是「一个方法一个函数指针」：
+
+```json
+{"op": "send_message", "args": {"chat_id": 123, "input_message_content": {…}}}
+```
+
+**为什么不是 20 个函数指针**：那样以后每加一个方法都要升一次 ABI 版本、三个仓库一起动。
+一张表之后，**加操作不动 ABI**。
+
+### 结果怎么回来
+
+`simplify_invoke` 返回 `RequestId`，结果走**既有的** `"response"` 通道回到发起插件——
+JS/TS 的 `invokeAsync`、Python 的 `invoke_async`、Go 的 channel、Rust 的 `ResponseRouter`
+全都原样接住，没有新的回投机制。负载长这样（成功失败同形状，只看 `ok`）：
+
+```json
+{"@type":"simplifyResult","op":"send_message","ok":true,"result":{…},"request_id":123}
+{"@type":"simplifyResult","op":"send_message","ok":false,"error":{"code":"timeout","message":"…"}}
+```
+
+`error.code` 是稳定的英文代号，可以拿它分支：`timeout` / `send_failed` / `tdlib` /
+`missing_field` / `bad_args` / `unknown_op` / `async_op` / `host`。
+
+### 入参的形状
+
+`args` 基本就是对应 TDLib 方法的参数（键名以 `td_api.tl` 为准），**认不出的键原样透传**
+（宿主照 schema 只警告不拦，TDLib 升版加了新参数也不用等 ABI）。外加两个统一项：
+
+- `timeout_ms`（默认 30 000）：整次操作共用的等待预算；
+- 文本字段（`text` / `caption`）可以是字符串（按纯文本），也可以是
+  `{"text":"…","parse_mode":"markdown|markdown_v2|html"}`——宿主替你走 `parseTextEntities`
+  换成 `formattedText`。已经是 `formattedText` 就原样放过。
+
+### 操作清单
+
+同步（不碰网络，`simplify_invoke_result` 也能跑，回调里安全）：
+
+| op | args | 返回 |
+| --- | --- | --- |
+| `parse_text_entities` | `text` / `parse_mode` | `formattedText` |
+| `rich_from_markdown` | `markdown` / `is_rtl` / `detect_automatic_blocks` | `inputMessageRichText`（可直接塞进 `send_message` 的 `input_message_content`） |
+| `list_ops` | — | `{"sync":[…],"async":[…]}` |
+
+异步（要等 TDLib 应答，只能走 `simplify_invoke`）：
+
+| op | 语义 |
+| --- | --- |
+| `send_message` | 发 → 等响应拿临时消息 → 等**发送结局**；超时先 `deleteMessages(revoke)` 撤回 |
+| `send_message_album` | 整组一个预算，逐项等结局，任一项失败即返回 |
+| `edit_message_text` / `edit_message_caption` / `edit_message_media` / `edit_message_reply_markup` | 等响应（`edit_message_reply_markup` 不给 `reply_markup` = 移除键盘） |
+| `delete_messages` | `chat_id` / `message_ids` / `revoke` |
+| `answer_callback_query` | 点了内联按钮必须回，否则客户端一直转圈 |
+| `forward_messages` | `message_ids` 排序去重、最多 100 条；只等响应 |
+| `react` / `unreact` | **自动挑方法**：bot 只能 `setMessageReactions`，用户号用 `add/removeMessageReaction` |
+| `add_reaction` / `set_reactions` | 显式走某一条路（省一次 `getMe`） |
+| `me` / `my_id` / `is_bot` | 身份 |
+| `chat_member` / `is_chat_admin` / `am_i_chat_admin` | 管理权（`right` 是 `chatAdministratorRights` 的字段名，如 `can_delete_messages`） |
+| `download_file` | 等到 `updateFile` 报下载完成，返回最终的 `file` |
+| `invoke` | 逃生舱：`args.request` 是**完整**的 TDLib 请求 JSON，发 + 等响应 |
+
+操作表可以问出来：`{"op":"list_ops"}`。
+
 ## 为什么本 ABI 一个可变参数函数指针都没有
 
 Rust 的 `extern "C" fn(.., ...)` 确实稳定（能写、cbindgen 也能生成），但**本 ABI 一个都没用**，
-理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 19 个函数的参数都是固定的，
+理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 22 个函数的参数都是固定的，
 用 `...` 只会让 C 侧传错参数从编译错误降级成运行期 UB。
 
 将来真要加，正确的声明形状是（C 侧）：
@@ -154,11 +292,16 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 
 | 语言 | 声明在哪 | 值 | 怎么生效 |
 | --- | --- | --- | --- |
-| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 4` | 4 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
-| C++ | 同一份 `fuyubot_plugin.h` | 4 | 同上（导出符号放 `extern "C"`） |
-| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 4 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
-| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v4 cdylib），`abi_version` 它填 |
+| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 5` | 5 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
+| C++ | 同一份 `fuyubot_plugin.h` | 5 | 同上（导出符号放 `extern "C"`） |
+| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 5 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
+| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v5 cdylib），`abi_version` 它填 |
 | JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
+
+⚠️ **过渡期**：宿主已经是 v5 了，而 SDK 仓库里手工构造 `HostApiVTable` 的三处
+（`fuyubot-plugin-api` / `fuyubot-sdk-host` / `fuyubot-sdk-script`）还停在 v4。
+按上面的协商规则，**v4 插件会被 v5 宿主拒绝加载**（`AbiMismatch`）——SDK 跟着发一版之前，
+各语言插件需要重新编译 / 更新 SDK。
 
 脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
 **作者永远不碰 C ABI**；ABI 版本由承载它的那份 cdylib 声明。Python 与 JS 的中间插件

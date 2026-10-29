@@ -8,7 +8,7 @@ fuyubot 有两个命令行程序，职责严格分离，**都不编译、不打�
 
 | CLI | 干什么 | 二进制 |
 | --- | --- | --- |
-| [`fuyubot`](./fuyubot.mdx) | 跑框架：`init` / `run` / `status` / `stop` / `config` / `plugin` | `fuyubot(.exe)` |
+| [`fuyubot`](./fuyubot.mdx) | 跑框架：`init` / `run` / `login` / `logout` / `status` / `stop` / `config` / `plugin` | `fuyubot(.exe)` |
 | [`fuyubot-sdk`](./fuyubot-sdk.mdx) | 写插件：脚手架 / 生成绑定 / 查 TDLib 方法 / 静态检查 | `fuyubot-sdk(.exe)` |
 
 `fuyubot` 在运行时仓库的包里（旁边带着 `tdjson` 和内置插件目录 `plugins/`），`fuyubot-sdk` 在
@@ -34,7 +34,8 @@ cargo run -q -p fuyubot-sdk-cli -- abi-version
 
 ```text
 fuyubot init [--dir .] [--name 名字] [--api-id N]      生成项目
-fuyubot run  [--config …] [--plugin-dir …] [--background] [--replay 文件]
+fuyubot run  [--config …] [--plugin-dir …] [--api-id N] [--background] [--replay 文件]
+fuyubot login | logout [--config …]                    只登录 / 清本地会话（logout 要 --yes）
 fuyubot status | stop [--config …]                     实例状态 / 优雅停止
 fuyubot config [--config …]                            打印生效配置（含默认值）
 fuyubot plugin list | install <路径>                    插件目录管理

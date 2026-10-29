@@ -147,6 +147,140 @@ fn start(&mut self, _config_json: &str) -> Result<(), String> {
   一定要存进插件字段。插件卸载时宿主还会整批回滚，但那时插件自己的状态已经漏了。
 </Callout>
 
+## 一次看全：常用 ABI 怎么调
+
+`HostApi` 上是 VTable 那 20 个函数的一对一封装，`HostExt` 另外给了几个「不用自己拼 JSON 字符串」
+的便利方法（`subscribe_json` / `invoke_value` / `call_tool_value` / `config_value` /
+`set_config_value` / `wait_for_update_json` / `info|warn|error`）。下面这段把它们用了一遍
+（省掉了 `user_data` 取 `HostApi` 的样板，见上面「回调里带状态」一节）：
+
+```rust
+use fuyubot_plugin_api::{HostApi, HostExt, Stage};
+use serde_json::json;
+
+fn start(&mut self, _config_json: &str) -> Result<(), String> {
+    // ① 订阅：第二个参数是过滤器（None = 全收）
+    self._updates = self.host.subscribe_json(
+        "updateNewMessage",
+        Some(json!({ "message.content.text.text": "/ping" })),
+        on_ping,
+        std::ptr::null_mut(),
+    );
+
+    // ② 发自定义事件：自己 + 全局订阅者收得到
+    self.host
+        .emit("demo.ready", &json!({ "ok": true }).to_string())
+        .map_err(|e| e.to_string())?;
+
+    // ③ 登记工具：带处理器；只登记元数据用 register_tool_meta
+    self._tool = Some(self.host.register_tool(
+        r#"{"name":"demo.echo","description":"回显入参","input_schema":{"type":"object"}}"#,
+        Some(on_echo),
+        std::ptr::null_mut(),
+    ));
+
+    // ④ 挂中间件：阶段数值见「工具与中间件」
+    self.host
+        .use_middleware(Stage::InPlugin as u32, on_stage, std::ptr::null_mut());
+
+    // ⑤ 读写配置（HostExt 的版本直接吃 serde_json::Value）
+    if let Some(city) = self.host.config_value("my.weather", "city") {
+        self.host.info(&format!("天气插件 city = {city}"));
+    }
+    self.host.set_config_value("last_seen", json!(123))?;
+
+    // ⑥ 看看进程里都有哪些工具 / 插件（返回的是宿主线程局部缓冲，读完即弃）
+    if let Some(tools) = self.host.list_tools() {
+        self.host.info(&format!("工具表：{tools}"));
+    }
+    Ok(())
+}
+
+extern "C-unwind" fn on_ping(user: *mut std::ffi::c_void, payload: *const std::ffi::c_char) -> i32 {
+    // SAFETY: 宿主按 ABI 契约传的是临时 NUL 结尾字符串。
+    let update = unsafe { fuyubot_plugin_api::parse_payload(payload) };
+    // SAFETY: user_data 是 start 里塞进去的 Box<HostApi>。
+    let Some(host) = (unsafe { (user as *const HostApi).as_ref() }) else {
+        return -1;
+    };
+    let chat_id = update.pointer("/message/chat_id").and_then(|v| v.as_i64());
+    let Some(chat_id) = chat_id else { return 0 };
+
+    // ⑦ 发请求：只拿请求号，响应走 "response" 通道（见「调用 TDLib」）
+    match host.invoke_value("sendMessage", json!({
+        "chat_id": chat_id,
+        "input_message_content": {
+            "@type": "inputMessageText",
+            "text": { "@type": "formattedText", "text": "pong", "entities": [] },
+        },
+    })) {
+        Ok(request) => host.info(&format!("已发 #{}", request.id)),
+        Err(e) => host.error(&format!("发不出去：{e}")),
+    }
+
+    // ⑧ 同步执行不碰网络的方法：当场返回，不进接收循环
+    let parsed = host.td_execute(r#"{"@type":"parseTextEntities","text":"*粗体*",
+        "parse_mode":{"@type":"textParseModeMarkdown","version":2}}"#);
+
+    // ⑨ 调别人的工具（同步拿结果）
+    match host.call_tool_value("weather.now", json!({ "city": "上海" })) {
+        Ok(out) => host.info(&format!("天气：{out}")),
+        Err(e) => host.warn(&format!("调工具失败：{e}")),
+    }
+    0
+}
+```
+
+| 想干什么 | 用哪个 |
+| --- | --- |
+| 订阅 / 退订 | `subscribe_json`（返回 `Subscription`，drop 即退订）/ 句柄 `off` |
+| 发 TDLib 请求 | `invoke_value(method, params)`（或底层 `td_invoke_simplified` 吃字符串） |
+| 同步执行 | `td_execute`（`parseTextEntities` / `getTextEntities` 这类） |
+| 等一条更新 / 一条响应 | `wait_for_update_json`（阻塞）或 `ResponseRouter` 的 `await` 版，见[异步等待](./async.mdx) |
+| 工具 | `register_tool` / `register_tool_meta` / `call_tool` / `call_tool_result` / `list_tools` |
+| 服务 | `provide_service`（自己作用域）/ `provide_service_shared`（进程级）/ `get_service` |
+| 配置 | `get_config` / `set_config`（字符串版）、`config_value` / `set_config_value`（`Value` 版） |
+| 中间件 | `use_middleware(Stage::X as u32, cb, user_data)` |
+| 看别人 | `list_tools` / `list_plugins` |
+
+## 用封装层发消息：`fuyubot-simplify`
+
+上面 ⑦ 那种手写 JSON 能跑，但每个方法都要自己拼嵌套结构、还要自己等「发送结局」。
+Rust 插件可以直接用封装层——**只有 Rust 有这个**（它是 crate，不是 ABI）：
+
+```toml
+[dependencies]
+fuyubot-simplify = "0.1"      # 与 fuyubot-plugin-api 同版本线
+```
+
+```rust
+use fuyubot_simplify::{SendMessageParams, Simplify, Text};
+
+fn start(&mut self, _config_json: &str) -> Result<(), String> {
+    let simplify = Simplify::new(self.host);        // HostApi 是 Copy
+
+    // 等到「真发出去」才返回，拿到最终那条 Message
+    let sent = simplify
+        .send_message(chat_id, &SendMessageParams::text("你好"))
+        .map_err(|e| e.to_string())?;
+
+    // Markdown + 回复 + 内联键盘一次到位；Markdown 不自己解析，问 TDLib 要 entities
+    simplify
+        .send_message(chat_id, &SendMessageParams {
+            text: Some(Text::markdown("*粗体*")),
+            reply_to_message_id: Some(sent["id"].as_i64().unwrap_or(0)),
+            ..SendMessageParams::default()
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+```
+
+它只简化**输入**，不改变输出：每个方法仍经 `td_invoke*` 发出，原始更新照旧对插件可见。
+完整 API（发送 / 相册 / 编辑 / 富消息 / 命令解析）见 [Simplify 封装](./simplify.mdx)。
+⚠️ 在更新回调里**不能**用这些等待版——等更新要靠接收循环那个线程送回来，而回调就跑在它上面；
+回调里请用 `*_then`，见[异步等待](./async.mdx)。
+
 ## 编译与安装
 
 ```bash

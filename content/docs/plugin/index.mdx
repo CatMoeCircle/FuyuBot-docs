@@ -49,9 +49,9 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 - `fuyubot init` 重复执行会被挡住（不覆盖你改过的配置）；三个键都有默认值，最简可以只有 `[bot]`。
 - 插件名只允许字母、数字和 `.` `_` `-`（会拼进源码与 TOML）；目录名里的 `.` / `-` 换成 `_` 当 crate 名
   （`fuyubot.weather` → `fuyubot_weather`）。
-- **产物落在哪**：`plugin install <工程目录>` 只看 `<工程>/target/{release,debug}` 与工程目录本身。
-  插件若是**当前 workspace 的成员**，`cargo build -p <crate>` 默认把产物放在仓库根的 `target/`，于是它找不到
-  ——加 `--target-dir <工程目录>/target`，或直接指着产物装。
+- **产物落在哪**：`plugin install <工程目录>` 按 `<工程>/target/{release,debug}` → 工程目录本身 →
+  **沿父链最近的** `target/{release,debug}` 找产物（两边都有时取较新的）。插件若是**当前 workspace 的成员**，
+  `cargo build -p <crate>` 默认把产物放在仓库根的 `target/`，靠最后一档照样能找到，不需要额外参数。
 - **SDK 走源码开发时**设 `FUYUBOT_SDK_PATH` 指向 FuyuBot-SDK 仓库的 `crates/`，生成的插件会写 `path = "…"`；
   不设就写 crates.io 版本号。
 

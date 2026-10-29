@@ -23,12 +23,13 @@ description: 前台/后台运行、status、stop 与单实例锁
 .\fuyubot.exe run --config demo\fuyubot.toml
 ```
 
-顺序是固定的：自动 init → 拿单实例锁 → 问/读凭据 → attach TDLib → **加载全部插件** → 发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 最后才开分发。插件先于登录加载，是为了不漏掉登录窗口里的更新。
+顺序是固定的：自动 init → 拿单实例锁 → attach TDLib → 问/读凭据 → **加载全部插件** → 发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 最后才开分发。插件先于登录加载，是为了不漏掉登录窗口里的更新。
 
 | 参数 | 作用 |
 | --- | --- |
 | `--config <路径>` | 配置文件，默认 `fuyubot.toml` |
 | `--plugin-dir <目录>` | 覆盖配置里的插件目录 |
+| `--api-id <ID>` | 覆盖配置里的 `api_id`（**不是**秘密）。优先级：`--api-id` → `TG_API_ID` → 配置 → 交互提问；`api_hash` 没有对应参数 |
 | `--no-login` | 只起框架、不走登录流程（CI / 容器；已有 session 仍会被 TDLib 打开） |
 | `--no-tdlib` | 不接 TDLib，只加载插件 |
 | `--background` | 放到后台跑 |
@@ -50,8 +51,10 @@ description: 前台/后台运行、status、stop 与单实例锁
 它派生一个没有终端的自己，stdout/stderr 追加进 `<目录>logs\fuyubot.log`；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
 
 <Callout type="warn">
-  后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 登一次，session 会落在 `data/`。首次连 `api_id` / `api_hash` 也问不了：先在前台跑一次让它写回配置，或设好 `TG_API_ID` / `TG_API_HASH`。
+  后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 或 `fuyubot login` 登一次，session 会落在 `data/`。首次连 `api_id` / `api_hash` 也问不了：先在前台跑一次让它写回配置，或设好 `TG_API_ID` / `TG_API_HASH`。
 </Callout>
+
+想单独把登录走完而不起框架，用 [`fuyubot login`](../cli/fuyubot.mdx#login)；要退出登录（清掉本地会话）用 `fuyubot logout`。
 
 ## 看状态
 
