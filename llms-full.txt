@@ -1585,9 +1585,9 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 版本不匹配时**只能**用 `plugin_free_handle` 收尾，那一刻 `plugin_stop` 不会被调；
 卸载顺序是 `plugin_stop` → 回滚注册 → 最后才 drop 那个 `Library`。
 
-## HostApiVTable：`host_ctx` + 20 个函数指针 [#hostapivtablehost_ctx--20-个函数指针]
+## HostApiVTable：`host_ctx` + 22 个函数指针 [#hostapivtablehost_ctx--22-个函数指针]
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **20 个是函数指针**，全是 `Option<...>`；
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **22 个是函数指针**，全是 `Option<...>`；
 总大小 = `2 * size_of::<u32>() + 23 * size_of::<*const c_void>()`（`host_ctx` + 22 个函数），
 由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
@@ -1696,7 +1696,7 @@ bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地�
 {"op": "send_message", "args": {"chat_id": 123, "input_message_content": {…}}}
 ```
 
-**为什么不是 20 个函数指针**：那样以后每加一个方法都要升一次 ABI 版本、三个仓库一起动。
+**为什么不是 22 个函数指针**：那样以后每加一个方法都要升一次 ABI 版本、三个仓库一起动。
 一张表之后，**加操作不动 ABI**。
 
 ### 结果怎么回来 [#结果怎么回来]
@@ -1711,7 +1711,8 @@ JS/TS 的 `invokeAsync`、Python 的 `invoke_async`、Go 的 channel、Rust 的 
 ```
 
 `error.code` 是稳定的英文代号，可以拿它分支：`timeout` / `send_failed` / `tdlib` /
-`missing_field` / `bad_args` / `unknown_op` / `async_op` / `host`。
+`missing_field` / `bad_args` / `unknown_op` / `async_op` / `host` / `missing_op`
+（`op` JSON 缺字符串字段 `op`）/ `simplify`（`SimplifyError` 里没单独归类的兜底）。
 
 ### 入参的形状 [#入参的形状]
 
@@ -1783,11 +1784,6 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 | Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 5 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
 | Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v5 cdylib），`abi_version` 它填 |
 | JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
-
-⚠️ **过渡期**：宿主已经是 v5 了，而 SDK 仓库里手工构造 `HostApiVTable` 的三处
-（`fuyubot-plugin-api` / `fuyubot-sdk-host` / `fuyubot-sdk-script`）还停在 v4。
-按上面的协商规则，**v4 插件会被 v5 宿主拒绝加载**（`AbiMismatch`）——SDK 跟着发一版之前，
-各语言插件需要重新编译 / 更新 SDK。
 
 脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
 **作者永远不碰 C ABI**；ABI 版本由承载它的那份 cdylib 声明。Python 与 JS 的中间插件
@@ -2310,9 +2306,38 @@ func getConfig(section, key string) string {
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
-> 或者照下面手写。
+> ⚠️ Go 没有 `fuyubot-sdk init --lang go` 模板（见页首），但可以直接调 VTable 上的
+> `simplify_invoke` / `simplify_invoke_result`（见下），或者照下面手写 `invoke(sendMessage, …)`。
 
+
+先来一个能跑的：在 `plugin.c` 里加一座 `simplify_invoke` 桥（和 `fy_invoke` 同形状），Go 侧就能像
+调普通函数一样发 op——宿主替你解析文本、等到真发出去、超时先撤回；结果经已有的 `"response"`
+通道回投（带 `request_id`，与 `fy_invoke` 的响应同一个 `on` 通道）：
+
+```c
+/* plugin.c —— 转发到 VTable，Go 侧不碰函数指针 */
+RequestId fy_simplify_invoke(const char *op_json) {
+    return g_host->simplify_invoke(g_host->host_ctx, op_json);
+}
+/* 同步拿不碰网络的结果：返回宿主线程局部缓冲，读完即弃，不要 free */
+const char *fy_simplify_invoke_result(const char *op_json) {
+    return g_host->simplify_invoke_result(g_host->host_ctx, op_json);
+}
+```
+
+```go
+// main.go —— 在事件回调里调用（回投通道在 run() 之后才握手）
+func go_on_update(_ unsafe.Pointer, payload *C.char) C.int {
+    // …解析出 chat_id 后：
+    op := `{"op":"send_message","args":{"chat_id":-1001234567890,` +
+          `"input_message_content":{"@type":"inputMessageText","text":"你好，这是用 simplify 发的"},` +
+          `"timeout_ms":30000}}`
+    C.fy_simplify_invoke(C.CString(op))
+    return 0
+}
+```
+
+手写 `invoke("sendMessage", …)` 是**另一条路**——下面这些字段你都得自己拼对：
 
 | 想要的效果 | 手写的关键字段 |
 | --- | --- |
@@ -2382,7 +2407,7 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录
 
 ## 相关 [#相关]
 
-- ABI 细节（2 个 u32 + `host_ctx` + 19 个函数指针、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
+- ABI 细节（2 个 u32 + `host_ctx` + 22 个函数指针、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
 - C / C++ 的写法（同一份头文件）：[C 与 C++ 插件](./native.mdx)
 - 订阅与过滤器：[订阅与事件](./events.mdx)
 
@@ -2586,7 +2611,7 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 
 ## 方法一览 [#方法一览]
 
-薄 SDK 把 VTable 那 20 个函数包成了这些（`run()` 之前只能调同步的那几个）：
+薄 SDK 把 VTable 那 22 个函数包成了这些（`run()` 之前只能调同步的那几个）：
 
 | 方法 | 走的 ABI | 干什么 |
 | --- | --- | --- |
@@ -2609,6 +2634,9 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 | `pluginConfig()` | — | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
 | `getConfig(section, key?, onConfig?)` | `get_config` | 读**任意**插件段（异步，回调在 `run()` 之后） |
 | `setConfig(key, value, onDone?)` | `set_config` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
+| `simplifyInvoke(op, onResponse?)` | `simplify_invoke` | 让宿主跑一个 simplify 操作（发消息等结局、超时撤回、Markdown→entities…）；结果经 `response` 通道回投，整条 `simplifyResult` 交 `onResponse`（不传就只发不收） |
+| `simplifyInvokeAsync(op)` | `simplify_invoke` | 上一条的 Promise 版，`resolve` 整条 `simplifyResult`（`{ok, op, result\|error}`），自己判 `ok` |
+| `simplifyInvokeResult(op, onResult?)` | `simplify_invoke_result` | **同步**跑不碰网络的 op（`parse_text_entities` / `rich_from_markdown` / `list_ops`），回调收结果；传异步 op 拿到 `ok:false` / `code:"async_op"` |
 | `run()` | — | 握手并开始收事件——**永远是最后一行** |
 
 ## 一次看全：常用 ABI 怎么调 [#一次看全常用-abi-怎么调]
@@ -2987,9 +3015,44 @@ run();
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
-> 或者照下面手写。
+> ✅ **JS / TS 薄封装已经支持** `simplifyInvoke` / `simplifyInvokeAsync` /
+> `simplifyInvokeResult`（见上表）——直接调用即可，不必手写下面这些字段。
 
+
+先来一个能跑的：用 `simplifyInvokeAsync` 发消息——宿主替你把文本解析成 `formattedText`、
+等到「真发出去」那条 `Message`、超时还会先撤回：
+
+```ts
+import { on, simplifyInvokeAsync, log } from "./fuyubot";
+
+// 在事件回调里调用（回投通道在 run() 之后才握手）
+on("updateNewMessage", async (update: any) => {
+  const result = await simplifyInvokeAsync({
+    op: "send_message",
+    args: {
+      chat_id: update.message.chat_id,
+      input_message_content: {
+        "@type": "inputMessageText",
+        // 纯字符串即可，simplify 按纯文本处理；
+        // 想要 Markdown/HTML 就写 { text, parse_mode: "markdown" | "markdown_v2" | "html" }
+        text: "你好，这是用 simplify 发的",
+      },
+      timeout_ms: 30000,
+    },
+  });
+  if (result.ok) {
+    log(`已发出，最终消息 id=${result.result?.id ?? "?"}`);
+  } else {
+    log(`发送失败：${result.error.code} ${result.error.message}`);
+  }
+});
+```
+
+只想要同步拿结果（不碰网络的 op）就用 `simplifyInvokeResult`，回调里收整条 `simplifyResult`：
+`parse_text_entities` / `rich_from_markdown` / `list_ops`。传需要等 TDLib 应答的异步 op
+会拿到 `ok:false` / `code:"async_op"`。
+
+手写 `sendMessage` 是**另一条路**——下面这些字段你都得自己拼对：
 
 | 想要的效果 | 手写的关键字段 |
 | --- | --- |
@@ -3204,6 +3267,16 @@ WaitHandle w = g_host->wait_for_update(g_host->host_ctx, "{\"@type\":\"updateNew
 /* ⑩ 服务：注册到自己作用域 / 注册到进程级 / 沿父链查 */
 ServiceHandle svc = g_host->provide_service(g_host->host_ctx, "demo.cache", &vtable);
 const ServiceVTable *got = g_host->get_service(g_host->host_ctx, "demo.cache");
+
+/* ⑪ v5 简化入口：发一条 op（异步，结果照 "response" 通道回投）/ 同步拿不碰网络的结果 */
+RequestId rid = g_host->simplify_invoke(g_host->host_ctx,
+    "{\"op\":\"send_message\","
+     "\"args\":{\"chat_id\":-1001234567890,"
+              "\"input_message_content\":{\"@type\":\"inputMessageText\",\"text\":\"hi\"}}}");
+const char *r = g_host->simplify_invoke_result(g_host->host_ctx,
+    "{\"op\":\"parse_text_entities\","
+     "\"args\":{\"text\":\"**b**\",\"parse_mode\":\"markdown_v2\"}}");
+/* r 同上归宿主线程局部缓冲，读完即弃，不要 free */
 ```
 
 ⚠️ 三条所有权规则（跨界最容易出事的地方）：
@@ -3265,9 +3338,34 @@ if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
-> 或者照下面手写。
+> C / C++ **不需要** SDK 薄封装——直接调 VTable 上的 `simplify_invoke` /
+> `simplify_invoke_result`（见下），或者照下面手写 `sendMessage`。
 
+
+先来一个能跑的：直接调 VTable 上的 `simplify_invoke` 发消息——宿主替你解析文本、等到真发出去、
+超时先撤回；结果经已有的 `"response"` 事件回投（带 `request_id`，与你收 TDLib 响应是同一个 `on` 通道）：
+
+```c
+/* 异步发消息：返回 RequestId，结果照 "response" 通道回到 on_update（request_id 配对） */
+RequestId rid = g_host->simplify_invoke(g_host->host_ctx,
+    "{\"op\":\"send_message\","
+     "\"args\":{\"chat_id\":-1001234567890,"
+              "\"input_message_content\":{\"@type\":\"inputMessageText\","
+                                          "\"text\":\"你好，这是用 simplify 发的\"},"
+              "\"timeout_ms\":30000}}");
+
+/* 同步拿不碰网络的结果（parse_text_entities / rich_from_markdown / list_ops）：
+   返回宿主线程局部缓冲，读完即弃，不要 free */
+const char *r = g_host->simplify_invoke_result(g_host->host_ctx,
+    "{\"op\":\"parse_text_entities\","
+     "\"args\":{\"text\":\"**粗体**\",\"parse_mode\":\"markdown_v2\"}}");
+/* r 形如 {"@type":"simplifyResult","op":"parse_text_entities","ok":true,"result":{...}} */
+```
+
+`on_update` 里按 `request_id == rid` 配对，就能从那条 `response` 事件里取出 `simplifyResult` JSON
+（和 `td_invoke_simplified` 的响应是同一个 `on` 通道，逻辑完全复用）。
+
+手写 `sendMessage` 是**另一条路**——下面这些字段你都得自己拼对：
 
 | 想要的效果 | 手写的关键字段 |
 | --- | --- |
@@ -3336,7 +3434,7 @@ entry = "main.py"
 
 ## 方法一览 [#方法一览]
 
-薄 SDK 把 VTable 那 20 个函数包成了这些（`run()` 之前只能调同步的那几个）：
+薄 SDK 把 VTable 那 22 个函数包成了这些（`run()` 之前只能调同步的那几个）：
 
 | 方法 | 走的 ABI | 干什么 |
 | --- | --- | --- |
@@ -3359,6 +3457,9 @@ entry = "main.py"
 | `plugin_config()` | — | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
 | `get_config(section, key="", on_config=None)` | `get_config` | 读**任意**插件段（异步，回调在 `run()` 之后） |
 | `set_config(key, value, on_done=None)` | `set_config` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
+| `simplify_invoke(op, on_response=None)` | `simplify_invoke` | 让宿主跑一个 simplify 操作（发消息等结局、超时撤回、Markdown→entities…）；结果经 `response` 通道回投，整条 `simplifyResult` 交 `on_response`（不传就只发不收） |
+| `simplify_invoke_async(op)` | `simplify_invoke` | 上一条的 future 版，`resolve` 整条 `simplifyResult`（`{ok, op, result\|error}`），自己判 `ok`（**只能**在 `run_async` 里用） |
+| `simplify_invoke_result(op, on_result=None)` | `simplify_invoke_result` | **同步**跑不碰网络的 op（`parse_text_entities` / `rich_from_markdown` / `list_ops`），回调收结果；传异步 op 拿到 `ok:False` / `code:"async_op"` |
 | `run()` | — | 握手并开始收事件——**永远是最后一行** |
 | `run_async(main=None)` | — | 同上，但跑 asyncio 事件循环，`invoke_async` / `wait_async` 要用它 |
 
@@ -3704,9 +3805,53 @@ run()
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
-> 或者照下面手写。
+> ✅ Python 薄封装已经支持 `simplify_invoke` / `simplify_invoke_async` / `simplify_invoke_result`
+> （见上表）——直接调用即可，不必手写下面这些字段。
 
+
+先来一个能跑的：用 `simplify_invoke` 发消息——宿主替你把文本解析成 `formattedText`、
+等到「真发出去」那条 `Message`、超时还会先撤回（结果经 `response` 通道回投）：
+
+```python
+import fuyubot_plugin as host
+
+
+def on_send_result(result):
+    # result 形状: {"@type":"simplifyResult","op":"send_message","ok":bool,"result"|"error":{...}}
+    if result.get("ok"):
+        msg = result["result"]
+        host.log(f"已发出，最终消息 id={msg.get('id', '?')}")
+    else:
+        err = result["error"]
+        host.log(f"发送失败：{err['code']} {err['message']}", "error")
+
+
+# 在事件回调里调用（回投通道在 run() 之后才握手）
+def on_new_message(update):
+    host.simplify_invoke({
+        "op": "send_message",
+        "args": {
+            "chat_id": update["message"]["chat_id"],
+            "input_message_content": {
+                "@type": "inputMessageText",
+                # 纯字符串即可，simplify 按纯文本处理；
+                # 想要 Markdown/HTML 就写 {"text": ..., "parse_mode": "markdown"|"markdown_v2"|"html"}
+                "text": "你好，这是用 simplify 发的",
+            },
+            "timeout_ms": 30000,
+        },
+    }, on_send_result)
+
+
+host.on("updateNewMessage", on_new_message)
+run()
+```
+
+只想要同步拿结果（不碰网络的 op）就用 `simplify_invoke_result`，回调里收整条 `simplifyResult`：
+`parse_text_entities` / `rich_from_markdown` / `list_ops`。传需要等 TDLib 应答的异步 op
+会拿到 `ok:False` / `code:"async_op"`。
+
+手写 `sendMessage` 是**另一条路**——下面这些字段你都得自己拼对：
 
 | 想要的效果 | 手写的关键字段 |
 | --- | --- |
@@ -4066,7 +4211,7 @@ fn start(&mut self, _config_json: &str) -> Result<(), String> {
 
 ## 一次看全：常用 ABI 怎么调 [#一次看全常用-abi-怎么调]
 
-`HostApi` 上是 VTable 那 20 个函数的一对一封装，`HostExt` 另外给了几个「不用自己拼 JSON 字符串」
+`HostApi` 上是 VTable 那 22 个函数的一对一封装，`HostExt` 另外给了几个「不用自己拼 JSON 字符串」
 的便利方法（`subscribe_json` / `invoke_value` / `call_tool_value` / `config_value` /
 `set_config_value` / `wait_for_update_json` / `info|warn|error`）。下面这段把它们用了一遍
 （省掉了 `user_data` 取 `HostApi` 的样板，见上面「回调里带状态」一节）：
@@ -4159,6 +4304,7 @@ extern "C-unwind" fn on_ping(user: *mut std::ffi::c_void, payload: *const std::f
 | 配置 | `get_config` / `set_config`（字符串版）、`config_value` / `set_config_value`（`Value` 版） |
 | 中间件 | `use_middleware(Stage::X as u32, cb, user_data)` |
 | 看别人 | `list_tools` / `list_plugins` |
+| 跨语言简化入口（v5） | `simplify_invoke(op_json)` / `simplify_invoke_result(op_json)`——和 JS/TS/Python/Go/C 同一条 op 表（见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)）；要类型安全的封装仍可用上面的 `fuyubot-simplify` crate |
 
 ## 用封装层发消息：`fuyubot-simplify` [#用封装层发消息fuyubot-simplify]
 

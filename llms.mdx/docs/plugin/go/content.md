@@ -156,9 +156,38 @@ func getConfig(section, key string) string {
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
-> 或者照下面手写。
+> ⚠️ Go 没有 `fuyubot-sdk init --lang go` 模板（见页首），但可以直接调 VTable 上的
+> `simplify_invoke` / `simplify_invoke_result`（见下），或者照下面手写 `invoke(sendMessage, …)`。
 
+
+先来一个能跑的：在 `plugin.c` 里加一座 `simplify_invoke` 桥（和 `fy_invoke` 同形状），Go 侧就能像
+调普通函数一样发 op——宿主替你解析文本、等到真发出去、超时先撤回；结果经已有的 `"response"`
+通道回投（带 `request_id`，与 `fy_invoke` 的响应同一个 `on` 通道）：
+
+```c
+/* plugin.c —— 转发到 VTable，Go 侧不碰函数指针 */
+RequestId fy_simplify_invoke(const char *op_json) {
+    return g_host->simplify_invoke(g_host->host_ctx, op_json);
+}
+/* 同步拿不碰网络的结果：返回宿主线程局部缓冲，读完即弃，不要 free */
+const char *fy_simplify_invoke_result(const char *op_json) {
+    return g_host->simplify_invoke_result(g_host->host_ctx, op_json);
+}
+```
+
+```go
+// main.go —— 在事件回调里调用（回投通道在 run() 之后才握手）
+func go_on_update(_ unsafe.Pointer, payload *C.char) C.int {
+    // …解析出 chat_id 后：
+    op := `{"op":"send_message","args":{"chat_id":-1001234567890,` +
+          `"input_message_content":{"@type":"inputMessageText","text":"你好，这是用 simplify 发的"},` +
+          `"timeout_ms":30000}}`
+    C.fy_simplify_invoke(C.CString(op))
+    return 0
+}
+```
+
+手写 `invoke("sendMessage", …)` 是**另一条路**——下面这些字段你都得自己拼对：
 
 | 想要的效果 | 手写的关键字段 |
 | --- | --- |
@@ -228,6 +257,6 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录
 
 ## 相关 [#相关]
 
-- ABI 细节（2 个 u32 + `host_ctx` + 19 个函数指针、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
+- ABI 细节（2 个 u32 + `host_ctx` + 22 个函数指针、内存所有权、版本协商）：[ABI 契约](./abi.mdx)
 - C / C++ 的写法（同一份头文件）：[C 与 C++ 插件](./native.mdx)
 - 订阅与过滤器：[订阅与事件](./events.mdx)

@@ -146,7 +146,7 @@ fn start(&mut self, _config_json: &str) -> Result<(), String> {
 
 ## 一次看全：常用 ABI 怎么调 [#一次看全常用-abi-怎么调]
 
-`HostApi` 上是 VTable 那 20 个函数的一对一封装，`HostExt` 另外给了几个「不用自己拼 JSON 字符串」
+`HostApi` 上是 VTable 那 22 个函数的一对一封装，`HostExt` 另外给了几个「不用自己拼 JSON 字符串」
 的便利方法（`subscribe_json` / `invoke_value` / `call_tool_value` / `config_value` /
 `set_config_value` / `wait_for_update_json` / `info|warn|error`）。下面这段把它们用了一遍
 （省掉了 `user_data` 取 `HostApi` 的样板，见上面「回调里带状态」一节）：
@@ -239,6 +239,7 @@ extern "C-unwind" fn on_ping(user: *mut std::ffi::c_void, payload: *const std::f
 | 配置 | `get_config` / `set_config`（字符串版）、`config_value` / `set_config_value`（`Value` 版） |
 | 中间件 | `use_middleware(Stage::X as u32, cb, user_data)` |
 | 看别人 | `list_tools` / `list_plugins` |
+| 跨语言简化入口（v5） | `simplify_invoke(op_json)` / `simplify_invoke_result(op_json)`——和 JS/TS/Python/Go/C 同一条 op 表（见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)）；要类型安全的封装仍可用上面的 `fuyubot-simplify` crate |
 
 ## 用封装层发消息：`fuyubot-simplify` [#用封装层发消息fuyubot-simplify]
 

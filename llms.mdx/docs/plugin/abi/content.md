@@ -96,9 +96,9 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 版本不匹配时**只能**用 `plugin_free_handle` 收尾，那一刻 `plugin_stop` 不会被调；
 卸载顺序是 `plugin_stop` → 回滚注册 → 最后才 drop 那个 `Library`。
 
-## HostApiVTable：`host_ctx` + 20 个函数指针 [#hostapivtablehost_ctx--20-个函数指针]
+## HostApiVTable：`host_ctx` + 22 个函数指针 [#hostapivtablehost_ctx--22-个函数指针]
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **20 个是函数指针**，全是 `Option<...>`；
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **22 个是函数指针**，全是 `Option<...>`；
 总大小 = `2 * size_of::<u32>() + 23 * size_of::<*const c_void>()`（`host_ctx` + 22 个函数），
 由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
@@ -207,7 +207,7 @@ bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地�
 {"op": "send_message", "args": {"chat_id": 123, "input_message_content": {…}}}
 ```
 
-**为什么不是 20 个函数指针**：那样以后每加一个方法都要升一次 ABI 版本、三个仓库一起动。
+**为什么不是 22 个函数指针**：那样以后每加一个方法都要升一次 ABI 版本、三个仓库一起动。
 一张表之后，**加操作不动 ABI**。
 
 ### 结果怎么回来 [#结果怎么回来]
@@ -222,7 +222,8 @@ JS/TS 的 `invokeAsync`、Python 的 `invoke_async`、Go 的 channel、Rust 的 
 ```
 
 `error.code` 是稳定的英文代号，可以拿它分支：`timeout` / `send_failed` / `tdlib` /
-`missing_field` / `bad_args` / `unknown_op` / `async_op` / `host`。
+`missing_field` / `bad_args` / `unknown_op` / `async_op` / `host` / `missing_op`
+（`op` JSON 缺字符串字段 `op`）/ `simplify`（`SimplifyError` 里没单独归类的兜底）。
 
 ### 入参的形状 [#入参的形状]
 
@@ -294,11 +295,6 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 | Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 5 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
 | Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v5 cdylib），`abi_version` 它填 |
 | JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
-
-⚠️ **过渡期**：宿主已经是 v5 了，而 SDK 仓库里手工构造 `HostApiVTable` 的三处
-（`fuyubot-plugin-api` / `fuyubot-sdk-host` / `fuyubot-sdk-script`）还停在 v4。
-按上面的协商规则，**v4 插件会被 v5 宿主拒绝加载**（`AbiMismatch`）——SDK 跟着发一版之前，
-各语言插件需要重新编译 / 更新 SDK。
 
 脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
 **作者永远不碰 C ABI**；ABI 版本由承载它的那份 cdylib 声明。Python 与 JS 的中间插件
