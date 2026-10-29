@@ -34,7 +34,7 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 
 ## 方法一览
 
-薄 SDK 把 VTable 那 20 个函数包成了这些（`run()` 之前只能调同步的那几个）：
+薄 SDK 把 VTable 那 22 个函数包成了这些（`run()` 之前只能调同步的那几个）：
 
 | 方法 | 走的 ABI | 干什么 |
 | --- | --- | --- |
@@ -57,6 +57,9 @@ manifest 长这样（`entry` 不写就默认 `index.ts`）：
 | `pluginConfig()` | — | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
 | `getConfig(section, key?, onConfig?)` | `get_config` | 读**任意**插件段（异步，回调在 `run()` 之后） |
 | `setConfig(key, value, onDone?)` | `set_config` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
+| `simplifyInvoke(op, onResponse?)` | `simplify_invoke` | 让宿主跑一个 simplify 操作（发消息等结局、超时撤回、Markdown→entities…）；结果经 `response` 通道回投，整条 `simplifyResult` 交 `onResponse`（不传就只发不收） |
+| `simplifyInvokeAsync(op)` | `simplify_invoke` | 上一条的 Promise 版，`resolve` 整条 `simplifyResult`（`{ok, op, result|error}`），自己判 `ok` |
+| `simplifyInvokeResult(op, onResult?)` | `simplify_invoke_result` | **同步**跑不碰网络的 op（`parse_text_entities` / `rich_from_markdown` / `list_ops`），回调收结果；传异步 op 拿到 `ok:false` / `code:"async_op"` |
 | `run()` | — | 握手并开始收事件——**永远是最后一行** |
 
 ## 一次看全：常用 ABI 怎么调
@@ -435,9 +438,44 @@ run();
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
-> 或者照下面手写。
+> ✅ **JS / TS 薄封装已经支持** `simplifyInvoke` / `simplifyInvokeAsync` /
+> `simplifyInvokeResult`（见上表）——直接调用即可，不必手写下面这些字段。
 
+
+先来一个能跑的：用 `simplifyInvokeAsync` 发消息——宿主替你把文本解析成 `formattedText`、
+等到「真发出去」那条 `Message`、超时还会先撤回：
+
+```ts
+import { on, simplifyInvokeAsync, log } from "./fuyubot";
+
+// 在事件回调里调用（回投通道在 run() 之后才握手）
+on("updateNewMessage", async (update: any) => {
+  const result = await simplifyInvokeAsync({
+    op: "send_message",
+    args: {
+      chat_id: update.message.chat_id,
+      input_message_content: {
+        "@type": "inputMessageText",
+        // 纯字符串即可，simplify 按纯文本处理；
+        // 想要 Markdown/HTML 就写 { text, parse_mode: "markdown" | "markdown_v2" | "html" }
+        text: "你好，这是用 simplify 发的",
+      },
+      timeout_ms: 30000,
+    },
+  });
+  if (result.ok) {
+    log(`已发出，最终消息 id=${result.result?.id ?? "?"}`);
+  } else {
+    log(`发送失败：${result.error.code} ${result.error.message}`);
+  }
+});
+```
+
+只想要同步拿结果（不碰网络的 op）就用 `simplifyInvokeResult`，回调里收整条 `simplifyResult`：
+`parse_text_entities` / `rich_from_markdown` / `list_ops`。传需要等 TDLib 应答的异步 op
+会拿到 `ok:false` / `code:"async_op"`。
+
+手写 `sendMessage` 是**另一条路**——下面这些字段你都得自己拼对：
 
 | 想要的效果 | 手写的关键字段 |
 | --- | --- |

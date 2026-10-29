@@ -144,6 +144,16 @@ WaitHandle w = g_host->wait_for_update(g_host->host_ctx, "{\"@type\":\"updateNew
 /* ⑩ 服务：注册到自己作用域 / 注册到进程级 / 沿父链查 */
 ServiceHandle svc = g_host->provide_service(g_host->host_ctx, "demo.cache", &vtable);
 const ServiceVTable *got = g_host->get_service(g_host->host_ctx, "demo.cache");
+
+/* ⑪ v5 简化入口：发一条 op（异步，结果照 "response" 通道回投）/ 同步拿不碰网络的结果 */
+RequestId rid = g_host->simplify_invoke(g_host->host_ctx,
+    "{\"op\":\"send_message\","
+     "\"args\":{\"chat_id\":-1001234567890,"
+              "\"input_message_content\":{\"@type\":\"inputMessageText\",\"text\":\"hi\"}}}");
+const char *r = g_host->simplify_invoke_result(g_host->host_ctx,
+    "{\"op\":\"parse_text_entities\","
+     "\"args\":{\"text\":\"**b**\",\"parse_mode\":\"markdown_v2\"}}");
+/* r 同上归宿主线程局部缓冲，读完即弃，不要 free */
 ```
 
 ⚠️ 三条所有权规则（跨界最容易出事的地方）：
@@ -205,9 +215,34 @@ if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
-> 或者照下面手写。
+> C / C++ **不需要** SDK 薄封装——直接调 VTable 上的 `simplify_invoke` /
+> `simplify_invoke_result`（见下），或者照下面手写 `sendMessage`。
 
+
+先来一个能跑的：直接调 VTable 上的 `simplify_invoke` 发消息——宿主替你解析文本、等到真发出去、
+超时先撤回；结果经已有的 `"response"` 事件回投（带 `request_id`，与你收 TDLib 响应是同一个 `on` 通道）：
+
+```c
+/* 异步发消息：返回 RequestId，结果照 "response" 通道回到 on_update（request_id 配对） */
+RequestId rid = g_host->simplify_invoke(g_host->host_ctx,
+    "{\"op\":\"send_message\","
+     "\"args\":{\"chat_id\":-1001234567890,"
+              "\"input_message_content\":{\"@type\":\"inputMessageText\","
+                                          "\"text\":\"你好，这是用 simplify 发的\"},"
+              "\"timeout_ms\":30000}}");
+
+/* 同步拿不碰网络的结果（parse_text_entities / rich_from_markdown / list_ops）：
+   返回宿主线程局部缓冲，读完即弃，不要 free */
+const char *r = g_host->simplify_invoke_result(g_host->host_ctx,
+    "{\"op\":\"parse_text_entities\","
+     "\"args\":{\"text\":\"**粗体**\",\"parse_mode\":\"markdown_v2\"}}");
+/* r 形如 {"@type":"simplifyResult","op":"parse_text_entities","ok":true,"result":{...}} */
+```
+
+`on_update` 里按 `request_id == rid` 配对，就能从那条 `response` 事件里取出 `simplifyResult` JSON
+（和 `td_invoke_simplified` 的响应是同一个 `on` 通道，逻辑完全复用）。
+
+手写 `sendMessage` 是**另一条路**——下面这些字段你都得自己拼对：
 
 | 想要的效果 | 手写的关键字段 |
 | --- | --- |
