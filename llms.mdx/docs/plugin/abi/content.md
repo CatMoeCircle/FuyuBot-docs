@@ -150,6 +150,52 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 - **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
   Rust 侧 `HostApi::from_raw` 一次解包校验全部 22 个，之后调用路径上没有 `Option`、也没有 panic 分支。
 
+### 服务的形状：`ServiceVTable` [#服务的形状servicevtable]
+
+一个服务就是一张 C 结构表——宿主和插件都不需要知道服务的 Rust 类型，按名字调方法即可：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `name` | `*const c_char` | 服务名，NUL 结尾 UTF-8 |
+| `version` | `u32` | 提供方填的协议版本（协商用，宿主不校验） |
+| `size` | `u32` | `size_of::<ServiceVTable>()` |
+| `context` | `*mut c_void` | 提供方的实例数据，**原样传给每个方法** |
+| `methods` | `*const ServiceMethod` | 指向 `method_count` 个连续的方法项 |
+| `method_count` | `usize` | 方法项个数 |
+
+每个方法项是 `{ name: *const c_char, func: ServiceMethodFn }`，
+`ServiceMethodFn = fn(context: *mut c_void, input_json: *const c_char) -> *const c_char`。
+
+### 怎么调方法 [#怎么调方法]
+
+Rust 侧有现成封装 `HostApi::call_service(name, method, input_json)`：
+
+- 服务不存在 / 没这个方法 / `func` 是 `None` → 返回错误；
+- 调 `func(context, input_json)`，入参是方法的 JSON 负载字符串；
+- 返回 `NULL` = 成功但没有输出（宿主内部约定），调用方得到空字符串；
+- 返回非 `NULL` = **提供方持有的** NUL 字符串，立刻拷走——它只在本次调用返回
+  后、下一次宿主函数调用之前有效（与 `list_tools` / `get_config` 同一套线程局部缓冲）。
+
+C / Go 侧没有封装，就手动做同一件事：`get_service` 拿表 → 按 `method_count` 扫
+`methods[i]` 比名字 → 调 `func(context, input_json)`。脚本插件（Python / JS）的
+`call_service` / `callService` 就是这条路径的薄封装，见[脚本插件 API](./python.mdx)。
+
+### 宿主预置的服务 [#宿主预置的服务]
+
+宿主在根上预置了两个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
+
+| 服务名 | 方法 | 协议 |
+| --- | --- | --- |
+| `fuyubot.host.plugins` | `report` | 无参 → `{"plugins":[{name, state, …}]}`，进程内插件快照；`state` ∈ `active` / `pending` / `failed` / `activating`，`pending` 带 `missing`、`failed` 带 `reason` |
+| `fuyubot.host.scope` | `scope_create` | `{}` → `{"handle":N}`，开一个子作用域 |
+| | `scope_enter` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
+| | `scope_leave` | 忽略入参；离开当前作用域 |
+| | `scope_drop` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
+
+`fuyubot.host.plugins` 与 ABI 第 8 项 `list_plugins` 同源，只是多一条走服务这条路
+（内置 `/plugins` 插件就是这么读「进程里真在跑的」插件清单的）。`fuyubot.host.scope`
+是中间插件批量托管脚本时开子作用域用的，见[架构](../dev/architecture.mdx)。
+
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
 都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；
 `LogLevel` = 1..5（`Error` / `Warn` / `Info` / `Debug` / `Trace`），`Stage` = 0..5；

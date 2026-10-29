@@ -36,18 +36,6 @@
 两个都**不编译、不打包插件**——编译是插件作者用自己语言工具链（`cargo build`、`cl /LD`、`gcc -shared`）完成的事，
 `fuyubot plugin install` 只负责把编好的产物**复制**进插件目录。
 
-## 现在能验证到什么程度 [#现在能验证到什么程度]
-
-<Callout type="info">
-  离线回放（`--replay`）与实例三件套（单实例锁 / 后台运行 / `status` / `stop`）是端到端跑过的。
-  真实账号登录 `run` 会接上 TDLib 走授权状态机，但**没有拿真账号端到端验过**「收真更新 → 插件回一条」。
-</Callout>
-
-- 内核、插件 ABI、加载器、更新管线、四大机制：有测试，全绿
-- 真 TDLib（真 `tdjson` + 真 `td_api.tl`）：`getMe` 往返、同步 `execute`、插件调 TDLib 收响应，都在 `-- --ignored` 自检里验过
-- `td_api.tl` 在**编译期**被转成元数据烤进二进制，运行时不读文件、不解析
-- `tdjson` **运行时动态加载**，构建期会把它拷到可执行文件同级目录
-
 ## 下一步 [#下一步]
 
 - **普通用户**：到 [Releases](https://github.com/CatMoeCircle/Fuyu-Bot/releases) 下对应平台的包，解压就跑 ——

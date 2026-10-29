@@ -148,6 +148,7 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 <Cards>
   <Card title="订阅与事件" href="/docs/plugin/events/" />
   <Card title="调用 TDLib" href="/docs/plugin/tdlib/" />
+  <Card title="外部仓库插件" href="/docs/plugin/external/" />
   <Card title="富消息" href="/docs/plugin/rich/" />
   <Card title="工具与中间件" href="/docs/plugin/tools/" />
   <Card title="ABI 契约" href="/docs/plugin/abi/" />
