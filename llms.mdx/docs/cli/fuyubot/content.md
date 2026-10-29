@@ -8,6 +8,8 @@ fuyubot <COMMAND>
 Commands:
   init    初始化一个 fuyubot 项目（生成 fuyubot.toml 与插件目录）
   run     起框架、加载插件
+  login   只登录，不起框架：走完授权、session 落盘后退出
+  logout  清掉本地 TDLib 会话（= 退出登录；默认只预览）
   status  看这个目录上的实例在不在跑（读 .fuyubot/）
   stop    停掉这个目录上跑着的实例
   config  看配置：打印**生效值**（默认值 + 向上找到的那份文件）
@@ -39,7 +41,7 @@ $ fuyubot init --dir demo --name mybot --api-id 12345
 ## `run` [#run]
 
 ```text
-fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--no-tdlib]
+fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--no-tdlib]
             [--no-login] [--background] [--replay <REPLAY>] [--replay-wait <MS>]
 ```
 
@@ -47,15 +49,16 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--no-tdlib]
 | --- | --- |
 | `--config` | 配置文件，默认 `fuyubot.toml`（缺这个文件时 `run` 会按模板自动生成一份） |
 | `--plugin-dir` | 覆盖 `[plugins].dir` |
+| `--api-id <ID>` | 覆盖配置里的 `api_id`（**不是**秘密，可以写在命令行 / 脚本里）。优先级：`--api-id` → `TG_API_ID` → 配置 `[telegram].api_id` → 交互提问。`api_hash` 没有对应参数（只走 `TG_API_HASH` 或交互输入） |
 | `--no-tdlib` | 不接 TDLib，只加载插件 |
 | `--no-login` | 接 TDLib 但不走登录流程（已有 session 照样能用；CI / 容器用） |
 | `--background` | 派生无终端的子进程，stdout/stderr 进 `logs/fuyubot.log`，父进程等状态发布后返回 |
 | `--replay <文件>` | 把一批更新 JSON 灌进管线后退出：**不接 TDLib、不用账号** |
 | `--replay-wait <MS>` | 回放后等插件的静默窗口；不填按插件形态自选（脚本插件 2000，原生 150） |
 
-`run` 不带 `--replay` 的顺序：自动 init → 拿单实例锁 → 问/读凭据 → attach TDLib → 加载全部插件 →
+`run` 不带 `--replay` 的顺序：自动 init → 拿单实例锁 → attach TDLib → 问/读凭据 → **加载全部插件** →
 发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 才开始分发。
-**登录这一步没有真账号端到端验过**，要立刻验插件就用 `--replay`。
+**登录这一步没有真账号端到端验过**，要立刻验插件就用 `--replay`——想单独把登录走完（不起框架）用 `login`。
 
 ```powershell
 .\fuyubot.exe run --config demo\fuyubot.toml                 # 前台，可交互登录
@@ -65,6 +68,69 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--no-tdlib]
 
 后台运行**没有 stdin**：没有 session 又没有 `TG_BOT_TOKEN` 时会直接失败并把日志尾巴打出来——
 先用前台登录一次（session 落在 `data/`）。
+
+## `login` [#login]
+
+```text
+fuyubot login [--config <CONFIG>] [--api-id <ID>]
+```
+
+**只登录，不起框架**：建 TDLib 客户端 → 走完授权 → 打印账户 → 退出。**不加载插件、不开接收循环**。
+session 落在 `data/`，之后 `fuyubot run`（含 `--background`）起来就直接进 `Ready`——后台跑没有 stdin、
+登录问不了，先前台 `login` 一次正是给这条路准备的。
+
+| 参数 | 作用 |
+| --- | --- |
+| `--config` | 配置文件，默认 `fuyubot.toml`（缺文件时同样会自动生成一份） |
+| `--api-id <ID>` | 与 `run` 的 `--api-id` 同义、同优先级（`--api-id` → `TG_API_ID` → 配置 → 提问） |
+
+凭据解析、授权状态机、账户打印全部复用 `run` 的那套，两条路不会漂移。两条额外限制：
+
+- **实例在跑时拒绝**：TDLib 的 sqlite + binlog 同一时刻只能一个进程打开，`login` 再开一次会把跑着的实例拆坏。
+- **TDLib 没就绪就报错退出**，告诉你缺什么（`TDLIB_TDJSON_PATH` / exe 同级 tdjson / `[tdlib].path`）。
+
+```text
+$ fuyubot login --config demo\fuyubot.toml
+只登录：不加载插件、不开接收循环；登完就退出（之后 `fuyubot run` 会直接用这份 session）
+…授权过程…
+登录完成：session 在 demo\data——`fuyubot run`（含 `--background`）起来会直接进 Ready
+```
+
+## `logout` [#logout]
+
+```text
+fuyubot logout [--config <CONFIG>] [--yes]
+```
+
+清掉本地 TDLib 会话目录（= `[telegram].data_dir`，默认 `<项目根>/data`，里面是数据库与 binlog）＝ 退出登录，
+下次要重新登录。**默认只打印将要删除什么**，加 `--yes` 才真删。
+
+它**只清本地**：不发服务端的 `logOut`（Telegram 那边的会话还在，只是本机这份没了）。
+
+| 参数 | 作用 |
+| --- | --- |
+| `--yes` | 真的删除。不加就是预览，一个文件都不动 |
+
+三道守卫与 `--yes` 无关，命中就拒绝：
+
+| 守卫 | 行为 |
+| --- | --- |
+| 实例在跑 | 拒绝（预览前、真删前各挡一次）：运行中动会话目录会拆坏它的数据库 |
+| 目录不在项目根内 | 放行但打醒目警告：`data_dir` 指到项目外了，确认过再加 `--yes` |
+| 目录里没有 `td.binlog` | 拒绝：那多半不是 TDLib 的数据目录（`data_dir` 指错了），要删请自己手工删 |
+
+```text
+$ fuyubot logout --config demo\fuyubot.toml
+将要删除 TDLib 本地会话（logout）：
+  目录  demo\data
+  内容  3 个文件，1.2 MB
+  条目  td.binlog、db.sqlite、db.sqlite-wal
+
+删掉之后 session 就没了，下次 `fuyubot run` / `fuyubot login` 要重新登录
+（Bot Token / 手机号 / 密码从来不落盘，这里只有 TDLib 的数据库与 binlog）
+
+没有 --yes：上面这些**一个都没删**（这只是预览）。确认要清掉会话就加 --yes 再跑一次。
+```
 
 ## `status` / `stop` [#status--stop]
 
@@ -147,10 +213,12 @@ $ fuyubot plugin uninstall my-plugin
 - **脚本插件**（推荐，见 [脚本插件](../plugin/scripts.mdx)）：传的是**整个目录**
   （里面有 `pyproject.toml` / `package.json` 身份段），装到 `plugins/scripts/<目录名>/`。
   目标已存在会报错，要覆盖先 `uninstall` 再 `install`。
-- **原生插件**：传编好的 `.dll` / `.so` / `.dylib`，或**工程目录**（去
-  `<工程>/target/{release,debug}` 找产物）。产物连同旁边 / 工程根的 `.py` / `.js` /
-  `.ts` / `.pyi` 同伴脚本一起拷进插件目录。workspace 成员的产物默认落在仓库根
-  `target/` 下，这种情况加 `--target-dir` 或直接指着产物装。
+- **原生插件**：传编好的 `.dll` / `.so` / `.dylib`，或**工程目录**。传目录时按
+  `<工程>/target/{release,debug}` → 工程目录本身 → **沿父链最近的** `target/{release,debug}`
+  这个顺序找产物（两边都有时取**较新**的那个）。最后一档就是给 workspace 成员准备的
+  （`cargo build -p <crate>` 的产物落在仓库根 `target/`，工程自己那份 `target/` 根本不存在），
+  所以那种情况**直接传工程目录就行**，没有 `--target-dir` 这个参数。产物连同旁边 / 工程根的
+  `.py` / `.js` / `.ts` / `.pyi` 同伴脚本一起拷进插件目录。
 - `list` 会**真的加载一次**动态库才知道名字，但**只发现不启动**脚本——不装依赖、
   不起进程，随时可以跑。脚本的名字取自 manifest（`name` 字段），路径是入口文件。
 - `uninstall` 对**跑着的实例也安全**：文件删掉后目录 watch 会自动卸载对应脚本，

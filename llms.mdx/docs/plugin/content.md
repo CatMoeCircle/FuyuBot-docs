@@ -16,9 +16,9 @@
   不编译、不碰 ABI，`fuyubot plugin install` 装上就跑。
 </Callout>
 
-## 原生插件：四个导出符号 [#原生插件四个导出符号]
+## 原生插件：七个导出符号 [#原生插件七个导出符号]
 
-一个原生插件 = 一个 cdylib。宿主 `dlopen` 它，只认四个导出符号，
+一个原生插件 = 一个 cdylib。宿主 `dlopen` 它，只认这七个导出符号，
 其余全部能力都经 `HostApiVTable` 回调宿主。插件不认识 Rust 内核，也不需要认识。
 
 | 符号 | 必须吗 | 干什么 |
@@ -27,8 +27,11 @@
 | `plugin_start` | 可选 | 拿到配置 JSON，注册订阅 / 工具 / 中间件 |
 | `plugin_stop` | 可选 | 卸载前调一次，回收自己的状态 |
 | `plugin_free_string` | **必须** | 释放**插件自己**分配的字符串（宿主从不 free 插件的指针） |
+| `plugin_manifest` | v4 可选 | 返回自描述 JSON（名字 / 版本 / `inject` / `soft_inject`）。宿主在 `plugin_init` **之前**读它来决定激活顺序 |
+| `fuyubot_abi_version` | v4 可选 | 静态返回编译期 `ABI_VERSION`，`fuyubot-sdk check` 靠它 |
+| `plugin_free_handle` | v4 可选 | 只在 ABI 版本不匹配时被调——那一刻不能调 `plugin_stop`，只能用它把 `init` 分配的状态还回来 |
 
-契约细节（字段布局、内存所有权、版本协商）见 [ABI 契约](./abi.mdx)。
+契约细节（字段布局、内存所有权、版本协商、服务作用域）见 [ABI 契约](./abi.mdx)。
 
 ## 最小闭环（原生插件） [#最小闭环原生插件]
 
@@ -43,9 +46,9 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 - `fuyubot init` 重复执行会被挡住（不覆盖你改过的配置）；三个键都有默认值，最简可以只有 `[bot]`。
 - 插件名只允许字母、数字和 `.` `_` `-`（会拼进源码与 TOML）；目录名里的 `.` / `-` 换成 `_` 当 crate 名
   （`fuyubot.weather` → `fuyubot_weather`）。
-- **产物落在哪**：`plugin install <工程目录>` 只看 `<工程>/target/{release,debug}` 与工程目录本身。
-  插件若是**当前 workspace 的成员**，`cargo build -p <crate>` 默认把产物放在仓库根的 `target/`，于是它找不到
-  ——加 `--target-dir <工程目录>/target`，或直接指着产物装。
+- **产物落在哪**：`plugin install <工程目录>` 按 `<工程>/target/{release,debug}` → 工程目录本身 →
+  **沿父链最近的** `target/{release,debug}` 找产物（两边都有时取较新的）。插件若是**当前 workspace 的成员**，
+  `cargo build -p <crate>` 默认把产物放在仓库根的 `target/`，靠最后一档照样能找到，不需要额外参数。
 - **SDK 走源码开发时**设 `FUYUBOT_SDK_PATH` 指向 FuyuBot-SDK 仓库的 `crates/`，生成的插件会写 `path = "…"`；
   不设就写 crates.io 版本号。
 
@@ -59,11 +62,76 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | 事 | 说明 |
 | --- | --- |
 | 回调是 `extern "C-unwind"` | 用 `extern "C"` 的话，逃出去的 panic 直接 abort 整个进程，宿主来不及 `catch_unwind` |
-| 一个 crate 只展开一次 `define_plugin!` | 四个符号名是 ABI 定死的，展开两次就是重复定义 |
-| ABI 版本目前是 `3` | 不匹配时宿主**拒绝加载**，而且**不能**调 `plugin_stop` 收状态 |
+| 一个 crate 只展开一次 `define_plugin!` | 七个符号名是 ABI 定死的，展开两次就是重复定义 |
+| ABI 版本目前是 `4` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
 | 订阅句柄必须活着 | Rust 侧是 `#[must_use]` 的守卫，drop 就是退订 |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
+
+## 声明依赖：`inject` 与 `soft_inject` [#声明依赖inject-与-soft_inject]
+
+manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**、以及**跑的顺序**：
+
+| 字段 | 意思 | 缺了会怎样 |
+| --- | --- | --- |
+| `inject` | 硬依赖 | **不激活**。停在 `Pending` 等着，等你缺的东西出现 |
+| `soft_inject` | 软依赖 | 照常激活，只是排在「软依赖也齐了」的插件后面 |
+
+依赖名可以写两种东西，宿主都认：
+
+- **服务名** —— 比如 `"storage.mongo"`，宿主查 `Context` 里有没有这个名字
+- **插件名** —— 比如 `"fuyubot.manage"`，宿主查同名插件是不是 `Active`
+
+<svg viewBox="0 0 680 286" width="100%" role="img" aria-label="硬依赖决定能不能跑，软依赖只决定排队位置" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>硬依赖决定能不能跑，软依赖只决定排队位置</title>
+  <desc>inject 里的名字不齐就不激活，停在 Pending 等着；soft_inject 只影响排序，不齐也照常激活。名字可以是服务名，也可以是插件名。</desc>
+  <defs>
+    <marker id="dep-author-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="16" width="290" height="64" rx="10" fill="#E24B4A" fillOpacity="0.05" stroke="#E24B4A" strokeOpacity="0.35" strokeWidth="1" />
+  <text x="60" y="36" fontSize="12.5" fontWeight="500" fill="currentColor">inject（硬）</text>
+  <text x="60" y="54" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" fillOpacity="0.7">[&quot;storage.mongo&quot;]</text>
+  <text x="60" y="71" fontSize="10.5" fill="currentColor" fillOpacity="0.6">不齐就不激活</text>
+
+  <rect x="350" y="16" width="290" height="64" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="370" y="36" fontSize="12.5" fontWeight="500" fill="currentColor">soft_inject（软）</text>
+  <text x="370" y="54" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" fillOpacity="0.7">[&quot;cache.redis&quot;]</text>
+  <text x="370" y="71" fontSize="10.5" fill="currentColor" fillOpacity="0.6">只影响排队位置</text>
+
+  <path d="M185 80 L240 116" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-author-arrow)" />
+  <path d="M495 80 L440 116" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-author-arrow)" />
+
+  <rect x="140" y="120" width="400" height="48" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="340" y="139" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">宿主检查：这个名字在不在？</text>
+  <text x="340" y="156" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">服务名或插件名都认</text>
+
+  <path d="M240 168 L190 206" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#dep-author-arrow)" />
+  <text x="200" y="192" fontSize="10" fill="#E24B4A">不在</text>
+  <path d="M440 168 L490 206" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.55" strokeWidth="1.5" markerEnd="url(#dep-author-arrow)" />
+  <text x="452" y="192" fontSize="10" fill="var(--color-fd-primary)">在</text>
+
+  <rect x="60" y="210" width="250" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="185" y="230" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">Pending</text>
+  <text x="185" y="248" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">等着——不是失败</text>
+
+  <rect x="370" y="210" width="250" height="56" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="495" y="230" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">激活</text>
+  <text x="495" y="248" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">排在有软依赖的后面</text>
+</svg>
+
+三件事值得先记住：
+
+1. **`Pending` 不是失败。** 它表示「还没轮到」或「等的东西还没来」。真正的失败只有两种：
+   你的 `plugin_start` 报错，或者你依赖的**提供者已经 `Failed`**（那时你也会被级联标成 `Failed`）。
+2. **软依赖不保证顺序。** 它只是排序偏好：软依赖齐的先上，不齐的也照样上，只是排后面。
+   要「他必须先于我」就写 `inject`，别用 `soft_inject`。
+3. **依赖是准入，不是注入。** 宿主不会把那个服务的引用塞给你——你仍然自己去 `get_service`
+   拿。`inject` 只保证「轮到我的时候它一定在」。
+
+排查看 `fuyubot status`：`pending` 那一栏会列出插件名**和它还缺哪些**。
 
 ## 按语言看 [#按语言看]
 

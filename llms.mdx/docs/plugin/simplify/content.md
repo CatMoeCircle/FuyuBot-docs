@@ -17,6 +17,22 @@ let simplify = Simplify::new(host); // HostApi 是 Copy，随手复制
 本文按**功能范围**分组；想知道这些方法内部怎么实现（为什么这么拼、为什么这么等），
 看[开发 › simplify 封装是怎么实现的](../dev/simplify-internals.mdx)。
 
+## 别的语言怎么用同一套语义 [#别的语言怎么用同一套语义]
+
+**ABI v5 起这套语义不再只有 Rust 有。** 宿主从 v5 开始自己跑**同一份** `fuyubot-simplify` 代码
+（`fuyubot-simplify::ops`），经 `simplify_invoke` / `simplify_invoke_result` 暴露成一张 **op 表**：
+
+```json
+{"op": "send_message", "args": {"chat_id": 123, "input_message_content": {…}}}
+```
+
+所以 Go / C / C++ / JS / TS / Python 插件都能用「发消息等结局、超时撤回、bot 与用户号挑不同反应
+方法、Markdown → entities、富消息本地块树」，行为与 Rust 侧**逐字一致**——没有第二套实现。
+完整清单与结果形状见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
+
+Rust 插件**仍然用本页这些类型化方法**：它们有编译期检查与链式设置器，比拼 JSON 舒服。
+`ops` 那层是给「没有 Rust 类型系统可用」的调用方准备的。
+
 除了发/改/删，这一层还收了四件「TDLib 里没有直觉上那个方法」的事：
 [管理权](#11-管理权adminright) / [转发](#12-转发forwardparams) /
 [表情反应](#13-表情反应reaction) / [连接状态](#14-连接状态connectiontracker)。
@@ -51,7 +67,7 @@ let simplify = Simplify::new(host); // HostApi 是 Copy，随手复制
 | `MarkdownV2` | `textParseModeMarkdown` + `version: 2` |
 | `Html` | `textParseModeHTML` |
 
-⚠️ **真库实测（TDLib 1.8.68，1.8.66 同结论）：MarkdownV2 的粗体是 `*x*`，不是 `**x**`。**
+⚠️ **注意：MarkdownV2 的粗体是 `*x*`，不是 `**x**`。**
 `**bold**` 会被吞成 `bold` 而且**不给** bold entity，`__x__` 出来的是下划线。别按 CommonMark 的直觉写
 ——这正是「不自己实现解析」的理由。
 
@@ -321,6 +337,51 @@ let _guard = on_command(host, |command| {
 ```
 
 ## 8. 等待与订阅 [#8-等待与订阅]
+
+发送类方法等的是**两件事**——响应只是第一截，箭头指的地方才是它真正返回的位置：
+
+<svg viewBox="0 0 680 216" width="100%" role="img" aria-label="发送类方法的两段时间线" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>发送类方法的两段时间线</title>
+  <desc>send_message 先发请求；收到响应时拿到的是还没发出去的临时消息，再等到发送结局 updateMessageSendSucceeded 或 updateMessageSendFailed 才返回最终 Message；超时则先撤回那条没发出去的消息再返回 Timeout。</desc>
+  <defs>
+    <marker id="sm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <text x="40" y="26" fontSize="10.5" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">时间去向右</text>
+
+  <rect x="60" y="44" width="170" height="64" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="145" y="66" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">① 发出请求</text>
+  <text x="145" y="88" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">td_invoke sendMessage</text>
+
+  <path d="M230 76 L241 76" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#sm-arrow)" />
+
+  <rect x="245" y="44" width="170" height="64" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="330" y="66" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">② 收到响应</text>
+  <text x="330" y="88" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">临时消息，还没发出去</text>
+
+  <path d="M415 76 L426 76" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.55" strokeWidth="1.5" markerEnd="url(#sm-arrow)" />
+
+  <rect x="430" y="44" width="170" height="64" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="515" y="66" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">③ 收到结局</text>
+  <text x="515" y="88" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">Succeeded / Failed</text>
+
+  <path d="M515 108 L515 136" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#sm-arrow)" />
+
+  <rect x="370" y="140" width="260" height="56" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="500" y="160" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">send_message 在这里返回</text>
+  <text x="500" y="180" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">最终 Message</text>
+
+  <path d="M330 108 L330 126 L215 126 L215 136" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" strokeDasharray="4 3" markerEnd="url(#sm-arrow)" />
+
+  <rect x="80" y="140" width="270" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="215" y="160" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">超时：先撤回那条没发出去的</text>
+  <text x="215" y="180" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">deleteMessages(revoke) → Timeout</text>
+</svg>
+
+两步之间按临时消息的 `old_message_id` 精确对号；其余方法（`edit_*` / `delete_message` / `answer_callback_query`）
+只等到 ② 就返回了。想自己接原始 JSON，用下面的 `wait_response` / `wait_for_update`。
 
 <TypeTable
   type={{

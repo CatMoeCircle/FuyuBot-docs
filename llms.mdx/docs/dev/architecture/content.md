@@ -40,17 +40,59 @@ graph TD
 | `fuyubot-loader` → 四个机制 + `tdlib` + `abi` + `core` | 允许（**只有它**） |
 
 组合只发生在两处：`HostRuntime::new`（把四个机制 `install` 进 `Context`）与 `HostRuntime` 里的
-17 个 `unsafe extern "C"` 桥。四个机制 crate 绝不彼此调用。
+20 个 `unsafe extern "C"` 桥（VTable 的 20 个函数指针各对应一个）。四个机制 crate 绝不彼此调用。
 
 ## 启动顺序：先 attach TDLib，再 load 插件 [#启动顺序先-attach-tdlib再-load-插件]
 
-```mermaid
-graph TD
-  A["Kernel::new() → kernel.start()"] --> B["PluginLoader::new(context)<br/>装四个机制 + 生成 HostApiVTable"]
-  B --> C["pipeline.attach_tdlib(client)<br/>挂 TdClient，不起循环"]
-  C --> D["loader.load_with_config(dll, config)<br/>逐个 dlopen 插件"]
-  D --> E["pipeline.spawn_dispatch()<br/>拿到 ReceiveLoop，开始分发"]
-```
+<svg viewBox="0 0 680 380" width="100%" role="img" aria-label="启动顺序：attach TDLib 必须在 load 插件之前" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>启动顺序：attach TDLib 必须在 load 插件之前</title>
+  <desc>五步线性流程：建内核 → 建 loader（装四个机制）→ attach TDLib → dlopen 插件 → 起分发循环。第三步是关键顺序点，做晚了插件发请求就会走「没接 TDLib」分支。</desc>
+  <defs>
+    <marker id="boot-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <path d="M40 42 L40 338" fill="none" stroke="currentColor" strokeOpacity="0.18" strokeWidth="1.5" />
+
+  <circle cx="40" cy="42" r="11" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="40" y="42" fontSize="11" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.7">1</text>
+  <rect x="70" y="16" width="570" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="88" y="35" fontSize="12.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">Kernel::new() → kernel.start()</text>
+  <text x="88" y="53" fontSize="11" fill="currentColor" fillOpacity="0.6">建内核并启动；这一步完全不碰 TDLib</text>
+
+  <path d="M40 68 L40 90" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#boot-arrow)" />
+
+  <circle cx="40" cy="116" r="11" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="40" y="116" fontSize="11" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.7">2</text>
+  <rect x="70" y="90" width="570" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="88" y="109" fontSize="12.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">PluginLoader::new(context)</text>
+  <text x="88" y="127" fontSize="11" fill="currentColor" fillOpacity="0.6">把四个机制 install 进 Context，生成 HostApiVTable</text>
+
+  <path d="M40 142 L40 164" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#boot-arrow)" />
+
+  <circle cx="40" cy="190" r="11" fill="var(--color-fd-primary)" fillOpacity="0.12" stroke="var(--color-fd-primary)" strokeOpacity="0.55" strokeWidth="1" />
+  <text x="40" y="190" fontSize="11" textAnchor="middle" dominantBaseline="central" fill="var(--color-fd-primary)">3</text>
+  <rect x="70" y="164" width="570" height="52" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="88" y="183" fontSize="12.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">pipeline.attach_tdlib(client)</text>
+  <text x="88" y="201" fontSize="11" fill="currentColor" fillOpacity="0.6">挂上 TdClient，但**不起接收循环**——关键顺序点</text>
+
+  <path d="M40 216 L40 238" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.55" strokeWidth="1.5" markerEnd="url(#boot-arrow)" />
+
+  <circle cx="40" cy="264" r="11" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="40" y="264" fontSize="11" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.7">4</text>
+  <rect x="70" y="238" width="570" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="88" y="257" fontSize="12.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">loader.load_with_config(dll, config)</text>
+  <text x="88" y="275" fontSize="11" fill="currentColor" fillOpacity="0.6">逐个 dlopen 插件、跑 plugin_start；插件在这里就开始发请求</text>
+
+  <path d="M40 290 L40 312" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#boot-arrow)" />
+
+  <circle cx="40" cy="338" r="11" fill="currentColor" fillOpacity="0.08" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="40" y="338" fontSize="11" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.7">5</text>
+  <rect x="70" y="312" width="570" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="88" y="331" fontSize="12.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor">pipeline.spawn_dispatch()</text>
+  <text x="88" y="349" fontSize="11" fill="currentColor" fillOpacity="0.6">拿到 ReceiveLoop，开始把更新分发给插件</text>
+</svg>
 
 为什么不能反过来：`attach_tdlib` 之前 `td_send` 走「没接 TDLib」分支（请求只留档 + 合成请求号，
 起点 `1 << 48`），而插件在 `plugin_start` 里就发请求（模板与示例都这样）；分发排在插件加载之后，
@@ -58,19 +100,64 @@ graph TD
 
 ## 主链路 [#主链路]
 
-```mermaid
-graph TD
-  P["插件：on / invoke / emit / use_middleware / get_config / set_config / …"] --> V["HostApiVTable<br/>2 个 u32 + host_ctx<br/>+ 19 个函数指针（全 Option，首参 host）"]
-  V --> H["HostRuntime：翻译成事件总线 / 服务容器<br/>/ 工具表 / 中间件管线 / TdClient"]
-  H -->|"td_invoke* → td_send"| S["TdClient::send（注入 @extra）<br/>没接 TDLib：留档 + 合成请求号"]
-  H -->|"td_execute（同步）"| X["TdClient::execute<br/>只给不碰网络的方法用"]
-  S --> L["TdClient::spawn_receive_loop → Routed"]
-  L --> U["Update → process_value：PreUpdate → 解析 @type<br/>→ PreRoute → InPlugin → 双通道发布 → PostResponse"]
-  U --> C1["emit('update', …) 兜底通道"]
-  U --> C2["emit(@type, …) 具体通道"]
-  L --> R["Response → deliver_response<br/>按 request_id / @extra 找到发起者"]
-  R --> S2["emit_scoped(owner, 'response', …)"]
-```
+<svg viewBox="0 0 680 490" width="100%" role="img" aria-label="数据流：一条主干，两条回程" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>数据流：一条主干，两条回程</title>
+  <desc>插件的调用经 HostApiVTable 落到 HostRuntime，再翻译成 TdClient 的 send 或 execute；接收循环把回来的东西分成 Update（分发）与 Response（回投）两条路。</desc>
+  <defs>
+    <marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="16" width="600" height="52" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="60" y="35" fontSize="12.5" fontWeight="500" fill="currentColor">插件</text>
+  <text x="60" y="53" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" fillOpacity="0.6">on / invoke / emit / td_invoke / td_execute / get_config / …</text>
+
+  <path d="M340 68 L340 88" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+
+  <rect x="130" y="92" width="420" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="150" y="111" fontSize="12.5" fontWeight="500" fill="currentColor">HostApiVTable</text>
+  <text x="150" y="129" fontSize="11" fill="currentColor" fillOpacity="0.6">20 个函数指针，首参一律是 host，全是 Option</text>
+
+  <path d="M340 144 L340 164" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+
+  <rect x="100" y="164" width="480" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="120" y="183" fontSize="12.5" fontWeight="500" fill="currentColor">HostRuntime</text>
+  <text x="120" y="201" fontSize="11" fill="currentColor" fillOpacity="0.6">翻译成事件总线 / 服务容器 / 工具表 / 中间件管线 / TdClient</text>
+
+  <path d="M245 220 L245 240" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.6" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+  <text x="255" y="234" fontSize="10.5" fill="var(--color-fd-primary)">发请求</text>
+  <path d="M435 220 L435 240" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.6" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+  <text x="445" y="234" fontSize="10.5" fill="var(--color-fd-primary)">同步执行</text>
+
+  <rect x="40" y="244" width="290" height="56" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="60" y="263" fontSize="12.5" fontWeight="500" fill="currentColor">TdClient::send</text>
+  <text x="60" y="281" fontSize="11" fill="currentColor" fillOpacity="0.6">注入 @extra；没接 TDLib 就留档 + 合成请求号</text>
+
+  <rect x="370" y="244" width="270" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="390" y="263" fontSize="12.5" fontWeight="500" fill="currentColor">TdClient::execute</text>
+  <text x="390" y="281" fontSize="11" fill="currentColor" fillOpacity="0.6">只给不碰网络的方法用</text>
+  <text x="505" y="318" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.5">当场返回 JSON，不进接收循环</text>
+
+  <path d="M185 300 L185 324" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+
+  <rect x="150" y="324" width="380" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="170" y="343" fontSize="12.5" fontWeight="500" fill="currentColor">TdClient::spawn_receive_loop → Routed</text>
+  <text x="170" y="361" fontSize="11" fill="currentColor" fillOpacity="0.6">按 @extra / request_id 认出这条回来的东西属于谁</text>
+
+  <path d="M230 376 L230 400" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+  <path d="M510 376 L510 400" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
+
+  <rect x="100" y="400" width="260" height="70" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="118" y="419" fontSize="12.5" fontWeight="500" fill="currentColor">Update → 分发</text>
+  <text x="118" y="437" fontSize="11" fill="currentColor" fillOpacity="0.6">process_value：PreUpdate → 解析 @type → PreRoute</text>
+  <text x="118" y="455" fontSize="11" fill="currentColor" fillOpacity="0.6">→ InPlugin → 双通道 → PostResponse</text>
+
+  <rect x="380" y="400" width="260" height="70" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="398" y="419" fontSize="12.5" fontWeight="500" fill="currentColor">Response → 回投</text>
+  <text x="398" y="437" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fill="currentColor" fillOpacity="0.6">deliver_response</text>
+  <text x="398" y="455" fontSize="11" fill="currentColor" fillOpacity="0.6">emit_scoped(owner, "response", …)</text>
+</svg>
 
 `process`（吃 `&str`）只是 `process_value` 的前半段（解析 JSON 再交给它）；接收循环那条路
 本来就有 `Value`，所以走 `process_value`。
@@ -112,17 +199,155 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 对这类库 `plugin_stop` 与注册回滚照跑，但**故意不卸载那个 `Library`**，让它映射到进程退出。
 代价是「同一进程内反复加载同一个 Go 插件」不可靠（热重载路径），收益是 Go 插件能正常用。
 
+## 依赖与激活顺序 [#依赖与激活顺序]
+
+每个插件有两个依赖列表：`inject`（硬）与 `soft_inject`（软）。它们**只影响准入与顺序**，
+不影响加载——插件已经 `dlopen` 进来了，只是还没轮到它跑。
+
+<svg viewBox="0 0 680 478" width="100%" role="img" aria-label="依赖解析：硬依赖管准入，软依赖管排序" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>依赖解析：硬依赖管准入，软依赖管排序</title>
+  <desc>每轮先退掉依赖已消失的，再激活一个：硬依赖不齐就停在 Pending，齐了就按「软依赖也齐的先」排序后激活；激活失败会级联到依赖它的插件。</desc>
+  <defs>
+    <marker id="dep-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="140" y="16" width="400" height="48" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="340" y="35" fontSize="12.5" fontWeight="500" textAnchor="middle" fill="currentColor">插件清单</text>
+  <text x="340" y="53" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">注册顺序 = 文件名字典序，所以同层 tie-break 是确定的</text>
+
+  <path d="M340 64 L340 88" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="140" y="92" width="400" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="340" y="112" fontSize="12.5" fontWeight="500" textAnchor="middle" fill="currentColor">每轮 reconcile：先退后进</text>
+  <text x="340" y="130" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">依赖不再满足的先 Deactivate，然后只推进一个 fiber</text>
+
+  <path d="M340 148 L340 172" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="140" y="176" width="400" height="48" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="340" y="200" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">硬依赖（inject）全可用？</text>
+
+  <path d="M240 224 L180 246" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+  <text x="196" y="240" fontSize="10.5" fill="#E24B4A">不齐</text>
+  <path d="M440 224 L490 246" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.55" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+  <text x="470" y="240" fontSize="10.5" fill="var(--color-fd-primary)">齐了</text>
+
+  <rect x="40" y="250" width="280" height="60" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="180" y="270" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">Pending：等着</text>
+  <text x="180" y="288" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">不是失败——提供者可能只是还没起来</text>
+
+  <rect x="340" y="250" width="300" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="490" y="270" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">按软依赖排序</text>
+  <text x="490" y="287" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">软依赖也齐的先，其余排后面</text>
+
+  <path d="M490 302 L490 322" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="340" y="326" width="300" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="490" y="346" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">激活这一个 fiber</text>
+  <text x="490" y="363" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">跑 apply，注册落进它自己的作用域</text>
+
+  <path d="M430 378 L400 398" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+  <path d="M550 378 L580 398" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#dep-arrow)" />
+
+  <rect x="340" y="402" width="130" height="48" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="405" y="426" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Active</text>
+
+  <rect x="490" y="402" width="150" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="565" y="420" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Failed</text>
+  <text x="565" y="438" fontSize="10" textAnchor="middle" dominantBaseline="central" fill="#E24B4A">级联到依赖它的</text>
+</svg>
+
+四条规则：
+
+- **硬依赖不齐 → 不激活**，停在 `Pending`。这是「等」，不是「错」——提供者可能只是排在后面还没轮到。
+- **软依赖不齐 → 照样激活**，只是排在有软依赖的后面（两轮扫描：先扫软的也齐了的，再扫其余）。
+- **每轮只推进一个 fiber**，先退后进。一轮的推进量有保险丝（`2n + 16`），万一依赖图构了环也不会卡死。
+- **激活失败 → 级联**：依赖它的插件一并标 `Failed`，因为那个提供者永远回不来了。
+
+<svg viewBox="0 0 680 210" width="100%" role="img" aria-label="四种状态怎么走" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>四种状态怎么走</title>
+  <desc>Pending 等到依赖齐了才进 Activating；apply 成功是 Active，报错是 Failed；Active 的依赖消失会退回 Pending。Failed 是终态。</desc>
+  <defs>
+    <marker id="state-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="50" width="140" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="110" y="74" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Pending</text>
+
+  <rect x="240" y="50" width="140" height="48" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="310" y="74" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Activating</text>
+
+  <rect x="440" y="50" width="140" height="48" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="510" y="74" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Active</text>
+
+  <rect x="240" y="150" width="140" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="310" y="174" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Failed</text>
+
+  <path d="M180 74 L236 74" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="208" y="64" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.6">依赖齐</text>
+
+  <path d="M380 74 L436 74" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="408" y="64" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.6">成功</text>
+
+  <path d="M310 98 L310 146" fill="none" stroke="#E24B4A" strokeOpacity="0.5" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="318" y="126" fontSize="10" fill="#E24B4A">apply 报错</text>
+
+  <path d="M510 98 L510 120 L110 120 L110 98" fill="none" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1.5" markerEnd="url(#state-arrow)" />
+  <text x="310" y="114" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.55">依赖消失 → Deactivate（退回等着）</text>
+</svg>
+
+`Pending` 与 `Failed` 的分界就是「还可能好」和「不会好了」：`is_permanently_missing` 只在
+提供者**已经 Failed** 时返回真。服务表里没有、也没有同名 fiber 的依赖，一律保持 `Pending`——
+它可能是以后才出现的服务（比如另一个插件在外层作用域里 later 才 provide）。
+
 ## 两种插件形态 [#两种插件形态]
 
-```mermaid
-graph TD
-  H[fuyubot 宿主进程]
-  H -->|"dlopen · C ABI（同进程）"| N[原生插件 cdylib<br/>Rust / C / C++]
-  H --- PH["中间插件 fuyubot_python_host / fuyubot_js_host<br/>（普通 cdylib，经 C ABI）"]
-  PH -->|"uv run / bun · 子进程"| S1[脚本 A · main.py]
-  PH -->|"uv run / bun · 子进程"| S2[脚本 B · index.ts]
-  S1 -.->|"薄 SDK 经原生桥回调"| PH
-```
+<svg viewBox="0 0 680 348" width="100%" role="img" aria-label="进程边界：动态库插件同进程，脚本插件一进程一脚本" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>进程边界：动态库插件同进程，脚本插件一进程一脚本</title>
+  <desc>宿主进程里跑 fuyubot 本体、原生 cdylib 插件、以及 python_host / js_host 这两个中间插件；中间插件再用 uv run / bun 起子进程跑脚本。</desc>
+  <defs>
+    <marker id="proc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="16" width="600" height="160" rx="14" fill="var(--color-fd-primary)" fillOpacity="0.03" stroke="var(--color-fd-primary)" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="60" y="38" fontSize="11" fill="var(--color-fd-primary)" fillOpacity="0.85">宿主进程（同一个地址空间）</text>
+
+  <rect x="160" y="48" width="360" height="44" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="340" y="70" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">fuyubot 宿主</text>
+
+  <rect x="100" y="116" width="250" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="225" y="132" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">原生插件 cdylib</text>
+  <text x="225" y="148" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">Rust / C / C++</text>
+
+  <rect x="370" y="116" width="250" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="495" y="132" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">中间插件 cdylib</text>
+  <text x="495" y="148" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">python_host / js_host</text>
+
+  <path d="M300 92 L240 112" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#proc-arrow)" />
+  <path d="M380 92 L440 112" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#proc-arrow)" />
+  <text x="340" y="106" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.5">dlopen · C ABI</text>
+
+  <path d="M495 176 L495 208" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.6" strokeWidth="1.5" markerEnd="url(#proc-arrow)" />
+  <text x="505" y="196" fontSize="10.5" fill="var(--color-fd-primary)">uv run / bun</text>
+
+  <rect x="40" y="212" width="600" height="88" rx="14" fill="none" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" strokeDasharray="4 3" />
+  <text x="60" y="232" fontSize="11" fill="currentColor" fillOpacity="0.55">子进程（一进程一脚本）</text>
+
+  <rect x="70" y="244" width="250" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="195" y="260" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">脚本 A</text>
+  <text x="195" y="276" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">main.py</text>
+
+  <rect x="360" y="244" width="250" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="485" y="260" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">脚本 B</text>
+  <text x="485" y="276" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">index.ts</text>
+
+  <text x="60" y="324" fontSize="10.5" fill="currentColor" fillOpacity="0.5">脚本经薄 SDK 回调 → 中间插件（原生桥）→ 宿主；子进程死了宿主只记一条错，不跟着崩。</text>
+</svg>
 
 | | 动态库插件 | 脚本插件（目录形态） |
 | --- | --- | --- |
@@ -138,74 +363,120 @@ graph TD
 
 ## 四大机制与内核 [#四大机制与内核]
 
-```text
-core：lib.rs（Kernel：Created → Started → Stopped）/ context.rs（Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>）
-      effect.rs（Box<dyn FnOnce() + Send> 回滚守卫，#[must_use]，merge() 后注册者先撤销）
-      plugin.rs（Plugin trait + define_plugin!）/ manager.rs（PluginManager：load/load_all/unload/reload + DFS 三色拓扑排序）
-event：EventBus / Filter / SubscriptionHandle / EventContextExt
-service：ServiceContainer / ServiceHandle / ServiceContextExt
-tool：ToolDescriptor / ToolRegistry / ToolHandle / ffi 模块 / ToolContextExt
-middleware：Stage / Middleware / Next / Pipeline / MiddlewareHandle / MiddlewareContextExt
-```
+| crate | 里面有什么 |
+| --- | --- |
+| `fuyubot-core` | `lib.rs` 的 `Kernel`（Created → Started → Stopped）；`context.rs` 的 `Context`（`Arc<RwLock<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>`）；`effect.rs` 的 `Effect`（`Box<dyn FnOnce()>` 回滚守卫，`#[must_use]`，`merge()` 后注册者先撤销）；`plugin.rs` 的 `Plugin` trait + `define_plugin!`；`manager.rs` 的 `PluginManager`（load / load_all / unload / reload + DFS 三色拓扑排序） |
+| `fuyubot-event` | `EventBus` / `Filter` / `SubscriptionHandle` / `EventContextExt` |
+| `fuyubot-service` | `ServiceContainer` / `ServiceHandle` / `ServiceContextExt` |
+| `fuyubot-tool` | `ToolDescriptor` / `ToolRegistry` / `ToolHandle` / `ffi` 模块 / `ToolContextExt` |
+| `fuyubot-middleware` | `Stage` / `Middleware` / `Next` / `Pipeline` / `MiddlewareHandle` / `MiddlewareContextExt` |
 
-共用的三条约定：**回调错误类型由 core 定**（四个 crate 不能互相依赖，所以 `fuyubot_core::Result<T>`
-是全仓唯一允许 boxed error 的地方）；**与 Context 的集成 = `install(ctx)` + 扩展 trait**
-（返回的 `Effect` 要一直持有，否则服务立刻从 Context 消失）；**所有注册都返回句柄且 `#[must_use]`**
-（四个 Handle 内部都包着 `core::Effect`，drop 即回滚）。
+三条共用约定：
 
-- **事件**：`emit` 在锁**外面**调回调，所以回调里再 `on` / `emit` / `off` 不会自锁；某个回调返回
-  `Err` 会**中断**本次广播并把错误抛出去。`Filter` 用点分路径（`"message.chat.id"`）做字段相等匹配。
-- **服务**：命名容器（跨语言插件报不出 Rust 的 `TypeId`）。同名重复注册报错；`get::<T>` 类型不匹配
-  返回 `None`，用 `contains` + `type_of` 区分「没注册」和「类型不对」。
-- **工具**：`call_tool` = 查表 → 权限门 → input_schema → 处理器 → output_schema。
-  `handler: Option<ToolHandlerFn>`，`None` 表示「只有元数据的声明型工具」；注册/注销用 `on_change`
-  广播（**不认识事件系统**，要不要转成事件总线由宿主层做）。
-- **中间件**：洋葱模型，`next.run(ctx)` 前是进入段、后是退出段。`run(stage, ctx)` 会**先复制层列表
-  再执行**，所以中间件里再 `use_middleware` 不会自锁；不调 `next.run` 就是不往下走。
+- **回调错误类型由 core 定**：四个 crate 不能互相依赖，所以 `fuyubot_core::Result<T>` 是全仓唯一允许 boxed error 的地方。
+- **与 Context 的集成 = `install(ctx)` + 扩展 trait**：返回的 `Effect` 要一直持有，否则服务立刻从 Context 消失。
+- **所有注册都返回句柄且 `#[must_use]`**：四个 Handle 内部都包着 `core::Effect`，drop 即回滚。
 
-内核几条语义：**`Context` 只有 `&self`**（`provide` 返回 `Effect`，drop 即注销，必须持有）；
-**`Effect::merge` 是 LIFO**（`a.merge(b)` 撤销顺序 `b → a`）；**加载顺序由依赖决定，卸载是加载顺序
-的倒序**（`load_all` 报错会把本次已加载的卸掉，不留半加载）；**有依赖者时 `unload` 拒绝**
-（`HasDependents`，不级联）；`reload` 能工作是因为管理器存的是 `Arc<dyn Plugin>` 而不是 `Box`。
+各自的一条要点：
+
+| 机制 | 要点 |
+| --- | --- |
+| 事件 | `emit` 在锁**外面**调回调，所以回调里再 `on` / `emit` / `off` 不会自锁；某个回调返回 `Err` 会**中断**本次广播并把错误抛出去。`Filter` 用点分路径（`"message.chat.id"`）做字段相等匹配 |
+| 服务 | 命名容器（跨语言插件报不出 Rust 的 `TypeId`）。同名重复注册报错；`get::<T>` 类型不匹配返回 `None`，用 `contains` + `type_of` 区分「没注册」和「类型不对」 |
+| 工具 | `call_tool` = 查表 → 权限门 → input_schema → 处理器 → output_schema。`handler: Option<ToolHandlerFn>`，`None` 表示「只有元数据的声明型工具」；注册/注销用 `on_change` 广播（**不认识事件系统**，要不要转成事件总线由宿主层决定） |
+| 中间件 | 洋葱模型，`next.run(ctx)` 前是进入段、后是退出段。`run(stage, ctx)` 会**先复制层列表再执行**，所以中间件里再 `use_middleware` 不会自锁；不调 `next.run` 就是不往下走 |
+
+内核的几条语义：
+
+- **`Context` 只有 `&self`**：`provide` 返回 `Effect`，drop 即注销，所以调用方必须持有它。
+- **`Effect::merge` 是 LIFO**：`a.merge(b)` 的撤销顺序是 `b → a`。
+- **加载顺序由依赖决定，卸载是加载顺序的倒序**；`load_all` 报错会把本次已加载的卸掉，不留半加载。
+- **有依赖者时 `unload` 拒绝**（`HasDependents`），不级联。
+- **`reload` 之所以能工作**，是因为管理器存的是 `Arc<dyn Plugin>` 而不是 `Box`。
 
 ## 绑定层与运行时（`fuyubot-tdlib-sys` / `fuyubot-tdlib`） [#绑定层与运行时fuyubot-tdlib-sys--fuyubot-tdlib]
 
-```text
-crates/fuyubot-tdlib-sys/  ← 绑定层（-sys）：只出类型，不做加载
-  build.rs：必需输入 td_api.tl 的获取 + 编译期两份产物（无条件执行，没有 feature 早退）
-  src/：build_support.rs（两个构建脚本共享的缓存/下载设施，#[path] 同一份）
-        ffi.rs（函数指针 + 符号名 + 指针形状 const assert）
-        tl_schema.rs（解析与 JSON 互转，build.rs 与运行时共用）
-        tl_codegen.rs + docs.rs（→ Rust 类型 / TL 标记 → rustdoc）
-        schema.rs（TdApiSchema）、td_api.rs（include! 生成物）
-crates/fuyubot-tdlib/  ← 运行时半边（依赖并重导出 sys）
-  build.rs：只管 vendored 动态库 + 把库 staging 到可执行文件旁边
-  src/：loader.rs / loader/vendored.rs / client.rs / authorize.rs
-```
+两个 crate 一人一半：`-sys` 只出类型、不做加载，`tdlib` 才是运行时。
 
-`fuyubot_tdlib::` 根上重导出 sys 的 `ffi` / `schema` / `td_api` / `tl_schema` 模块与 `TdApiSchema` /
-`EntryKind` / `TlEntry` / `TlParam` / `SchemaError` / `TdApi` / `DEFAULT_LOG_VERBOSITY`——**既有调用方的
-路径全部不变**。`src/build_support.rs` 与 `src/loader/vendored.rs` 都被**两边共用**（各自的 build.rs 用
-`#[path]` 引同一份源码），所以它们只能依赖 std 与可选依赖；`[package.metadata.fuyubot]` 有两份，值必须
-一致（守卫测试 `metadata_is_in_sync_between_the_two_crates`）。
+| crate | `build.rs` 做什么 | `src/` 里有什么 |
+| --- | --- | --- |
+| `fuyubot-tdlib-sys`<br/>绑定层 | 拿 `td_api.tl` + 生成编译期两份产物（无条件执行，没有 feature 早退） | `build_support.rs`（与另一个 crate 共用的缓存/下载设施）、`ffi.rs`（函数指针 + 符号名 + 指针形状 `const assert`）、`tl_schema.rs`（解析与 JSON 互转）、`tl_codegen.rs` + `docs.rs`、`schema.rs`、`td_api.rs`（`include!` 生成物） |
+| `fuyubot-tdlib`<br/>运行时 | 只管 vendored 动态库 + 把库 staging 到可执行文件旁边 | `loader.rs` / `loader/vendored.rs` / `client.rs` / `authorize.rs` |
 
-运行时加载优先级（`loader::resolve`）：`TDLIB_TDJSON_PATH` 文件/目录 → **vendored 目录 →
-可执行文件所在目录（ExeDir）** → Linux 带版本号系统库 → 裸库名（真去 dlopen 试一次）；全失败返回
-`TdlibLoadError::NotFound`，消息里逐条列出 `[1]`…`[4]` 的尝试与原因。真正加载走
-`loader::open_library`（Windows 绝对路径走 `LOAD_WITH_ALTERED_SEARCH_PATH`），**不是 `Library::new`**
-——新增任何加载动态库的地方都走它。`@extra` 是**字符串**（`RequestId::to_extra()`），`route()`
-遇到非数字 `@extra` 会退化成更新而不是 panic。
+三条边界约定：
+
+- **重导出的路径不变**：`fuyubot_tdlib::` 根上重导出 `-sys` 的 `ffi` / `schema` / `td_api` /
+  `tl_schema` 与 `TdApiSchema` / `EntryKind` / `TlEntry` / `TlParam` / `SchemaError` / `TdApi` /
+  `DEFAULT_LOG_VERBOSITY`，所以既有调用方一行都不用改。
+- **两份源码被两边共用**：`build_support.rs` 与 `loader/vendored.rs` 各自的 `build.rs` 都用 `#[path]`
+  引同一份，因此它们只能依赖 std 与可选依赖。
+- **两份 metadata 必须一致**：`[package.metadata.fuyubot]` 在两个 crate 里各有一份，值要对得上
+  （守卫测试 `metadata_is_in_sync_between_the_two_crates`）。
+
+`loader::resolve` 按这个顺序找动态库：
+
+1. `TDLIB_TDJSON_PATH`（文件或目录）
+2. **vendored 目录**
+3. **可执行文件所在目录**（ExeDir）
+4. Linux 带版本号的系统库
+5. 裸库名（真去 `dlopen` 试一次）
+
+全失败返回 `TdlibLoadError::NotFound`，消息里逐条列出 `[1]`…`[4]` 的尝试与原因。
+
+真正加载**必须**走 `loader::open_library`（Windows 绝对路径会走 `LOAD_WITH_ALTERED_SEARCH_PATH`），
+**不要直接用 `Library::new`**——以后任何新增的加载动态库的地方都走它。
+
+`@extra` 是**字符串**（`RequestId::to_extra()`）；`route()` 遇到非数字的 `@extra` 会退化成更新，不 panic。
 
 ### `td_api.tl` 转成了什么（**只在编译期**） [#td_apitl-转成了什么只在编译期]
 
-```mermaid
-graph LR
-  TL["td_api.tl<br/>TDLIB_TD_API_TL → 缓存 → Releases 下载"] --> P["tl_schema::parse"]
-  P --> G["tl_codegen::generate"] --> RS["$OUT_DIR/td_api_generated.rs"]
-  RS --> TD["include! → fuyubot_tdlib_sys::td_api<br/>Rust 类型"]
-  P --> J["$OUT_DIR/td_api.json"]
-  J --> SC["include_str! → TdApiSchema::compiled<br/>可校验元数据"]
-```
+<svg viewBox="0 0 680 362" width="100%" role="img" aria-label="编译期：一份 schema 生成两份产物" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>编译期：一份 schema 生成两份产物</title>
+  <desc>td_api.tl 经 tl_schema::parse 解析一次，左路生成 Rust 类型源码、include! 进 td_api；右路写成 JSON、include_str! 进 TdApiSchema::compiled。两条路来自同一个解析结果，所以形状不会漂移。</desc>
+  <defs>
+    <marker id="build-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="220" y="16" width="240" height="56" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="340" y="36" fontSize="12.5" fontWeight="500" textAnchor="middle" fill="currentColor">td_api.tl</text>
+  <text x="340" y="54" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">包内 vendor 优先 → 缓存 → 下载</text>
+
+  <path d="M340 72 L340 92" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#build-arrow)" />
+
+  <rect x="220" y="92" width="240" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="340" y="114" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">tl_schema::parse</text>
+
+  <path d="M300 136 L200 158" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#build-arrow)" />
+  <path d="M380 136 L480 158" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#build-arrow)" />
+
+  <rect x="60" y="160" width="280" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="200" y="182" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">tl_codegen::generate</text>
+
+  <rect x="380" y="160" width="240" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="500" y="182" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">$OUT_DIR/td_api.json</text>
+
+  <path d="M200 204 L200 224" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#build-arrow)" />
+  <path d="M500 204 L500 224" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#build-arrow)" />
+
+  <rect x="60" y="224" width="280" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="200" y="246" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">$OUT_DIR/td_api_generated.rs</text>
+
+  <rect x="380" y="224" width="240" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="500" y="246" fontSize="11.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">include_str!</text>
+
+  <path d="M200 268 L200 288" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#build-arrow)" />
+  <path d="M500 268 L500 288" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#build-arrow)" />
+
+  <rect x="60" y="288" width="280" height="54" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="200" y="307" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">fuyubot_tdlib_sys::td_api</text>
+  <text x="200" y="325" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">serde 带 tag 的 enum / struct</text>
+
+  <rect x="380" y="288" width="240" height="54" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="500" y="307" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">TdApiSchema::compiled</text>
+  <text x="500" y="325" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">运行时查「有没有这个方法 / 字段」</text>
+</svg>
 
 两份产物来自同一个解析结果，而且 `tl_schema.rs` 被 build.rs 用 `#[path]` 引同一份实现，所以「编译期
 写出来的形状」与「运行时读回去的形状」不可能漂移。生成规则：类 → 带 `#[serde(tag = "@type")]` 的 enum；
@@ -220,8 +491,8 @@ graph LR
 
 | 类型 / 函数 | 位置 | 作用 |
 | --- | --- | --- |
-| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（20 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
-| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 17 个桥的落点、请求留档、响应回投、`rollback_owner`、全局配置读写；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
+| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（21 字段） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
+| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 20 个桥的落点、请求留档、响应回投、`rollback_owner`、全局配置读写；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
 | `TdClient` / `Routed` / `ReceiveLoop` | `fuyubot-tdlib` | TDLib 客户端；`route()` 分出 `Update` / `Response`；停止把手（`stop()` / `join()`，drop **不会**停） |
 | `Simplify` / `RichMessage` | `fuyubot-simplify` | 发消息 / 相册 / 编辑 / 删除 / Markdown 转 entities / 等响应 / **富消息**（`rich` 模块，本地 Markdown → 块树）；参数是**每个方法一个结构体** |
 | `TdApiSchema::compiled()` | `fuyubot-tdlib-sys` | 编译期烘焙的元数据；`check_request` 做本地方法名/参数名校验 |

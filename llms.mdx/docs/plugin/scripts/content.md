@@ -11,14 +11,45 @@ my-plugin/
 
 装好之后大概是这样——每个脚本是自己的小进程，坏一个不连累别人：
 
-```mermaid
-graph TD
-  A[fuyubot 宿主] --> B[Python 托管]
-  A --> C[JS 托管]
-  B --> D[脚本 A · main.py]
-  B --> E[脚本 B · main.py]
-  C --> F[脚本 C · index.ts]
-```
+<svg viewBox="0 0 680 252" width="100%" role="img" aria-label="一个宿主，两个运行时，三个脚本" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>一个宿主，两个运行时，三个脚本</title>
+  <desc>fuyubot 宿主把 Python 与 JS 分别交给两个中间插件托管；每个脚本各占一个子进程，互不影响。</desc>
+  <defs>
+    <marker id="scripts-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="240" y="16" width="200" height="44" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="340" y="38" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">fuyubot 宿主</text>
+
+  <rect x="100" y="96" width="220" height="44" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.35" strokeWidth="1" />
+  <text x="210" y="112" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">Python 托管</text>
+  <text x="210" y="128" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">uv run</text>
+
+  <rect x="360" y="96" width="220" height="44" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.35" strokeWidth="1" />
+  <text x="470" y="112" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">JS 托管</text>
+  <text x="470" y="128" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">bun</text>
+
+  <path d="M300 60 L225 92" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#scripts-arrow)" />
+  <path d="M380 60 L455 92" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#scripts-arrow)" />
+
+  <rect x="60" y="176" width="180" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="150" y="196" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">脚本 A</text>
+  <text x="150" y="214" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" fill="currentColor" fillOpacity="0.55">main.py</text>
+
+  <rect x="250" y="176" width="180" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="340" y="196" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">脚本 B</text>
+  <text x="340" y="214" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" fill="currentColor" fillOpacity="0.55">main.py</text>
+
+  <rect x="440" y="176" width="180" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="530" y="196" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">脚本 C</text>
+  <text x="530" y="214" fontSize="10.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" fill="currentColor" fillOpacity="0.55">index.ts</text>
+
+  <path d="M170 140 L150 172" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#scripts-arrow)" />
+  <path d="M250 140 L340 172" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#scripts-arrow)" />
+  <path d="M470 140 L530 172" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#scripts-arrow)" />
+</svg>
 
 ## 三步上手 [#三步上手]
 
@@ -97,13 +128,45 @@ fuyubot run
 剩下的交给机器人：装依赖（Python 用 `uv sync`，JS / TS 用 `bun install`）、启动脚本、
 开始收事件。流程大致是这样：
 
-```mermaid
-graph LR
-  A[fuyubot run] --> B[装依赖]
-  B --> C[启动脚本]
-  C --> D[脚本就绪]
-  D --> E[收事件、干活]
-```
+<svg viewBox="0 0 680 128" width="100%" role="img" aria-label="脚本插件的启动流程：五步" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>脚本插件的启动流程：五步</title>
+  <desc>fuyubot run 之后依次是装依赖、起解释器、等脚本报就绪，最后才开始收事件。</desc>
+  <defs>
+    <marker id="boot-script-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="40" width="100" height="52" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="90" y="58" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">fuyubot run</text>
+  <text x="90" y="76" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.55">第 1 步</text>
+
+  <path d="M140 66 L158 66" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#boot-script-arrow)" />
+
+  <rect x="162" y="40" width="100" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="212" y="58" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">装依赖</text>
+  <text x="212" y="76" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.55">uv / bun</text>
+
+  <path d="M262 66 L280 66" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#boot-script-arrow)" />
+
+  <rect x="284" y="40" width="100" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="334" y="58" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">起解释器</text>
+  <text x="334" y="76" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.55">子进程</text>
+
+  <path d="M384 66 L402 66" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#boot-script-arrow)" />
+
+  <rect x="406" y="40" width="100" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="456" y="58" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">等就绪</text>
+  <text x="456" y="76" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.55">收到 ready</text>
+
+  <path d="M506 66 L524 66" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.6" strokeWidth="1.5" markerEnd="url(#boot-script-arrow)" />
+
+  <rect x="528" y="40" width="100" height="52" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="578" y="58" fontSize="11.5" fontWeight="500" textAnchor="middle" fill="currentColor">收事件</text>
+  <text x="578" y="76" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.55">真正干活</text>
+
+  <text x="40" y="116" fontSize="10.5" fill="currentColor" fillOpacity="0.5">前四步任何一步失败，宿主只记一条错；到第五步起更新才真正到你手上。</text>
+</svg>
 
 ## 薄 SDK 能干什么 [#薄-sdk-能干什么]
 

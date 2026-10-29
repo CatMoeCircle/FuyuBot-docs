@@ -8,9 +8,10 @@ fuyubot-sdk <COMMAND>
 Commands:
   init         生成插件脚手架（5 种语言）
   codegen      把 ABI 绑定落盘（刷 C 头 / .pyi / .d.ts）
-  abi-version  显示 ABI 版本
+  abi-version  显示本 SDK 兼容的 ABI 版本
   td-methods   列 TDLib 方法
   td-method    看某个方法的签名
+  td-types     生成 TDLib 的 TypeScript 类型声明
   check        静态检查产物（不加载、不运行）
 ```
 
@@ -35,7 +36,7 @@ $ fuyubot-sdk init demo --lang rust
 下一步：用你自己的工具链编译它（cargo build --release / gcc -shared / …）
 ```
 
-生成的 Rust 插件默认写 `fuyubot-plugin-api = "0.1.0"`（crates.io）。想对着 SDK 源码开发就设
+生成的 Rust 插件默认写 `fuyubot-plugin-api = "0.1.1"`（crates.io）。想对着 SDK 源码开发就设
 `FUYUBOT_SDK_PATH` 指向 SDK 仓库里放着 crate 的目录（`crates/`），生成器会改写成 `path = …`；
 没设且本地找不到源码时只写版本号。
 
@@ -63,10 +64,22 @@ fuyubot-sdk check <路径>
 $ fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
 文件：target\debug\fuyubot_plugin_demo.dll
 格式：Pe / X86_64 / Dynamic
+同伴脚本：无（按纯原生插件加载）
 导出符号：
-  [ok] plugin_init          必需
+  [ok] plugin_init           必需
   [ok] plugin_start
   [ok] plugin_stop
+  [ok] plugin_free_string
+  [缺] plugin_free_handle    宿主容错（缺了也能加载）
+  [缺] plugin_abi_version    宿主容错（缺了也能加载）
+  [缺] plugin_manifest       宿主容错（缺了也能加载）
+ABI 版本：宿主是 4。三个版本别混：
+    - 宿主 ABI 世代 = 这个数（`HostApiVTable::version` 就在首字段）；
+    - 插件声明的 ABI 版本在 `PluginHandle::abi_version`，是 `plugin_init`
+      的返回值——**装载时才判定**，静态检查看不到；
+    - 插件自己的 crate 版本在 `plugin_manifest` 的 `version` 字段里。
+    细节见 docs/abi-contract.md。
+结论：可以加载。
 ```
 
 <Callout type="warn">
@@ -74,18 +87,23 @@ $ fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
   它只会如实报「宿主是 vN，插件的版本只能运行时判定」，**别把它当兼容性结论**。
 </Callout>
 
-## `abi-version` / `td-methods` / `td-method` [#abi-version--td-methods--td-method]
+## `abi-version` / `td-methods` / `td-method` / `td-types` [#abi-version--td-methods--td-method--td-types]
 
 ```text
 $ fuyubot-sdk abi-version
-1
+4
 
 $ fuyubot-sdk td-methods --filter sendMessage
 $ fuyubot-sdk td-method sendMessage
+$ fuyubot-sdk td-types --out plugins\demo
 ```
 
-`td-methods` / `td-method` 吃的是**编译期**烤进二进制的真 `td_api.tl` 元数据（`TdApiSchema::compiled()`），
-不读文件、不联网。`--filter` 是子串匹配、忽略大小写；构造器不能当方法调，`td-method` 会明确拒绝。
+`td-methods` / `td-method` / `td-types` 吃的都是**编译期**烤进二进制的真 `td_api.tl` 元数据
+（`TdApiSchema::compiled()`），不读文件、不联网。`--filter` 是子串匹配、忽略大小写；构造器不能当方法调，
+`td-method` 会明确拒绝。
+
+`td-types` 给 `on` / `invoke` 生成精确类型：写到 `--out <目录>` 下的 `td_api.d.ts`（**覆盖同名文件**，
+默认当前目录）。只有 JS / TS 插件用得上它。
 
 <Callout type="info">
   TDLib 的方法名 ≠ Telegram Bot API 的：所有发送都是 `sendMessage` + `input_message_content`，

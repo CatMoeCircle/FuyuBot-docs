@@ -17,13 +17,13 @@ TDLib 未就绪（不接更新）：找不到可用的 tdjson 动态库。已尝
 | --- | --- |
 | 1 | `TDLIB_TDJSON_PATH` 指向的**文件**或**目录** |
 | 2 | vendored（构建期烤进去的目录）→ **可执行文件所在目录** |
-| 3 | Linux 带版本号的系统库（`libtdjson.so.1.8.68` …） |
+| 3 | Linux 带版本号的系统库（`libtdjson.so.1.8.69` …） |
 | 4 | 裸库名（`tdjson.dll` / `libtdjson.so`，走 `PATH`） |
 
 报错里的 `[1]` … `[4]` 就是这四档的逐条结果，按顺序看就知道断在哪。嫌排查麻烦就直接指定：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.68\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.69\windows-x86_64"
 ```
 
 <Callout type="info">

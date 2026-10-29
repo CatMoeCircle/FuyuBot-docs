@@ -16,14 +16,19 @@ fuyubot-sdk init ping --lang cpp --dir .      # 生成 plugin.cpp + fuyubot_plug
 fuyubot-sdk codegen --lang c --dir <工程目录>   # 只刷新头文件（C++ 用 --lang cpp，同一份）
 ```
 
-## 四个符号 [#四个符号]
+## 七个符号 [#七个符号]
+
+v3 是四件套，v4 又加了三个（都可以不写，但写了才有对应能力）。
 
 | 符号 | 必须吗 | 说明 |
 | --- | --- | --- |
 | `plugin_init` | **必须** | 比 `host->version != ABI_VERSION`，存下 VTable，返回 `PluginHandle` |
 | `plugin_start` | 可选 | 订阅/注册；返回 `0` 表示成功 |
 | `plugin_stop` | 可选 | 清状态；只登记元数据的插件可以不写 |
-| `plugin_free_string` | **必须** | 本插件不往外送字符串时也得有个空实现（宿主可能调它） |
+| `plugin_free_string` | **必须** | 释放本插件 `malloc` 出来的字符串（`plugin_manifest` 返回的那块也走它） |
+| `plugin_manifest` | v4 可选 | 返回自描述 JSON（名字 / 版本 / `inject` / `soft_inject`），宿主在 `init` 之前读 |
+| `fuyubot_abi_version` | v4 可选 | 静态返回 `ABI_VERSION`，`fuyubot-sdk check` 用它判断版本 |
+| `plugin_free_handle` | v4 可选 | ABI 版本不匹配时宿主靠它回收 `init` 分配的状态（那时不能调 `plugin_stop`） |
 
 `PluginHandle` 的判据是「`abi_version != 0` **且** `context` 非空」，所以 `context` 不能给 `NULL`。
 版本不对就返回全零句柄，宿主会把它当成拒绝加载。
@@ -69,7 +74,7 @@ FUYUBOT_EXPORT void plugin_free_string(char *ptr) { (void)ptr; }
 
 ## C++ [#c-1]
 
-同 C，**唯一的硬差别**是四个导出符号必须在 `extern "C"` 里——C++ 会改函数名（mangling），
+同 C，**唯一的硬差别**是七个导出符号必须在 `extern "C"` 里——C++ 会改函数名（mangling），
 宿主按 ABI 定死的名字 `dlsym`，改了就找不到。
 
 ```cpp
@@ -93,6 +98,59 @@ FUYUBOT_EXPORT void plugin_free_string(char *ptr);
   `C-unwind` 对 C/C++ 而言与普通 C 调用**ABI 一致**，但 C++ 的异常照样能穿过这个边界——
   逃到宿主那边的异常是未定义行为。**在回调内部把异常处理完再返回**。
 </Callout>
+
+## 常用 ABI 怎么调（C / C++ 同一套） [#常用-abi-怎么调c--c-同一套]
+
+每个函数第一个参数都是 `g_host->host_ctx`。下面把常用的走了一遍：
+
+```c
+/* ① 订阅（第二个参数是过滤器 JSON，NULL = 全收）/ 退订 */
+SubscriptionHandle s = g_host->on(g_host->host_ctx, "updateNewMessage",
+                                  "{\"message.content.text.text\":\"/ping\"}", on_update, NULL);
+g_host->off(g_host->host_ctx, s);
+
+/* ② 发 TDLib 请求：只拿请求号，响应走 "response" 通道 */
+RequestId id = g_host->td_invoke_simplified(g_host->host_ctx, "sendMessage", params);
+
+/* ③ 同步执行不碰网络的方法：当场返回，发消息不能走它 */
+const char *parsed = g_host->td_execute(g_host->host_ctx,
+    "{\"@type\":\"parseTextEntities\",\"text\":\"*粗体*\","
+    "\"parse_mode\":{\"@type\":\"textParseModeMarkdown\",\"version\":2}}");
+
+/* ④ 发自定义事件：自己 + 全局订阅者收得到 */
+g_host->emit(g_host->host_ctx, "ping.seen", "{\"chat_id\":123}");
+
+/* ⑤ 打日志：Error=1 Warn=2 Info=3 Debug=4 Trace=5（非法值按 Info） */
+g_host->log(g_host->host_ctx, 3, "回了 pong");
+
+/* ⑥ 读任意配置段 / 写自己那段（写成功会回写 fuyubot.toml） */
+const char *city = g_host->get_config(g_host->host_ctx, "my.weather", "city");
+int ok = g_host->set_config(g_host->host_ctx, "last_seen", "123");
+
+/* ⑦ 登记工具（handler 给 NULL = 只登记元数据）/ 调别人的工具 / 列工具 */
+ToolHandle t = g_host->register_tool(g_host->host_ctx, descriptor_json, NULL, NULL);
+const char *out = g_host->call_tool_result(g_host->host_ctx, "weather.now", "{\"city\":\"上海\"}");
+const char *tools = g_host->list_tools(g_host->host_ctx);
+
+/* ⑧ 挂中间件：阶段 0..5（见「工具与中间件」） */
+MiddlewareHandle m = g_host->use_middleware(g_host->host_ctx, 2, on_stage, NULL);
+
+/* ⑨ 阻塞等一条匹配的更新；timeout_ms == 0 表示只检查当前状态 */
+WaitHandle w = g_host->wait_for_update(g_host->host_ctx, "{\"@type\":\"updateNewMessage\"}", 5000);
+
+/* ⑩ 服务：注册到自己作用域 / 注册到进程级 / 沿父链查 */
+ServiceHandle svc = g_host->provide_service(g_host->host_ctx, "demo.cache", &vtable);
+const ServiceVTable *got = g_host->get_service(g_host->host_ctx, "demo.cache");
+```
+
+⚠️ 三条所有权规则（跨界最容易出事的地方）：
+
+- `td_execute` / `get_config` / `call_tool_result` / `list_tools` / `list_plugins` 返回的
+  `const char *` 是**宿主线程局部缓冲**，下一次宿主调用之前有效——要留就当场 `strdup`，
+  **不要 free 它**。
+- 反过来，只有 `plugin_manifest` 返回的那块是**你自己 malloc 的**，宿主读完用
+  `plugin_free_string` 还给你（所以必须真能 free，别返回静态字符串）。
+- `on` 的 `filter_json` 里 `event_type` 键只用来**选通道**，不参与负载匹配。
 
 ## 编译（你自己的工具链） [#编译你自己的工具链]
 
@@ -136,6 +194,43 @@ if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
 
 两点与其它函数一致：**返回值是宿主线程局部缓冲**（读完即弃，别 free）；`set_config`
 **没有 section 参数**——宿主按调用者身份判定，所以插件无法伪造写别人的段。
+
+## 手写 `sendMessage`（或者用 `simplify_invoke`） [#手写-sendmessage或者用-simplify_invoke]
+
+> ✅ **ABI v5 起，这一节只是「另一条路」，不再是唯一的路。** 宿主从 v5 开始自己跑
+> 同一份 `fuyubot-simplify` 代码，经 `simplify_invoke` / `simplify_invoke_result` 暴露成一张
+> **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
+> bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
+> 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
+> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
+> 或者照下面手写。
+
+
+| 想要的效果 | 手写的关键字段 |
+| --- | --- |
+| 纯文本 | `input_message_content` = `inputMessageText`，`text` 是 `formattedText`（`text` + `entities`） |
+| Markdown / HTML | **不自己解析**：先 `td_execute` 调 `parseTextEntities`（`version: 2` = MarkdownV2），把返回的 `formattedText` 原样塞进去 |
+| 回复某条 | `reply_to` = `{"@type": "inputMessageReplyToMessage", "message_id": N}` |
+| 发到话题 | `topic_id` = `{"@type": "messageTopicForum", "forum_topic_id": N}` |
+| 内联按钮 | `reply_markup` = `replyMarkupInlineKeyboard`；callback 的 `data` 是 **base64** |
+| 静音 / 保护内容 | 在 `options`（`messageSendOptions`）里，不是顶层 |
+| 等到「真发出去」 | 请求号只到**临时消息**；要最终 `Message` 得再等 `updateMessageSendSucceeded` |
+
+```c
+static void send_text(long long chat_id, const char *text) {
+    /* 示例用 snprintf 拼：正文里有引号 / 反斜杠就要转义，真项目请引一个 JSON 库。 */
+    char params[512];
+    snprintf(params, sizeof(params),
+             "{\"chat_id\":%lld,\"input_message_content\":{\"@type\":\"inputMessageText\","
+             "\"text\":{\"@type\":\"formattedText\",\"text\":\"%s\",\"entities\":[]}}}",
+             chat_id, text);
+    g_host->td_invoke_simplified(g_host->host_ctx, "sendMessage", params);
+}
+```
+
+要 Markdown 就分两步：先 `td_execute` 拿 `parseTextEntities` 的结果（一个 `formattedText`），
+把它的 `text` 与 `entities` 拼进上面的 `input_message_content`。方法名拿不准时用
+`fuyubot-sdk td-method sendMessage` 查真签名。
 
 ## 注意 [#注意]
 

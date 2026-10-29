@@ -31,18 +31,83 @@ entry = "main.py"
 
 ## 方法一览 [#方法一览]
 
-| 方法 | 干什么 |
-| --- | --- |
-| `on(event, handler, filter=None)` | 订阅事件：事件来了就调你的函数 |
-| `invoke(method, params=None, on_response=None)` | 调一次 TDLib 接口（发消息、取资料……） |
-| `emit(event, payload=None)` | 发一条自定义事件 |
-| `log(message, level="info")` | 打日志 |
-| `register_tool(name, description="", input_schema=None)` | 登记一个工具 |
-| `use_middleware(stage, handler)` | 挂一个中间件 |
-| `plugin_config()` | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
-| `get_config(section, key="", on_config=None)` | 读**任意**插件段（异步，回调在 `run()` 之后） |
-| `set_config(key, value, on_done=None)` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
-| `run()` | 握手并开始收事件——**永远是最后一行** |
+薄 SDK 把 VTable 那 20 个函数包成了这些（`run()` 之前只能调同步的那几个）：
+
+| 方法 | 走的 ABI | 干什么 |
+| --- | --- | --- |
+| `on(event, handler, filter=None)` | `on` | 订阅事件：事件来了就调你的函数 |
+| `off(event, handler)` | `off` | 退订一个订阅（脚本订阅也能按事件 + 处理器退） |
+| `invoke(method, params=None, on_response=None)` | `td_invoke_simplified` | 调一次 TDLib 接口；给了 `on_response` 就在响应回来时回调（按 `request_id` 配对，你不用记请求号） |
+| `invoke_async(method, params=None)` | `td_invoke_simplified` | 同上，但返回可 `await` 的 future（**只能**在 `run_async` 里用） |
+| `emit(event, payload=None)` | `emit` | 发一条自定义事件（自己 + 全局订阅者收到） |
+| `log(message, level="info")` | `log` | 打日志（`debug` / `info` / `warn` / `error`） |
+| `register_tool(name, description="", input_schema=None)` | `register_tool`（`meta` 版） | 登记工具**元数据**——脚本不能交函数指针，所以没有处理器 |
+| `call_tool(name, input=None, on_response=None)` | `call_tool_result` | 调用一个工具，**同步**拿输出（失败是 `{"error": …}`） |
+| `list_tools(on_tools=None)` | `list_tools` | 同步列出全部工具的元数据 |
+| `td_execute(request, on_result=None)` | `td_execute` | **同步**执行不碰网络的 TDLib 方法（`parseTextEntities` 之类），发消息**不能**走它 |
+| `use_middleware(stage, handler)` | `use_middleware` | 挂中间件（`stage` 是 0..5）；无法单独注销，随插件停止一起撤 |
+| `wait_for_update(filter, timeout_ms=0, on_match=None)` | `wait_for_update` | 阻塞等一条匹配的更新（在宿主侧独立线程里等），超时 `None` |
+| `wait_async(filter, timeout_ms=0)` | `wait_for_update` | 上一条的 `await` 版（**只能**在 `run_async` 里用） |
+| `get_service(name, on_service=None)` | `get_service` | 读一个服务的元数据；不存在时回调收到 `None` |
+| `call_service(name, method, input=None, on_result=None)` | `get_service` | 同步调用服务的某个方法 |
+| `config()` | — | `plugin_start` 传进来的那份配置 JSON |
+| `plugin_config()` | — | **同步**读**自己**那一段配置（`[plugin.<插件名>]`）；`run()` 之前也能用 |
+| `get_config(section, key="", on_config=None)` | `get_config` | 读**任意**插件段（异步，回调在 `run()` 之后） |
+| `set_config(key, value, on_done=None)` | `set_config` | 写**自己**那一段配置（成功后回写 `fuyubot.toml`） |
+| `run()` | — | 握手并开始收事件——**永远是最后一行** |
+| `run_async(main=None)` | — | 同上，但跑 asyncio 事件循环，`invoke_async` / `wait_async` 要用它 |
+
+## 一次看全：常用 ABI 怎么调 [#一次看全常用-abi-怎么调]
+
+```python
+import fuyubot_plugin as host
+
+
+def on_ping(payload):
+    chat_id = payload["message"]["chat_id"]
+
+    # ① 发 TDLib 请求：响应按 request_id 配好对再回调，不用自己记请求号
+    host.invoke("sendMessage", {
+        "chat_id": chat_id,
+        "input_message_content": {
+            "@type": "inputMessageText",
+            "text": {"@type": "formattedText", "text": "pong", "entities": []},
+        },
+    }, lambda resp: host.log(f"发出去了：{resp}"))
+
+    # ② 同步执行不碰网络的方法：当场拿结果，发消息不能走它
+    host.td_execute({
+        "@type": "parseTextEntities",
+        "text": "*粗体*",
+        "parse_mode": {"@type": "textParseModeMarkdown", "version": 2},
+    }, lambda result: host.log(f"解析结果：{result}"))
+
+    # ③ 调别人的工具 / 看有哪些工具
+    host.call_tool("weather.now", {"city": "上海"}, lambda out: host.log(f"天气：{out}"))
+    host.list_tools(lambda tools: host.log(f"共 {len(tools or [])} 个工具"))
+
+    # ④ 发自定义事件：自己 + 全局订阅者收得到
+    host.emit("ping.seen", {"chat_id": chat_id})
+
+    # ⑤ 等下一条更新（宿主侧独立线程里等，不卡脚本）
+    host.wait_for_update({"message.content.text.text": "/pong"}, 5000,
+                         lambda p: host.log("等到下一条" if p else "超时"))
+
+    # ⑥ 读写配置：读别人的异步，写自己的会回写 fuyubot.toml
+    host.get_config("my.weather", "city", lambda v: host.log(f"天气插件 city={v}"))
+    host.set_config("last_seen", chat_id, lambda ok: host.log(f"写入成功={ok}"))
+
+
+host.on("updateNewMessage", on_ping, {"message.content.text.text": "/ping"})
+host.run()
+```
+
+三条容易踩的：
+
+- `on_response` / `on_result` 这类回调**只在 `run()` 之后才有**——宿主得先握手；模块顶层只能调
+  `plugin_config()` 这种同步的。
+- `td_execute` 只给不碰网络的方法用，拿它发消息会失败。
+- `wait_for_update` 是在**宿主侧**线程里等的，脚本这边不阻塞；`timeout_ms=0` 表示只检查当前状态。
 
 ## 读 / 写配置 [#读--写配置]
 
@@ -92,13 +157,44 @@ city = "上海"
 2. **你自己发的事件**：`emit("job_done", …)` 发出的自定义事件（细节见
    [订阅与事件](./events.mdx)）。
 
-```mermaid
-graph LR
-  A[TDLib 更新] --> B{按 @type 分发}
-  B -->|updateNewMessage| C["on('updateNewMessage', …)"]
-  B -->|"update 兜底"| D["on('update', …)"]
-  E["emit('job_done', …)"] --> F["on('job_done', …)"]
-```
+<svg viewBox="0 0 680 204" width="100%" role="img" aria-label="事件怎么到你手上：TDLib 更新按 @type 分发，自己的事件直接送" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>事件怎么到你手上</title>
+  <desc>TDLib 的更新按 @type 分发到具体订阅，没有具体订阅时落到 update 兜底通道；插件自己 emit 的事件直接送给对应订阅者。</desc>
+  <defs>
+    <marker id="evt-arrow-py" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="16" width="150" height="44" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="115" y="38" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">TDLib 更新</text>
+
+  <rect x="230" y="16" width="180" height="44" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.35" strokeWidth="1" />
+  <text x="320" y="30" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">按 @type 分发</text>
+  <text x="320" y="47" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">PreRoute 之后</text>
+
+  <rect x="460" y="6" width="180" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="550" y="24" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">on(&apos;updateNewMessage&apos;)</text>
+  <text x="550" y="41" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">具体类型</text>
+
+  <rect x="460" y="70" width="180" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="550" y="88" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">on(&apos;update&apos;)</text>
+  <text x="550" y="105" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">兜底通道</text>
+
+  <path d="M190 38 L226 38" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#evt-arrow-py)" />
+  <path d="M410 28 L456 26" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#evt-arrow-py)" />
+  <path d="M410 48 L456 86" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#evt-arrow-py)" />
+
+  <rect x="40" y="120" width="150" height="44" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="115" y="142" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">emit(&apos;job_done&apos;)</text>
+
+  <rect x="460" y="140" width="180" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="550" y="162" fontSize="11" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">on(&apos;job_done&apos;)</text>
+
+  <path d="M190 142 L456 162" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#evt-arrow-py)" />
+
+  <text x="40" y="192" fontSize="10.5" fill="currentColor" fillOpacity="0.5">自己 emit 的事件不走 @type 分发，直接送到同名订阅者——所以插件之间的通信不必绕 TDLib。</text>
+</svg>
 
 ## `on` — 订阅事件 [#on--订阅事件]
 
@@ -295,6 +391,74 @@ from fuyubot import on, log, run
 on("update", lambda u: log(f"更新：{u.get('@type')}"))
 run()
 ```
+
+## 发消息：手写 `sendMessage`（或者用 `simplify_invoke`） [#发消息手写-sendmessage或者用-simplify_invoke]
+
+> ✅ **ABI v5 起，这一节只是「另一条路」，不再是唯一的路。** 宿主从 v5 开始自己跑
+> 同一份 `fuyubot-simplify` 代码，经 `simplify_invoke` / `simplify_invoke_result` 暴露成一张
+> **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
+> bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
+> 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
+> ⚠️ 本语言的 SDK 薄封装还没跟上（SDK 仓库待更新）；在那之前可以直接调 VTable 上那两个函数，
+> 或者照下面手写。
+
+
+| 想要的效果 | 手写的关键字段 |
+| --- | --- |
+| 纯文本 | `input_message_content` = `inputMessageText`，里面 `text` 是 `formattedText`（`text` + `entities`） |
+| Markdown / HTML | **不自己解析**：先 `td_execute` 调 `parseTextEntities`（`version: 2` = MarkdownV2，`textParseModeHTML` = HTML），把返回的 `formattedText` 整个塞进去 |
+| 回复某条 | `reply_to` = `{"@type": "inputMessageReplyToMessage", "message_id": N}` |
+| 发到话题 | `topic_id` = `{"@type": "messageTopicForum", "forum_topic_id": N}`（论坛）；非论坛的评论串才是 `messageTopicThread` |
+| 内联按钮 | `reply_markup` = `replyMarkupInlineKeyboard`；⚠️ callback 按钮的 `data` 是 **base64**（TDLib 里它是 `bytes`） |
+| 静音 / 保护内容 | 都在 `options`（`messageSendOptions`）里，不是顶层字段 |
+| 等到「真发出去」 | `on_response` 只到**临时消息**；要最终那条 `Message` 得再等一条 `updateMessageSendSucceeded` |
+
+```python
+import base64
+import fuyubot_plugin as host
+
+
+def send_markdown(chat_id, markdown, reply_to=None):
+    """发一条 MarkdownV2 消息：先问 TDLib 要 entities，再发出去。"""
+
+    def on_parsed(result):
+        text = result if result else {"@type": "formattedText", "text": markdown, "entities": []}
+        body = {
+            "chat_id": chat_id,
+            "input_message_content": {"@type": "inputMessageText", "text": text},
+        }
+        if reply_to:
+            body["reply_to"] = {"@type": "inputMessageReplyToMessage", "message_id": reply_to}
+        host.invoke("sendMessage", body, lambda resp: host.log(f"已发：{resp}"))
+
+    host.td_execute({
+        "@type": "parseTextEntities",
+        "text": markdown,
+        "parse_mode": {"@type": "textParseModeMarkdown", "version": 2},
+    }, on_parsed)
+
+
+def send_with_button(chat_id, label, payload):
+    """带一个回调按钮；data 在 TDLib 里是 bytes，JSON 里要写 base64。"""
+    host.invoke("sendMessage", {
+        "chat_id": chat_id,
+        "input_message_content": {
+            "@type": "inputMessageText",
+            "text": {"@type": "formattedText", "text": label, "entities": []},
+        },
+        "reply_markup": {
+            "@type": "replyMarkupInlineKeyboard",
+            "rows": [[{
+                "@type": "inlineKeyboardButton",
+                "text": "确认",
+                "type": {"@type": "inlineKeyboardButtonTypeCallback",
+                         "data": base64.b64encode(payload.encode()).decode()},
+            }]],
+        },
+    })
+```
+
+方法名拿不准就问 SDK，它读的是真 `td_api.tl`：`fuyubot-sdk td-method sendMessage`。
 
 ## 常见问题 [#常见问题]
 

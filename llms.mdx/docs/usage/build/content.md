@@ -21,7 +21,7 @@ cargo build --workspace --offline
 ```
 
 <Callout type="info">
-  `td_api.tl` 是**构建的必需输入**：`fuyubot-tdlib-sys/build.rs` 无条件去拿它——`TDLIB_TD_API_TL`（显式指定，优先级最高）→ 缓存 → 从 GitHub Releases 下载，拿不到就让**构建失败**。缓存根顺序：`FUYUBOT_TDLIB_VENDORED_CACHE` → `$CARGO_HOME/fuyubot-tdlib-vendored` → 项目本地 `<工作区>/.tdlib-cache`。仓里的 `.cargo/config.toml` 已把最后一档指好，在仓库里敲命令不用先 export。
+  `td_api.tl` 是**构建的必需输入**：`fuyubot-tdlib-sys/build.rs` 无条件去拿它——`TDLIB_TD_API_TL`（显式指定，优先级最高）→ **包内 `vendor/<tdlib-version>/td_api.tl`** → 缓存 → 从 GitHub Releases 下载，拿不到就让**构建失败**。包内那份随 crate 一起发布（1.8.69 已带），所以从 crates.io 装下来的下游与 docs.rs **不用联网**；升 `tdlib-version` 时要记得补 `vendor/<新版本>/`。缓存根顺序：`FUYUBOT_TDLIB_VENDORED_CACHE` → `$CARGO_HOME/fuyubot-tdlib-vendored` → 项目本地 `<工作区>/.tdlib-cache`。仓里的 `.cargo/config.toml` 已把最后一档指好，在仓库里敲命令不用先 export。
 
   转换在**编译期**完成，构建日志里只有一条 `已转换 …\td_api.tl：共 N 条`。条数取决于构建时用的那份文件（本机三千多条），**不是常量**，别当断言用。
 </Callout>
@@ -36,8 +36,11 @@ cargo build --workspace --offline
 | --- | --- | --- |
 | `cargo build -p fuyubot-cli` | `target\debug\fuyubot.exe` | 开发用 |
 | `cargo package-bot` | `target\release\fuyubot.exe` | 本地打包（tdjson 已在同级目录） |
-| `cargo package-sdk` | `target\release\fuyubot-sdk.exe` | 给插件作者，**不需要** tdjson |
 | `cargo bot` | — | 一键 `fuyubot run` 当前目录 |
+
+别名就这三个，都写在仓里的 `.cargo/config.toml`（只影响本仓，**没有** `package-sdk`）：
+`fuyubot-sdk` 属于 [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK) 那个仓库，
+在那边用 `cargo build -p fuyubot-sdk-cli` 编，它不需要 `tdjson`。
 
 本文档其余页面里的 `fuyubot` / `fuyubot.exe` 指的就是这些产物；从发布包安装的用户手里就是解压出来的那个。
 
@@ -61,6 +64,6 @@ cargo fmt --all --check             # 0 diff
 真 TDLib 的端到端自检（要本机的 `tdjson`）：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.68\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.69\windows-x86_64"
 cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 ```

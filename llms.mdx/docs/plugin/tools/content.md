@@ -68,9 +68,55 @@ let handle = host.register_tool(
 
 `call_tool_result` 的顺序是：
 
-```text
-查表 → 权限门 → input_schema 校验 → 处理器 → output_schema 校验
-```
+<svg viewBox="0 0 680 196" width="100%" role="img" aria-label="call_tool_result 的五步链路" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>call_tool_result 的五步链路</title>
+  <desc>同步调用工具时，宿主依次做：按名字查表、过权限门、校验入参 schema、跑处理器、校验出参 schema；任一步失败就返回 error 对象。</desc>
+  <defs>
+    <marker id="tool-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <text x="40" y="24" fontSize="10.5" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">同步链路：任一步不过就到此为止</text>
+
+  <rect x="40" y="44" width="104" height="56" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="92" y="64" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">查表</text>
+  <text x="92" y="84" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">名字 → 注册项</text>
+
+  <path d="M144 72 L160 72" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#tool-arrow)" />
+
+  <rect x="164" y="44" width="104" height="56" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="216" y="64" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">权限门</text>
+  <text x="216" y="84" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">required_…</text>
+
+  <path d="M268 72 L284 72" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#tool-arrow)" />
+
+  <rect x="288" y="44" width="104" height="56" rx="8" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="340" y="64" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">入参校验</text>
+  <text x="340" y="84" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">input_schema</text>
+
+  <path d="M392 72 L408 72" fill="none" stroke="var(--color-fd-primary)" strokeOpacity="0.55" strokeWidth="1.5" markerEnd="url(#tool-arrow)" />
+
+  <rect x="412" y="44" width="104" height="56" rx="8" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="464" y="64" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">处理器</text>
+  <text x="464" y="84" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">C-unwind 回调</text>
+
+  <path d="M516 72 L532 72" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#tool-arrow)" />
+
+  <rect x="536" y="44" width="104" height="56" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="588" y="64" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">出参校验</text>
+  <text x="588" y="84" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">output_schema</text>
+
+  <path d="M588 100 L588 132" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#tool-arrow)" />
+
+  <rect x="40" y="136" width="290" height="44" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.3" strokeWidth="1" />
+  <text x="185" y="158" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">结果 JSON（线程局部缓冲，读完即弃）</text>
+
+  <rect x="350" y="136" width="290" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="#E24B4A" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="495" y="158" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">任一步不过 → {'{"error": …}'}</text>
+</svg>
+
+`call_tool`（返回请求号那条）走的是同一张表，只是不等结果——想要结果就用 `call_tool_result`。
 
 `list_tools()` 返回全部工具的元数据 JSON 数组。**宿主线程局部缓冲**：读完即弃，
 要留就当场拷走，**不要试图释放它**。
@@ -85,6 +131,39 @@ JS `host.callTool(name, input, onResponse)` 现在都走同步结果，回调收
 ```text
 PreUpdate → 解析 @type → PreRoute → InPlugin → 分发监听器 → PostResponse
 ```
+
+一个中间件自己看到的是**进入段 / 退出段**两截，中间那句 `next.run(ctx)` 就是分界：
+
+<svg viewBox="0 0 680 216" width="100%" role="img" aria-label="中间件的洋葱：进入段、next.run、退出段" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>中间件的洋葱：进入段、next.run、退出段</title>
+  <desc>一次 run 会先复制层列表再执行；next.run 之前是进入段，之后是退出段，外层先进后出。不调 next.run 就不往下走。</desc>
+  <defs>
+    <marker id="mw-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="16" width="600" height="180" rx="20" fill="var(--color-fd-primary)" fillOpacity="0.03" stroke="var(--color-fd-primary)" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="64" y="42" fontSize="10.5" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">run(stage, ctx)：层列表先复制一份再跑，所以中间件里再挂中间件不会自锁</text>
+
+  <rect x="80" y="76" width="170" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="165" y="96" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">进入段</text>
+  <text x="165" y="116" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">next.run 之前的代码</text>
+
+  <path d="M250 104 L271 104" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#mw-arrow)" />
+
+  <rect x="275" y="76" width="130" height="56" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.45" strokeWidth="1" />
+  <text x="340" y="96" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">next.run(ctx)</text>
+  <text x="340" y="116" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">交给下一层</text>
+
+  <path d="M405 104 L426 104" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#mw-arrow)" />
+
+  <rect x="430" y="76" width="170" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="515" y="96" fontSize="12.5" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">退出段</text>
+  <text x="515" y="116" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.6">next.run 之后的代码</text>
+
+  <text x="64" y="164" fontSize="10.5" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">外层先进后出；回调返回非 0 就中断这一阶段；不调 next.run 就是不往下走</text>
+</svg>
 
 | 阶段 | 数值 | 谁跑它 |
 | --- | --- | --- |

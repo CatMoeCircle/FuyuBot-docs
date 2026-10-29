@@ -20,8 +20,11 @@ cargo fmt --all --check             # 0 diff
 `td_api.tl` 是**构建的必需输入**，`fuyubot-tdlib-sys/build.rs` 无条件去拿它：
 
 ```text
-TDLIB_TD_API_TL（显式指定，最高优先级） → 缓存 <缓存根>/<版本>/td_api.tl → 从 Releases 下载（拿不到 = 构建失败）
+TDLIB_TD_API_TL（显式指定，最高优先级） → 包内 vendor/<版本>/td_api.tl → 缓存 <缓存根>/<版本>/td_api.tl → 从 Releases 下载（拿不到 = 构建失败）
 ```
+
+包内那份随 crate 发布（1.8.69 已带），所以**从 crates.io 装下来的下游和 docs.rs 都不用联网**。
+它按 `[package.metadata.fuyubot] tdlib-version` 拼路径，换了版本却没补 `vendor/` 时会自动退到缓存/下载。
 
 缓存根按顺序找（`build_support::cache_roots()`，两个 build.rs 共用同一串）：
 
@@ -34,8 +37,9 @@ FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作�
 - `$OUT_DIR` 每次重跑构建脚本都会被清空 → 退到它意味着下次**重新下载**，缓存根全写不进去时会明确警告。
 - 转换在编译期完成：日志里只有一条 `已转换 …\td_api.tl：共 N 条`。条数取决于那份文件，**别当常量写进断言**。
 
-`.cargo/config.toml` 另有三个别名：`cargo bot`（= `fuyubot run`）、`cargo package-bot`、
-`cargo package-sdk`（release 构建，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级）。
+`.cargo/config.toml` 另有两个别名：`cargo bot`（= `fuyubot run`）、`cargo package-bot`
+（release 构建 `fuyubot` + 三个内置插件，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级）。
+**没有 `package-sdk`**：`fuyubot-sdk` 在 FuyuBot-SDK 仓库，那边用 `cargo build -p fuyubot-sdk-cli`。
 
 ## 两类测试 [#两类测试]
 
@@ -44,7 +48,7 @@ FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作�
 `--ignored` 能回答**：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.68\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.69\windows-x86_64"
 cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 
 # 「兄弟依赖定位」单独一个测试二进制，必须单独跑（进程里加载过那些 DLL 会污染它的负向对照）

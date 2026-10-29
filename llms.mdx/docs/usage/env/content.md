@@ -6,11 +6,11 @@
 | `FUYUBOT_TDLIB_VENDORED_CACHE` | 两个 `build.rs`（**构建期**） | 缓存根：`td_api.tl` 与 vendored 动态库都放这儿。**必须绝对路径**（build.rs 的 CWD 是各自的 crate 根） |
 | `FUYUBOT_TDLIB_RELEASES_REPO` | `build.rs`（**构建期**） | 覆盖 `[package.metadata.fuyubot] releases-repo`（默认 `CatMoeCircle/Fuyu-Bot`） |
 | `TDLIB_TDJSON_PATH` | 加载器（**运行期**） | tdjson 的目录或文件，查找优先级 1；嫌四级排查麻烦就直接设它 |
-| `TG_API_ID` | `fuyubot run` | TDLib api_id（**不是**秘密）。也顺手带进自动生成的配置 |
-| `TG_API_HASH` | `fuyubot run` / 集成测试 | api_hash，**凭据**。它优先于配置里已保存的值，且不会被写回 |
-| `TG_BOT_TOKEN` | `fuyubot run` / 集成测试 | bot 账号的 token；有值就不问 Bot Token，后台运行也能登 |
-| `FUYUBOT_NAME` | `fuyubot run` 的自动 init | 自动生成配置时的 `[bot].name`（默认 `fuyubot`） |
-| `FUYUBOT_SDK_PATH` | `fuyubot-sdk init` | **可选**：指向 SDK 仓库里放着 crate 的目录（`crates/`）。设了生成的插件用 `path = …` 对着源码开发；不设就写 crates.io 版本号（`fuyubot-plugin-api = "0.1.0"`） |
+| `TG_API_ID` | `fuyubot run` / `login` | TDLib api_id（**不是**秘密）。参与凭据解析（`--api-id` 之后、配置之前），也顺手带进自动生成的配置 |
+| `TG_API_HASH` | `fuyubot run` / `login` / 集成测试 | api_hash，**凭据**。它优先于配置里已保存的值，且不会被写回 |
+| `TG_BOT_TOKEN` | `fuyubot run` / `login` / 集成测试 | bot 账号的 token；有值就不问 Bot Token，后台运行也能登 |
+| `FUYUBOT_NAME` | `fuyubot run` / `login` 的自动 init | 自动生成配置时的 `[bot].name`（默认 `fuyubot`） |
+| `FUYUBOT_SDK_PATH` | `fuyubot-sdk init` | **可选**：指向 SDK 仓库里放着 crate 的目录（`crates/`）。设了生成的插件用 `path = …` 对着源码开发；不设就写 crates.io 版本号（`fuyubot-plugin-api = "0.1.1"`） |
 
 ## 构建期 vs 运行期 [#构建期-vs-运行期]
 
@@ -45,4 +45,7 @@ $env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
 
 ## 只在自动 init 那一次生效 [#只在自动-init-那一次生效]
 
-`FUYUBOT_NAME` 与 `TG_API_ID` 只在 `run` **自动生成配置**时被读（缺 `fuyubot.toml`，或 `--config` 指向默认文件名而它不存在）。配置已存在就不参与——否则每次跑都会覆盖你手写的名字。
+`FUYUBOT_NAME` 只在 `run` / `login` **自动生成配置**时被读（缺 `fuyubot.toml`，或 `--config` 指向默认文件名而它不存在）。配置已存在就不参与——否则每次跑都会覆盖你手写的名字。
+
+`TG_API_ID` 不一样：它除了带进自动生成的配置，还是**每次** `run` / `login` 解析 `api_id` 的一档
+（`--api-id` → `TG_API_ID` → 配置 → 交互提问）。它只覆盖 `api_id`，不会动 `[bot].name`。

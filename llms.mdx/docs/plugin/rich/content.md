@@ -8,17 +8,55 @@ TDLib 里**没有** `sendRichMessage` / `editRichMessage`，也没有自带的 m
 `fuyubot-simplify` 的 `RichMessage` 把这层补齐了：发送 / 编辑就是
 `sendMessage` / `editMessageText` + `inputMessageRichMessage`，Markdown 转换在**本地**完成。
 
-```mermaid
-graph LR
-  A["Markdown"] -->|"from_markdown（本地转换）"| D["RichMessage"]
-  B["Markdown / HTML"] -->|"server_markdown / server_html"| E["RichMessage"]
-  C["手拼块树"] -->|from_blocks| D
-  D --> F["send_rich_message"]
-  E --> F
-  D --> G["edit_rich_message"]
-  F --> H["sendMessage +<br/>inputMessageRichMessage"]
-  G --> I["editMessageText +<br/>inputMessageRichMessage"]
-```
+<svg viewBox="0 0 680 362" width="100%" role="img" aria-label="RichMessage：三种构建方式，两个出口" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
+  <title>RichMessage：三种构建方式，两个出口</title>
+  <desc>Markdown、服务端 HTML、手拼块树三条路都能产出同一个 RichMessage 类型；它只有两个出口——发送和编辑，各自落到对应的 TDLib 方法。</desc>
+  <defs>
+    <marker id="rich-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </marker>
+  </defs>
+
+  <rect x="40" y="16" width="180" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="130" y="36" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">Markdown</text>
+  <text x="130" y="54" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">from_markdown（本地转）</text>
+
+  <rect x="250" y="16" width="180" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="340" y="36" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">Markdown / HTML</text>
+  <text x="340" y="54" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">server_markdown / server_html</text>
+
+  <rect x="460" y="16" width="180" height="56" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
+  <text x="550" y="36" fontSize="12" fontWeight="500" textAnchor="middle" fill="currentColor">块树</text>
+  <text x="550" y="54" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">from_blocks（最底层）</text>
+
+  <path d="M130 72 L210 106" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#rich-arrow)" />
+  <path d="M340 72 L340 106" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#rich-arrow)" />
+  <path d="M550 72 L470 106" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#rich-arrow)" />
+
+  <rect x="140" y="110" width="400" height="52" rx="10" fill="var(--color-fd-primary)" fillOpacity="0.05" stroke="var(--color-fd-primary)" strokeOpacity="0.4" strokeWidth="1" />
+  <text x="340" y="130" fontSize="13" fontWeight="500" textAnchor="middle" fill="currentColor">RichMessage</text>
+  <text x="340" y="148" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">三种方式产出同一个类型，下游只认它</text>
+
+  <path d="M300 162 L210 196" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#rich-arrow)" />
+  <path d="M400 162 L470 196" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#rich-arrow)" />
+
+  <rect x="60" y="200" width="260" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="190" y="224" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">send_rich_message</text>
+
+  <rect x="360" y="200" width="260" height="48" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1" />
+  <text x="490" y="224" fontSize="12" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" textAnchor="middle" dominantBaseline="central" fill="currentColor">edit_rich_message</text>
+
+  <path d="M190 248 L190 282" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#rich-arrow)" />
+  <path d="M490 248 L490 282" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#rich-arrow)" />
+
+  <rect x="60" y="286" width="260" height="56" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="190" y="305" fontSize="11.5" textAnchor="middle" fill="currentColor">sendMessage</text>
+  <text x="190" y="323" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">+ inputMessageRichMessage</text>
+
+  <rect x="360" y="286" width="260" height="56" rx="10" fill="currentColor" fillOpacity="0.06" stroke="currentColor" strokeOpacity="0.28" strokeWidth="1" />
+  <text x="490" y="305" fontSize="11.5" textAnchor="middle" fill="currentColor">editMessageText</text>
+  <text x="490" y="323" fontSize="10.5" textAnchor="middle" fill="currentColor" fillOpacity="0.6">+ inputMessageRichMessage</text>
+</svg>
 
 ## 三种源 [#三种源]
 

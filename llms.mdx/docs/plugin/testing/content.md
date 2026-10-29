@@ -20,13 +20,21 @@ fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
 ```text
 文件：target\debug\fuyubot_plugin_demo.dll
 格式：Pe / X86_64 / Dynamic
+同伴脚本：无（按纯原生插件加载）
 导出符号：
-  [ok] plugin_init          必需
+  [ok] plugin_init           必需
   [ok] plugin_start
   [ok] plugin_stop
   [ok] plugin_free_string
-ABI 版本：宿主是 3。插件报的版本**只能运行时判定**——它在 `PluginHandle.abi_version`
-     里，是 `plugin_init` 的返回值，不是静态符号（见 [ABI 契约](./abi.mdx)）。
+  [缺] plugin_free_handle    宿主容错（缺了也能加载）
+  [缺] plugin_abi_version    宿主容错（缺了也能加载）
+  [缺] plugin_manifest       宿主容错（缺了也能加载）
+ABI 版本：宿主是 4。三个版本别混：
+    - 宿主 ABI 世代 = 这个数（`HostApiVTable::version` 就在首字段）；
+    - 插件声明的 ABI 版本在 `PluginHandle::abi_version`，是 `plugin_init`
+      的返回值——**装载时才判定**，静态检查看不到；
+    - 插件自己的 crate 版本在 `plugin_manifest` 的 `version` 字段里。
+    细节见 docs/abi-contract.md。
 结论：可以加载。
 ```
 
@@ -81,15 +89,16 @@ fuyubot plugin list
 
 - 传**工程目录**时会把旁边的 `.py` / `.js` / `.ts` / `.pyi` 一起拷；传单个 dll 时看不到脚本在哪，
   **脚本插件请传工程目录**。
-- `plugin install <工程目录>` 只看 `<工程>/target/{release,debug}` 与工程目录本身。若插件是**当前
-  workspace 的成员**（本仓的 `examples/*`），`cargo build -p <crate>` 的产物默认落在仓库根 `target/`，
-  于是它找不到——加 `--target-dir <工程目录>/target`，或直接指着产物装。
+- `plugin install <工程目录>` 找产物的顺序是 `<工程>/target/{release,debug}` → 工程目录本身 →
+  **沿父链最近的** `target/{release,debug}`（两边都有时取**较新**的那个）。最后一档专为 workspace
+  成员准备：`cargo build -p <crate>` 的产物默认落在仓库根 `target/`，工程自己那份 `target/` 并不存在，
+  靠父链一样能找到——**没有 `--target-dir` 这个参数**，找不着就直接指着产物装。
 
 ## 装完还是不响？ [#装完还是不响]
 
 | 症状 | 先看 |
 | --- | --- |
-| `check` 报 `[缺] plugin_init` | crate 是不是 `crate-type = ["cdylib"]`；C++ 的四个符号在不在 `extern "C"` 里 |
+| `check` 报 `[缺] plugin_init` | crate 是不是 `crate-type = ["cdylib"]`；C++ 的七个符号在不在 `extern "C"` 里 |
 | 日志里有「跳过 xxx」 | ABI 版本不匹配，或 `dlopen` 失败（缺兄弟 DLL：把依赖放在插件旁边，加载器会先查库自己的目录） |
 | 加载了但一条事件都没收到 | 订阅句柄是不是被 drop 了（Rust 侧 `let _ =` 会立刻退订） |
 | 脚本插件起不来 | manifest 身份段（`[tool.fuyubot]` / `"fuyubot"`）与 `entry` 对不对；`run()` 是不是最后一行；`uv` / `bun` 在不在；原生桥库找不找得到（见 [脚本插件常见问题](./scripts.mdx#常见问题)） |
