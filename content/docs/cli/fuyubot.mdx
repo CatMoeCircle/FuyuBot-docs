@@ -10,7 +10,7 @@ fuyubot <COMMAND>
 
 Commands:
   init    初始化一个 fuyubot 项目（生成 fuyubot.toml 与插件目录）
-  run     起框架、加载插件
+  run     起框架、加载插件（`--tui` 打开终端操作面板）
   login   只登录，不起框架：走完授权、session 落盘后退出
   logout  清掉本地 TDLib 会话（= 退出登录；默认只预览）
   status  看这个目录上的实例在不在跑（读 .fuyubot/）
@@ -45,7 +45,7 @@ $ fuyubot init --dir demo --name mybot --api-id 12345
 
 ```text
 fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--no-tdlib]
-            [--no-login] [--background] [--replay <REPLAY>] [--replay-wait <MS>]
+            [--no-login] [--background] [--tui] [--replay <REPLAY>] [--replay-wait <MS>]
 ```
 
 | 参数 | 作用 |
@@ -56,6 +56,7 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `--no-tdlib` | 不接 TDLib，只加载插件 |
 | `--no-login` | 接 TDLib 但不走登录流程（已有 session 照样能用；CI / 容器用） |
 | `--background` | 派生无终端的子进程，stdout/stderr 进 `logs/fuyubot.log`，父进程等状态发布后返回 |
+| `--tui`（短写 `-t`） | 打开**终端操作面板**（顶部版本栏 + 导航/工作区 + 底部操作与资源占用），而不是前台跑 bot。面板自己不接 TDLib、不加载插件；`s` 派生 `run --background`，`x` 走优雅停止。与 `--background` / `--replay` 互斥 |
 | `--replay <文件>` | 把一批更新 JSON 灌进管线后退出：**不接 TDLib、不用账号** |
 | `--replay-wait <MS>` | 回放后等插件的静默窗口；不填按插件形态自选（脚本插件 2000，原生 150） |
 
@@ -71,6 +72,82 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 
 后台运行**没有 stdin**：没有 session 又没有 `TG_BOT_TOKEN` 时会直接失败并把日志尾巴打出来——
 先用前台登录一次（session 落在 `data/`）。
+
+### 终端操作面板（`--tui`）
+
+```powershell
+.\fuyubot.exe run --tui --config demo\fuyubot.toml
+```
+
+布局固定为四段：**顶部版本栏**（`[fuyubot - v…]`；实例运行中才显示状态，没跑时只显示刷新时间）、
+**左侧导航**（概览 / 插件 / 日志 / 配置 / 帮助）、**中央工作区**、**底部两行**
+（第一行是当前可用操作，第二行是 CPU / 内存 / 运行时长 / 加载插件数 / 日志级别 / PID）。
+顶部和底部**不铺背景色**，只靠边框高亮表示焦点。
+
+> 底部的资源数字来自 `sysinfo`，采的是**运行中实例的 PID**（不是面板自己）；
+> 实例没跑时 CPU / 内存 / 运行 / PID 显示 `—`、插件数为 0，日志级别显示面板下次启动会用哪一档。
+> 启动后的第一个采样点 CPU 是 `0.0%`，下一秒才有真实值。
+
+> 概览页「运行」区有三行是**从实例学来的**：TDLib 连接、TDLib 授权、账户。账户是登录后由
+> `getMe` 写进 `.fuyubot/status` 的（名字 + `@用户名`，宽屏再补 `id` 与 bot / user），
+> 之后 TDLib 用 `updateUser` 改名字 / 用户名时，实例把新值重发进 status，面板下一帧就跟着变。
+
+| 按键 | 作用 |
+| --- | --- |
+| `Tab` / `Shift+Tab` | 在**导航**与**工作区**之间切换焦点（当前窗口边框高亮，底栏显示 `[导航]` / `[工作区]`） |
+| `Enter` / `Esc` | 导航 → 工作区 / 工作区 → 导航（在导航上按 `Esc` 才退出面板） |
+| `↑` / `↓`、`j` / `k` | 导航焦点：切换页面；工作区焦点：滚动日志 / 选择配置项 / 移动日志选择 |
+| `←` / `→` | 切换顶部标签页（窄屏横向导航；工作区焦点也生效） |
+| `h` / `l` | 导航焦点：上一页 / 下一页 |
+| `1`–`5` | 直接跳到概览 / 插件 / 日志 / 配置 / 帮助 |
+| `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同） |
+| `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
+| `s` | 启动 bot（等价于 `fuyubot run --background`） |
+| `x` → `y` | 停止 bot（`y` 是确认框里的确认；走 `.fuyubot/stop` 的优雅停止） |
+| `r` | 刷新状态 / 插件 / 日志 / 配置 |
+| `l` | 日志页 + 工作区焦点：调整日志级别（error / warn / info / debug / trace） |
+| `F` | 日志页 + 工作区焦点：按级别 / 来源过滤日志 |
+| `c` | 日志页 + 工作区焦点：清空当前日志文件（要确认） |
+| `f` | 日志页 + 工作区焦点：跟随末尾开关 |
+| `PgUp` / `PgDn`、`Home` / `End` | 工作区焦点：日志 / 帮助翻页、首尾；配置页选择翻页、首尾 |
+| `q`、`Ctrl+C` | 退出面板（**不会**停掉已启动的实例） |
+
+面板**不占实例锁、不加载插件、不接 TDLib**：同一个 TDLib 数据目录同一时刻只能一个进程打开，
+所以它只读 `.fuyubot/status`、配置、插件目录和 `logs/fuyubot.log`。启停都派生子进程，
+和手敲命令走同一条路——面板里看到的就是真正在跑的那个实例。
+
+日志页按 `l` 打开级别选择框：写入 `.fuyubot/log-level`，运行中的实例每 500ms 读一次并切换，
+`status` 随后显示新的 `log_level`。这是**运行期**开关：只对本次运行生效，重启回到
+`[plugins].log_level`（新实例拿锁时会清掉控制文件）。
+
+`F` 打开过滤弹框：`↑↓` 选「级别 / 来源」，`←→` 改值，`c` 重置，`Enter` 应用。
+级别是下限（`info+` = error / warn / info）；来源分插件 / 宿主 / 管道 / 更新 / TDLib / 其他。
+新日志格式按「插件行 / source 词」归类（旧四列也兼容）：`TDLib Update` 追踪归**更新**（级别 trace），
+TDLib C 库的 `[ N][t …]` 原样行归 **TDLib**；认不出级别的启动提示按 info 对待。
+日志页底栏会显示 `x/y 行`。日志字段不按固定列补空格，长行会按**显示宽度**折行
+（续行缩进两格），不会直接截掉后半段。
+
+TDLib Update 行在 TUI 里**只显示 `@type`**（例如 `TDLib Update  updateNewMessage`），
+不再把整段 JSON 铺在屏幕上。按 `Enter` 进入选择模式：`↑↓` 选行，`y` 或 `Enter`
+把选中行复制到系统剪贴板；TDLib Update 复制的是**完整 JSON**（不含时间戳等前缀），
+其它行复制整行。`Esc` 退出选择模式。
+
+每次新启动后台实例都会先截断 `logs/fuyubot.log`（旧日志不保留）；日志页按 `c`
+可以手动清空当前日志文件，确认后清空并回到跟随末尾，运行中的实例会继续写新行。
+
+窄终端（手机 / Termux）会自适应：宽度不足 90 列时左侧导航收窄，低于 60 列时导航
+移到工作区上方、变成一行横向标签，用 `←` / `→`（工作区焦点也生效）或 `h` / `l`
+（导航焦点）切换；更窄时标签退化成单字。底栏资源在窄屏只留 `CPU / 内存 / 级别`，
+不显示运行时长、插件数量和 PID；配置项在窄屏改成「完整键 + 值」两行；帮助页可用
+`↑↓` / `PgUp` / `PgDn` 滚动；概览里的绝对路径改成相对项目根的路径。日志在窄屏只留
+`HH:MM:SS`、插件名最后一段和级别，消息照常折行。复制优先用
+`termux-clipboard-set`（需装 `termux-api`），否则退回 OSC 52。
+
+配置页是**可编辑的表格**（段 / 键 / 生效值 / 来源），`↑↓` 选中、`Enter` 或 `e` 编辑。
+文本、整数（带上下界）和枚举（`account_type` / `log_level`）会先校验再写回；写回是
+**单行文本替换**，保留文件里的注释、顺序和 CRLF，键/段不存在就补。运行中保存的配置
+**重启后生效**；`api_hash`、Bot Token / 手机号 / 密码和 `[plugin.*]` 段只读（插件段请用
+插件自己的命令或直接编辑文件）。配置文件读不出来时配置页会显示错误原文，改好按 `r` 重读。
 
 ## `login`
 
