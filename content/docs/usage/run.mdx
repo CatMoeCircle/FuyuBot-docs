@@ -10,7 +10,7 @@ description: 前台/后台运行、status、stop 与单实例锁
 | 文件 | 作用 |
 | --- | --- |
 | `.fuyubot/lock` | **只用来独占**（`try_lock`，进程死即释放）。里面不存内容——Windows 的文件锁是强制的，别的进程读不到被锁的字节 |
-| `.fuyubot/status` | `key=value`：pid / started / version / plugins / name。**启动完成之后**才发布（拿上锁只说明进程活着） |
+| `.fuyubot/status` | `key=value`：pid / started / version / log_level / plugins / name。**启动完成之后**才发布（拿上锁只说明进程活着） |
 | `.fuyubot/stop` | 停止请求，内容是 PID。`fuyubot stop` 先写它，让实例自己收摊 |
 | `.fuyubot/log-level` | **可选的运行期控制**：面板在日志页按 `l` 写它，实例每 500ms 读一次并切换插件日志级别；新实例拿锁时清掉，不会带到下一轮 |
 
@@ -50,7 +50,7 @@ description: 前台/后台运行、status、stop 与单实例锁
 `fuyubot status` 看状态，`fuyubot stop` 停掉它
 ```
 
-它派生一个没有终端的自己，stdout/stderr 追加进 `<目录>logs\fuyubot.log`；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
+它派生一个没有终端的自己，stdout/stderr 写进 `<目录>logs\fuyubot.log`（每次新启动先清空旧日志）；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
 
 <Callout type="warn">
   后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 或 `fuyubot login` 登一次，session 会落在 `data/`。首次连 `api_id` / `api_hash` 也问不了：先在前台跑一次让它写回配置，或设好 `TG_API_ID` / `TG_API_HASH`。
@@ -138,11 +138,15 @@ demo：运行中
   已运行     0 秒
   版本       0.1.0
   名字       mybot
+  日志级别   info
   插件       0 个
   日志       demo\logs\fuyubot.log
 ```
 
 `status` 只读 `.fuyubot/`，**不加载插件、不接 TDLib**。三种结果：运行中 / 陈旧（没人在跑，附上次的 pid 与启动时间）/ 没有运行中的实例。还有一种是「有实例在跑、但状态还没发布」，也就是卡在启动里。
+
+登录成功之后还会多一行「账户」（`名字 @用户名（id=…） [bot]`）：`getMe` 拿到就写进 status，
+之后 TDLib 用 `updateUser` 改名字 / 用户名时实例跟着刷新并重发——面板的概览页读的是同一份。
 
 ## 停掉
 

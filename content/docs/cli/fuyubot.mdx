@@ -55,12 +55,12 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `--api-id <ID>` | 覆盖配置里的 `api_id`（**不是**秘密，可以写在命令行 / 脚本里）。优先级：`--api-id` → `TG_API_ID` → 配置 `[telegram].api_id` → 交互提问。`api_hash` 没有对应参数（只走 `TG_API_HASH` 或交互输入） |
 | `--no-tdlib` | 不接 TDLib，只加载插件 |
 | `--no-login` | 接 TDLib 但不走登录流程（已有 session 照样能用；CI / 容器用） |
-| `--background` | 派生无终端的子进程，stdout/stderr 进 `logs/fuyubot.log`，父进程等状态发布后返回 |
+| `--background` | 派生无终端的子进程，stdout/stderr 进 `logs/fuyubot.log`（每次新启动先清空旧日志），父进程等状态发布后返回 |
 | `--tui`（短写 `-t`） | 打开**终端操作面板**（顶部版本栏 + 导航/工作区 + 底部操作与资源占用），而不是前台跑 bot。面板自己不接 TDLib、不加载插件；`s` 派生 `run --background`，`x` 走优雅停止。与 `--background` / `--replay` 互斥 |
 | `--replay <文件>` | 把一批更新 JSON 灌进管线后退出：**不接 TDLib、不用账号** |
 | `--replay-wait <MS>` | 回放后等插件的静默窗口；不填按插件形态自选（脚本插件 2000，原生 150） |
 
-`run` 不带 `--replay` 的顺序：自动 init → 拿单实例锁 → attach TDLib → 问/读凭据 → **加载全部插件** →
+`run` 不带 `--replay` 的顺序：自动 init → 把**工作目录切到项目根**（插件眼里的相对路径都从这里算）→ 拿单实例锁 → attach TDLib → 问/读凭据 → **加载全部插件** →
 发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 才开始分发。
 **登录这一步没有真账号端到端验过**，要立刻验插件就用 `--replay`——想单独把登录走完（不起框架）用 `login`。
 
@@ -225,11 +225,14 @@ demo：运行中
   已运行     0 秒
   版本       0.1.0
   名字       mybot
+  日志级别   info
   插件       1 个
   日志       demo\logs\fuyubot.log
 ```
 
 `status` 只读 `<项目根>/.fuyubot/`，三态：运行中 / 启动中 / 没有运行中的实例（顺带报「上次」的 pid）。
+接上 TDLib 之后还会多出「连接」「授权」两行，登录成功再补一行「账户」
+（`名字 @用户名（id=…） [bot]`）——账户跟着 `updateUser` 刷新，不是登录那一刻的死快照。
 `stop` 是**优雅**的：写 `.fuyubot/stop` 请实例自己收摊（停接收循环 → 卸载插件 → 停内核 → 放锁），
 8 秒不理会才硬杀。
 
