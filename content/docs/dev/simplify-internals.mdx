@@ -128,18 +128,26 @@ TDLib 是异步的，`sendMessage` 的真相是这样的：
 `wait_for_update` 返回的 `WaitHandle::payload_json` 是宿主的**线程局部缓冲**，只在下一次宿主调用前有效；
 `wait_for_update_json` 内部用 `payload_of` 当场拷成 `Value`。凡是跨越宿主调用的，都要拷。
 
-## 7. 命令订阅：为什么两层 Box
+## 7. 命令订阅：为什么状态要放堆上
 
-`on_command` 把 Rust 闭包交给 C 回调，`user_data` 必须是一个**稳定**的指针：
+`on_command` 把 Rust 闭包交给 C 回调，`user_data` 必须是一个**稳定**的指针。现在递给 ABI 的
+是**一个结构体**（处理函数 + `HostApi`）的堆地址：
 
 ```rust
-let mut owned: Box<Box<dyn Fn(&Command) + Send + Sync>> = Box::new(Box::new(handler));
+let mut owned: Box<CommandHandler> = Box::new(CommandHandler { host, handler: Box::new(handler) });
 let user_data = (&raw mut *owned).cast::<c_void>();
 ```
 
-外层 Box 活着时，内层 Box 的地址不变；传给 ABI 的是**内层 Box 的胖指针目标地址**（瘦指针），
-trampoline 里再还原成 `&Box<dyn Fn(..)>`。所有权整体压在 `CommandSubscription` 上，
-所以 **drop = 退订**（`Drop` 里调 `host.off(handle)`），语义跟 `Effect` 一致。
+Box 活着时堆上那份的地址不变；trampoline 里再还原成 `&CommandHandler`。所有权整体压在
+`CommandSubscription` 上，所以 **drop = 退订**（`Drop` 里调 `host.off(handle)`），语义跟 `Effect` 一致。
+
+以前这里是「两层 Box」（`Box<Box<dyn Fn(..)>>`，交出去的是内层胖指针的目标地址）。加身份判定之后
+需要随订阅一起活的状态不止一个闭包，就收成一个结构体——**同样的道理：只有堆上那份的地址能交出去**。
+
+过滤发生在这个 trampoline 里：`command.addressed_to` 是 `Some(别人)` 就直接返回，闭包根本不会被调。
+判定要问宿主（`fuyubot.host.identity` 的 `usernames`），**每条点名命令都现问一次**：这是纯内存的
+service 读，不碰 TDLib；反过来把它缓存进 `CommandHandler` 就会在用户名被 `updateUser` 改掉之后
+一直按旧名字判断（踩过一次）。命令是人手敲的，这点开销无所谓。
 
 trampoline 是 `extern "C-unwind"`（宿主要求），并且对所有空指针先 `return -1` / `0`，不会 panic 过 FFI。
 
@@ -250,7 +258,7 @@ let mut latest: Box<Mutex<Value>> = Box::new(Mutex::new(Value::Null));
 let user_data = (&raw mut *latest).cast::<c_void>();
 ```
 
-与[第 7 节](#7-命令订阅为什么两层-box)的「两层 Box」同一个道理：结构体会**按值返回**（被移动），
+与[第 7 节](#7-命令订阅为什么状态要放堆上)的「状态放堆上」同一个道理：结构体会**按值返回**（被移动），
 只有堆上那一份的地址能交出去给 ABI。所有权压在 `ConnectionTracker` 上，所以 **drop = 退订**。
 
 `is_ready()` 对「还没收到过任何更新」也返回 `false`——宁可保守，别把「不知道」当「连上了」。
