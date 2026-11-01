@@ -2,6 +2,9 @@
 
 `fuyubot run` 读 `fuyubot.toml`，**所有键都有默认值**。缺这个文件时 `run` 会按模板自动生成一份（等价于先跑一次 `fuyubot init`）——`--replay` 是例外，它不会为了回放在你的目录里留配置。
 
+> `run --tui` 的**配置页**可以直接改核心项：`↑↓` 选中、`Enter` / `e` 编辑，写回时保留注释与 CRLF。
+> 运行中改完需重启实例；`api_hash`、Bot Token / 手机号 / 密码和 `[plugin.*]` 段只读。
+
 一个项目目录长这样：
 
 ```text
@@ -24,7 +27,7 @@ demo/
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
 | `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
-| `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错** |
+| `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错**。运行中也可以在 `run --tui` 的日志页按 `Tab` 聚焦工作区后按 `l` 临时调整（只对本次运行生效） |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
 | `[plugin.<插件名>]` | 无 | 插件自己的配置段（见下） |
@@ -87,6 +90,7 @@ log_verbosity = 1
 ## 几条约定 [#几条约定]
 
 - **相对路径相对配置文件所在目录**（也就是项目根）：`plugins`、`data`、日志目录都按它解析。
+  插件也吃这一条：`fuyubot run` 在加载插件之前会把**进程工作目录切到项目根**，所以插件配置里的相对路径（如 `cache` / `Cache`）和插件起的子进程，都落在 `fuyubot.toml` 旁边，而不是「你在哪个目录敲的命令」。
 - **自动 init 只认默认文件名**：缺 `fuyubot.toml` 时 `run` 会生成一份；但用 `--config 别的名字` 时不会凭空造，直接报错。
 - `status` / `stop` **不替你造配置**：找不到 `fuyubot.toml` 就报「先 `fuyubot init` 建一个」——面对的是已经存在的实例，凭空建一个只会更迷惑。
 - `--plugin-dir` 覆盖 `[plugins].dir`，`--config` 换配置文件本身。

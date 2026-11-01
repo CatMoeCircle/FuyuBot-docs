@@ -143,6 +143,8 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
   （直接报 `ServiceNameExists`）。
 - 插件卸载时，它那层作用域连同里面的服务一起消失。
 
+跨插件联动的端到端示例（`/help` 的命令注册表）见[插件联动](./linkage.mdx)。
+
 两条形状上的硬要求：
 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
@@ -182,19 +184,26 @@ C / Go 侧没有封装，就手动做同一件事：`get_service` 拿表 → 按
 
 ### 宿主预置的服务 [#宿主预置的服务]
 
-宿主在根上预置了两个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
+宿主在根上预置了三个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
 
 | 服务名 | 方法 | 协议 |
 | --- | --- | --- |
 | `fuyubot.host.plugins` | `report` | 无参 → `{"plugins":[{name, state, …}]}`，进程内插件快照；`state` ∈ `active` / `pending` / `failed` / `activating`，`pending` 带 `missing`、`failed` 带 `reason` |
+| `fuyubot.host.identity` | `usernames` | 无参 → `["FuyuBot"]`，自身全部活跃用户名（`usernames.active_usernames`）；没登录 / 没接 TDLib 时是 `[]` |
+| | `me` | 无参 → `getMe` 的原始 `user` JSON；没登录时 `null` |
 | `fuyubot.host.scope` | `scope_create` | `{}` → `{"handle":N}`，开一个子作用域 |
 | | `scope_enter` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 | | `scope_leave` | 忽略入参；离开当前作用域 |
 | | `scope_drop` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 
 `fuyubot.host.plugins` 与 ABI 第 8 项 `list_plugins` 同源，只是多一条走服务这条路
-（内置 `/plugins` 插件就是这么读「进程里真在跑的」插件清单的）。`fuyubot.host.scope`
-是中间插件批量托管脚本时开子作用域用的，见[架构](../dev/architecture.mdx)。
+（内置 `/plugins` 插件就是这么读「进程里真在跑的」插件清单的）。`fuyubot.host.identity`
+是「我是谁」：宿主登录成功拿到 `getMe` 之后写进去，之后**每条 `updateUser`（id 是自己那条）
+都会刷新它**，所以改名字 / 改用户名之后读到的就是新值。`fuyubot-simplify` 的 `on_command`
+靠它把「点名给别人的命令」挡在插件外面——纯内存读取，不是 TDLib 请求，
+**在命令回调里调它不会卡接收循环**。面板与 `fuyubot status` 显示的账户行也来自同一份数据
+（经 `.fuyubot/status` 跨进程过去）。
+`fuyubot.host.scope` 是中间插件批量托管脚本时开子作用域用的，见[架构](../dev/architecture.mdx)。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
 都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；

@@ -315,6 +315,12 @@ Media::video("/tmp/a.mp4")
 `command_of(update)` 从一条 `updateNewMessage` 里认出命令（只认文本消息，**跳过自己发的**）；
 `on_command(host, handler)` 一次性订阅，`CommandSubscription` **drop 即退订**——把它存进插件状态。
 
+**点名给别人的命令不会送到 `handler`。** Telegram 的约定是：裸命令（`/start`）所有 bot 都响应，
+带 `@` 的只有被点名的那一方响应。`on_command` 按这条规则过滤，所以插件里不用自己再判断 `@`：
+`/start@别的Bot` 根本到不了你手上。判据来自宿主预置的 `fuyubot.host.identity` 服务：登录时由
+`getMe` 写入，之后每条 `updateUser` 都跟着刷新，所以改用户名之后不会按旧名字判断。
+遇到点名命令时**现问一次**（纯内存读，不是 TDLib 请求，不会卡接收循环）。
+
 <TypeTable
   type={{
     chat_id: { description: '命令所在的会话。', type: 'i64' },
@@ -324,6 +330,10 @@ Media::video("/tmp/a.mp4")
       type: 'String',
     },
     args: { description: '/cmd 后面那一段（去首尾空白，可能为空）。', type: 'String' },
+    addressed_to: {
+      description: '@ 后面那个名字（原样保留大小写，比较时不分）。裸命令是 None。经 on_command 拿到时它要么是 None、要么就是你自己。',
+      type: 'Option<String>',
+    },
     text: { description: '整条消息原文。', type: 'String' },
   }}
 />
@@ -335,6 +345,16 @@ let _guard = on_command(host, |command| {
     }
 });
 ```
+
+<Callout type="info">
+  要看「点名给别人的」那种消息，就别走 `on_command`——自己订阅原始更新
+  `host.on("updateNewMessage", None, …)`，再配 `command_of` 解析。判定规则本身也是公开的：
+  `command.addressed_to`（`@` 后面的名字）、`command.is_addressed_to("FuyuBot")`、
+  `command.is_for(&usernames)`；`my_usernames(&host)` 就是问宿主「我是谁」。
+
+  **没登录 / `--no-tdlib` / `--replay` 时身份未知**，这时 `on_command` 不过滤——分不清
+  「点名的是别人」还是「我还不知道自己是谁」，宁可多回一句也不吞命令。
+</Callout>
 
 ## 8. 等待与订阅 [#8-等待与订阅]
 
@@ -607,7 +627,7 @@ if self.connection.as_ref().is_some_and(|c| c.is_ready()) { /* … */ }
 | `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
 | `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(..)` | 响应 → `formattedText`；拿不到退回纯文本 |
 | `plain_text(&Text)` | 纯文本 → `formattedText`（不花往返），也是默认渲染器 |
-| `command_of(&Value)` / `on_command(host, handler)` | 见[第 7 节](#7-命令与输入) |
+| `command_of(&Value)` / `on_command(host, handler)` / `my_usernames(&host)` | 见[第 7 节](#7-命令与输入) |
 
 ## 16. 参数名为什么是这几个 [#16-参数名为什么是这几个]
 

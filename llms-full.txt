@@ -126,7 +126,7 @@ fuyubot <COMMAND>
 
 Commands:
   init    初始化一个 fuyubot 项目（生成 fuyubot.toml 与插件目录）
-  run     起框架、加载插件
+  run     起框架、加载插件（`--tui` 打开终端操作面板）
   login   只登录，不起框架：走完授权、session 落盘后退出
   logout  清掉本地 TDLib 会话（= 退出登录；默认只预览）
   status  看这个目录上的实例在不在跑（读 .fuyubot/）
@@ -161,7 +161,7 @@ $ fuyubot init --dir demo --name mybot --api-id 12345
 
 ```text
 fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--no-tdlib]
-            [--no-login] [--background] [--replay <REPLAY>] [--replay-wait <MS>]
+            [--no-login] [--background] [--tui] [--replay <REPLAY>] [--replay-wait <MS>]
 ```
 
 | 参数 | 作用 |
@@ -171,11 +171,12 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `--api-id <ID>` | 覆盖配置里的 `api_id`（**不是**秘密，可以写在命令行 / 脚本里）。优先级：`--api-id` → `TG_API_ID` → 配置 `[telegram].api_id` → 交互提问。`api_hash` 没有对应参数（只走 `TG_API_HASH` 或交互输入） |
 | `--no-tdlib` | 不接 TDLib，只加载插件 |
 | `--no-login` | 接 TDLib 但不走登录流程（已有 session 照样能用；CI / 容器用） |
-| `--background` | 派生无终端的子进程，stdout/stderr 进 `logs/fuyubot.log`，父进程等状态发布后返回 |
+| `--background` | 派生无终端的子进程，stdout/stderr 进 `logs/fuyubot.log`（每次新启动先清空旧日志），父进程等状态发布后返回 |
+| `--tui`（短写 `-t`） | 打开**终端操作面板**（顶部版本栏 + 导航/工作区 + 底部操作与资源占用），而不是前台跑 bot。面板自己不接 TDLib、不加载插件；`s` 派生 `run --background`，`x` 走优雅停止。与 `--background` / `--replay` 互斥 |
 | `--replay <文件>` | 把一批更新 JSON 灌进管线后退出：**不接 TDLib、不用账号** |
 | `--replay-wait <MS>` | 回放后等插件的静默窗口；不填按插件形态自选（脚本插件 2000，原生 150） |
 
-`run` 不带 `--replay` 的顺序：自动 init → 拿单实例锁 → attach TDLib → 问/读凭据 → **加载全部插件** →
+`run` 不带 `--replay` 的顺序：自动 init → 把**工作目录切到项目根**（插件眼里的相对路径都从这里算）→ 拿单实例锁 → attach TDLib → 问/读凭据 → **加载全部插件** →
 发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 才开始分发。
 **登录这一步没有真账号端到端验过**，要立刻验插件就用 `--replay`——想单独把登录走完（不起框架）用 `login`。
 
@@ -187,6 +188,82 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 
 后台运行**没有 stdin**：没有 session 又没有 `TG_BOT_TOKEN` 时会直接失败并把日志尾巴打出来——
 先用前台登录一次（session 落在 `data/`）。
+
+### 终端操作面板（`--tui`） [#终端操作面板--tui]
+
+```powershell
+.\fuyubot.exe run --tui --config demo\fuyubot.toml
+```
+
+布局固定为四段：**顶部版本栏**（`[fuyubot - v…]`；实例运行中才显示状态，没跑时只显示刷新时间）、
+**左侧导航**（概览 / 插件 / 日志 / 配置 / 帮助）、**中央工作区**、**底部两行**
+（第一行是当前可用操作，第二行是 CPU / 内存 / 运行时长 / 加载插件数 / 日志级别 / PID）。
+顶部和底部**不铺背景色**，只靠边框高亮表示焦点。
+
+> 底部的资源数字来自 `sysinfo`，采的是**运行中实例的 PID**（不是面板自己）；
+> 实例没跑时 CPU / 内存 / 运行 / PID 显示 `—`、插件数为 0，日志级别显示面板下次启动会用哪一档。
+> 启动后的第一个采样点 CPU 是 `0.0%`，下一秒才有真实值。
+
+> 概览页「运行」区有三行是**从实例学来的**：TDLib 连接、TDLib 授权、账户。账户是登录后由
+> `getMe` 写进 `.fuyubot/status` 的（名字 + `@用户名`，宽屏再补 `id` 与 bot / user），
+> 之后 TDLib 用 `updateUser` 改名字 / 用户名时，实例把新值重发进 status，面板下一帧就跟着变。
+
+| 按键 | 作用 |
+| --- | --- |
+| `Tab` / `Shift+Tab` | 在**导航**与**工作区**之间切换焦点（当前窗口边框高亮，底栏显示 `[导航]` / `[工作区]`） |
+| `Enter` / `Esc` | 导航 → 工作区 / 工作区 → 导航（在导航上按 `Esc` 才退出面板） |
+| `↑` / `↓`、`j` / `k` | 导航焦点：切换页面；工作区焦点：滚动日志 / 选择配置项 / 移动日志选择 |
+| `←` / `→` | 切换顶部标签页（窄屏横向导航；工作区焦点也生效） |
+| `h` / `l` | 导航焦点：上一页 / 下一页 |
+| `1`–`5` | 直接跳到概览 / 插件 / 日志 / 配置 / 帮助 |
+| `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同） |
+| `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
+| `s` | 启动 bot（等价于 `fuyubot run --background`） |
+| `x` → `y` | 停止 bot（`y` 是确认框里的确认；走 `.fuyubot/stop` 的优雅停止） |
+| `r` | 刷新状态 / 插件 / 日志 / 配置 |
+| `l` | 日志页 + 工作区焦点：调整日志级别（error / warn / info / debug / trace） |
+| `F` | 日志页 + 工作区焦点：按级别 / 来源过滤日志 |
+| `c` | 日志页 + 工作区焦点：清空当前日志文件（要确认） |
+| `f` | 日志页 + 工作区焦点：跟随末尾开关 |
+| `PgUp` / `PgDn`、`Home` / `End` | 工作区焦点：日志 / 帮助翻页、首尾；配置页选择翻页、首尾 |
+| `q`、`Ctrl+C` | 退出面板（**不会**停掉已启动的实例） |
+
+面板**不占实例锁、不加载插件、不接 TDLib**：同一个 TDLib 数据目录同一时刻只能一个进程打开，
+所以它只读 `.fuyubot/status`、配置、插件目录和 `logs/fuyubot.log`。启停都派生子进程，
+和手敲命令走同一条路——面板里看到的就是真正在跑的那个实例。
+
+日志页按 `l` 打开级别选择框：写入 `.fuyubot/log-level`，运行中的实例每 500ms 读一次并切换，
+`status` 随后显示新的 `log_level`。这是**运行期**开关：只对本次运行生效，重启回到
+`[plugins].log_level`（新实例拿锁时会清掉控制文件）。
+
+`F` 打开过滤弹框：`↑↓` 选「级别 / 来源」，`←→` 改值，`c` 重置，`Enter` 应用。
+级别是下限（`info+` = error / warn / info）；来源分插件 / 宿主 / 管道 / 更新 / TDLib / 其他。
+新日志格式按「插件行 / source 词」归类（旧四列也兼容）：`TDLib Update` 追踪归**更新**（级别 trace），
+TDLib C 库的 `[ N][t …]` 原样行归 **TDLib**；认不出级别的启动提示按 info 对待。
+日志页底栏会显示 `x/y 行`。日志字段不按固定列补空格，长行会按**显示宽度**折行
+（续行缩进两格），不会直接截掉后半段。
+
+TDLib Update 行在 TUI 里**只显示 `@type`**（例如 `TDLib Update  updateNewMessage`），
+不再把整段 JSON 铺在屏幕上。按 `Enter` 进入选择模式：`↑↓` 选行，`y` 或 `Enter`
+把选中行复制到系统剪贴板；TDLib Update 复制的是**完整 JSON**（不含时间戳等前缀），
+其它行复制整行。`Esc` 退出选择模式。
+
+每次新启动后台实例都会先截断 `logs/fuyubot.log`（旧日志不保留）；日志页按 `c`
+可以手动清空当前日志文件，确认后清空并回到跟随末尾，运行中的实例会继续写新行。
+
+窄终端（手机 / Termux）会自适应：宽度不足 90 列时左侧导航收窄，低于 60 列时导航
+移到工作区上方、变成一行横向标签，用 `←` / `→`（工作区焦点也生效）或 `h` / `l`
+（导航焦点）切换；更窄时标签退化成单字。底栏资源在窄屏只留 `CPU / 内存 / 级别`，
+不显示运行时长、插件数量和 PID；配置项在窄屏改成「完整键 + 值」两行；帮助页可用
+`↑↓` / `PgUp` / `PgDn` 滚动；概览里的绝对路径改成相对项目根的路径。日志在窄屏只留
+`HH:MM:SS`、插件名最后一段和级别，消息照常折行。复制优先用
+`termux-clipboard-set`（需装 `termux-api`），否则退回 OSC 52。
+
+配置页是**可编辑的表格**（段 / 键 / 生效值 / 来源），`↑↓` 选中、`Enter` 或 `e` 编辑。
+文本、整数（带上下界）和枚举（`account_type` / `log_level`）会先校验再写回；写回是
+**单行文本替换**，保留文件里的注释、顺序和 CRLF，键/段不存在就补。运行中保存的配置
+**重启后生效**；`api_hash`、Bot Token / 手机号 / 密码和 `[plugin.*]` 段只读（插件段请用
+插件自己的命令或直接编辑文件）。配置文件读不出来时配置页会显示错误原文，改好按 `r` 重读。
 
 ## `login` [#login]
 
@@ -264,11 +341,14 @@ demo：运行中
   已运行     0 秒
   版本       0.1.0
   名字       mybot
+  日志级别   info
   插件       1 个
   日志       demo\logs\fuyubot.log
 ```
 
 `status` 只读 `<项目根>/.fuyubot/`，三态：运行中 / 启动中 / 没有运行中的实例（顺带报「上次」的 pid）。
+接上 TDLib 之后还会多出「连接」「授权」两行，登录成功再补一行「账户」
+（`名字 @用户名（id=…） [bot]`）——账户跟着 `updateUser` 刷新，不是登录那一刻的死快照。
 `stop` 是**优雅**的：写 `.fuyubot/stop` 请实例自己收摊（停接收循环 → 卸载插件 → 停内核 → 放锁），
 8 秒不理会才硬杀。
 
@@ -1269,18 +1349,26 @@ TDLib 是异步的，`sendMessage` 的真相是这样的：
 `wait_for_update` 返回的 `WaitHandle::payload_json` 是宿主的**线程局部缓冲**，只在下一次宿主调用前有效；
 `wait_for_update_json` 内部用 `payload_of` 当场拷成 `Value`。凡是跨越宿主调用的，都要拷。
 
-## 7. 命令订阅：为什么两层 Box [#7-命令订阅为什么两层-box]
+## 7. 命令订阅：为什么状态要放堆上 [#7-命令订阅为什么状态要放堆上]
 
-`on_command` 把 Rust 闭包交给 C 回调，`user_data` 必须是一个**稳定**的指针：
+`on_command` 把 Rust 闭包交给 C 回调，`user_data` 必须是一个**稳定**的指针。现在递给 ABI 的
+是**一个结构体**（处理函数 + `HostApi`）的堆地址：
 
 ```rust
-let mut owned: Box<Box<dyn Fn(&Command) + Send + Sync>> = Box::new(Box::new(handler));
+let mut owned: Box<CommandHandler> = Box::new(CommandHandler { host, handler: Box::new(handler) });
 let user_data = (&raw mut *owned).cast::<c_void>();
 ```
 
-外层 Box 活着时，内层 Box 的地址不变；传给 ABI 的是**内层 Box 的胖指针目标地址**（瘦指针），
-trampoline 里再还原成 `&Box<dyn Fn(..)>`。所有权整体压在 `CommandSubscription` 上，
-所以 **drop = 退订**（`Drop` 里调 `host.off(handle)`），语义跟 `Effect` 一致。
+Box 活着时堆上那份的地址不变；trampoline 里再还原成 `&CommandHandler`。所有权整体压在
+`CommandSubscription` 上，所以 **drop = 退订**（`Drop` 里调 `host.off(handle)`），语义跟 `Effect` 一致。
+
+以前这里是「两层 Box」（`Box<Box<dyn Fn(..)>>`，交出去的是内层胖指针的目标地址）。加身份判定之后
+需要随订阅一起活的状态不止一个闭包，就收成一个结构体——**同样的道理：只有堆上那份的地址能交出去**。
+
+过滤发生在这个 trampoline 里：`command.addressed_to` 是 `Some(别人)` 就直接返回，闭包根本不会被调。
+判定要问宿主（`fuyubot.host.identity` 的 `usernames`），**每条点名命令都现问一次**：这是纯内存的
+service 读，不碰 TDLib；反过来把它缓存进 `CommandHandler` 就会在用户名被 `updateUser` 改掉之后
+一直按旧名字判断（踩过一次）。命令是人手敲的，这点开销无所谓。
 
 trampoline 是 `extern "C-unwind"`（宿主要求），并且对所有空指针先 `return -1` / `0`，不会 panic 过 FFI。
 
@@ -1391,7 +1479,7 @@ let mut latest: Box<Mutex<Value>> = Box::new(Mutex::new(Value::Null));
 let user_data = (&raw mut *latest).cast::<c_void>();
 ```
 
-与[第 7 节](#7-命令订阅为什么两层-box)的「两层 Box」同一个道理：结构体会**按值返回**（被移动），
+与[第 7 节](#7-命令订阅为什么状态要放堆上)的「状态放堆上」同一个道理：结构体会**按值返回**（被移动），
 只有堆上那一份的地址能交出去给 ABI。所有权压在 `ConnectionTracker` 上，所以 **drop = 退订**。
 
 `is_ready()` 对「还没收到过任何更新」也返回 `false`——宁可保守，别把「不知道」当「连上了」。
@@ -1620,6 +1708,8 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
   （直接报 `ServiceNameExists`）。
 - 插件卸载时，它那层作用域连同里面的服务一起消失。
 
+跨插件联动的端到端示例（`/help` 的命令注册表）见[插件联动](./linkage.mdx)。
+
 两条形状上的硬要求：
 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
@@ -1659,19 +1749,26 @@ C / Go 侧没有封装，就手动做同一件事：`get_service` 拿表 → 按
 
 ### 宿主预置的服务 [#宿主预置的服务]
 
-宿主在根上预置了两个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
+宿主在根上预置了三个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
 
 | 服务名 | 方法 | 协议 |
 | --- | --- | --- |
 | `fuyubot.host.plugins` | `report` | 无参 → `{"plugins":[{name, state, …}]}`，进程内插件快照；`state` ∈ `active` / `pending` / `failed` / `activating`，`pending` 带 `missing`、`failed` 带 `reason` |
+| `fuyubot.host.identity` | `usernames` | 无参 → `["FuyuBot"]`，自身全部活跃用户名（`usernames.active_usernames`）；没登录 / 没接 TDLib 时是 `[]` |
+| | `me` | 无参 → `getMe` 的原始 `user` JSON；没登录时 `null` |
 | `fuyubot.host.scope` | `scope_create` | `{}` → `{"handle":N}`，开一个子作用域 |
 | | `scope_enter` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 | | `scope_leave` | 忽略入参；离开当前作用域 |
 | | `scope_drop` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 
 `fuyubot.host.plugins` 与 ABI 第 8 项 `list_plugins` 同源，只是多一条走服务这条路
-（内置 `/plugins` 插件就是这么读「进程里真在跑的」插件清单的）。`fuyubot.host.scope`
-是中间插件批量托管脚本时开子作用域用的，见[架构](../dev/architecture.mdx)。
+（内置 `/plugins` 插件就是这么读「进程里真在跑的」插件清单的）。`fuyubot.host.identity`
+是「我是谁」：宿主登录成功拿到 `getMe` 之后写进去，之后**每条 `updateUser`（id 是自己那条）
+都会刷新它**，所以改名字 / 改用户名之后读到的就是新值。`fuyubot-simplify` 的 `on_command`
+靠它把「点名给别人的命令」挡在插件外面——纯内存读取，不是 TDLib 请求，
+**在命令回调里调它不会卡接收循环**。面板与 `fuyubot status` 显示的账户行也来自同一份数据
+（经 `.fuyubot/status` 跨进程过去）。
+`fuyubot.host.scope` 是中间插件批量托管脚本时开子作用域用的，见[架构](../dev/architecture.mdx)。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
 都是 `#[repr(C)]` + 单个 `u64`（断言钉住 `size_of == size_of::<u64>()`）；
@@ -2690,6 +2787,9 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 
 排查看 `fuyubot status`：`pending` 那一栏会列出插件名**和它还缺哪些**。
 
+完整实例见[插件联动](./linkage.mdx)：内置 `/help` 用共享服务暴露命令表，
+`fuyubot.start` 和 `fuyubot.manage` 用 `soft_inject` + `call_service` 把自己的命令登记进去。
+
 ## 按语言看 [#按语言看]
 
 <Cards>
@@ -3268,6 +3368,370 @@ function sendWithButton(chatId: number, label: string, payload: string) {
 - **依赖工具**：要装 [bun](https://bun.sh)（机器人用 `bun install` 装依赖、`bun` 起脚本）。
 - **payload 取字段**：JS 侧没有 schema，先判空或 `as any` 再取；
   `updateNewMessage` 的文本在 `message.content.text.text`。
+
+
+# 插件联动 (/docs/plugin/linkage)
+
+插件之间没有共享的 Rust 类型，也没有彼此的符号表。原生插件（cdylib）跑在同一个进程里，
+但只通过宿主的 C ABI 打交道。想「A 把自己的能力借给 B 用」，只有宿主提供的那几条通道。
+
+这篇讲最常用的一条：**命名服务 + 软依赖**。例子就是内置的 `/help`——
+它把命令表暴露成一个进程级服务，`fuyubot.start` 和 `fuyubot.manage` 在启动时把自己的命令登记进去，
+而它们之间没有一行互相 import 的代码。
+
+## 先选通道 [#先选通道]
+
+| 想做的事 | 通道 | 有返回值 | 对方必须在？ |
+| --- | --- | --- | --- |
+| 广播「发生了什么」，不关心谁在听 | [事件总线](./events.mdx) `emit` / 订阅 | 否 | 否 |
+| 调一个能力，**当场要结果** | 命名服务 `provide_service(_shared)` + `call_service` | 是（JSON 字符串） | 是（调用那一刻） |
+| 让宿主 / AI 能发现并调用 | [工具表](./tools.mdx) `register_tool` + `call_tool` | 是 | 是 |
+| 只要求「我启动时它已经在了」 | `inject` / `soft_inject` | — | 不负责传值 |
+
+服务适合「一个插件提供能力、其它插件按名字调」：命令注册表、缓存、鉴权、数据源都属于这一类。
+它不替代事件——事件是**通知**，服务是**调用**。两者可以叠：服务方法内部照样能 `emit`。
+
+## `/help` 的联动结构 [#help-的联动结构]
+
+内置 `/help` 把命令表暴露成进程级服务 `fuyubot.help.commands`，方法有两个：
+
+| 方法 | 入参 | 返回 |
+| --- | --- | --- |
+| `register` | `{"name":"start","description":"开始使用"}` | `{"ok":true}`；坏入参回 `{"ok":false,"error":"…"}` |
+| `list` | 忽略 | `[{"name":"start","description":"…"}, …]`，即 `/help` 实际渲染的内容 |
+
+服务名建议用反向域名（`fuyubot.help.commands`），方法名用动词；协议字段**只增不改**，
+破坏性改动时把 `ServiceVTable.version` 加一（宿主不校验，但调用方可以据此判断）。
+坏入参不要 panic——回一个带 `error` 的 JSON，调用方才有机会降级。
+
+```mermaid
+flowchart LR
+  U["用户发 /help"] --> H["help 插件"]
+  H --> T["Markdown 命令表"]
+  S["start 插件"] -.->|"soft_inject"| H
+  M["manage 插件"] -.->|"soft_inject"| H
+  S -->|"register(JSON)"| H
+  M -->|"register(JSON)"| H
+```
+
+三个插件各管一段：
+
+| 角色 | 插件 | 做什么 |
+| --- | --- | --- |
+| 提供方 | `fuyubot.help` | `start()` 里 `provide_service_shared` 注册服务；`/help` 渲染时合并静态基线与动态注册表 |
+| 消费方 | `fuyubot.start` | `soft_inject` 声明软依赖；`start()` 里 `call_service(…, "register", …)` |
+| 消费方 | `fuyubot.manage` | 同上，登记 `/plugins` |
+
+消费方**不链接** help 插件，也不 import 它的任何代码。它只认两个字符串——服务名和方法名——
+外加一份两边都认的 JSON 协议。
+
+> 实例源码在运行时仓库的 `plugins/fuyubot-plugin-help`、`plugins/fuyubot-plugin-start`、
+> `plugins/fuyubot-plugin-manage`；这篇只摘和联动有关的部分。
+
+## 提供方：把能力做成服务 [#提供方把能力做成服务]
+
+下面代码用 `fuyubot-abi` 的类型写（三个内置插件就是这么写的）。外部 Rust 插件把
+`fuyubot_abi` 换成 `fuyubot_plugin_api` 即可：后者把 `ServiceVTable` / `ServiceMethod` /
+`Plugin` / `define_plugin!` 原样重导出，形状完全一样。
+
+### 1. 写方法 [#1-写方法]
+
+服务方法只有一个签名：收 JSON、回 JSON（或 `NULL` 表示「成功但没输出」）。
+
+```rust
+use std::cell::RefCell;
+use std::ffi::{CStr, CString, c_char, c_void};
+
+thread_local! {
+    static REPLY: RefCell<CString> = RefCell::new(CString::new("").unwrap());
+}
+
+/// 把一段文本放进线程局部缓冲，返回给调用方。
+/// 提供方持有返回值：宿主 `call_service` 调完会立刻拷走，不会保存这个指针。
+fn reply(text: &str) -> *const c_char {
+    let text = CString::new(text).unwrap_or_default();
+    REPLY.with(|buffer| {
+        *buffer.borrow_mut() = text;
+        buffer.borrow().as_ptr()
+    })
+}
+
+unsafe extern "C" fn svc_register(
+    _context: *mut c_void,
+    input_json: *const c_char,
+) -> *const c_char {
+    let input = match unsafe { CStr::from_ptr(input_json) }.to_str() {
+        Ok(input) => input,
+        Err(_) => return reply(r#"{"ok":false,"error":"非 UTF-8"}"#),
+    };
+    let value: serde_json::Value = match serde_json::from_str(input) {
+        Ok(value) => value,
+        Err(_) => return reply(r#"{"ok":false,"error":"不是合法 JSON"}"#),
+    };
+    let Some(name) = value.get("name").and_then(|value| value.as_str()) else {
+        return reply(r#"{"ok":false,"error":"缺 name"}"#);
+    };
+    if name.is_empty() {
+        return reply(r#"{"ok":false,"error":"name 为空"}"#);
+    }
+    // …把 name / description 放进自己的注册表…
+    reply(r#"{"ok":true}"#)
+}
+
+/// `list` 方法：把自己的注册表序列化成 JSON 数组。
+unsafe extern "C" fn svc_list(
+    _context: *mut c_void,
+    _input_json: *const c_char,
+) -> *const c_char {
+    // 实际实现里读注册表、`serde_json::to_string` 之后交给 `reply`。
+    reply("[]")
+}
+```
+
+方法跑在**调用方线程**上。消费方若在命令回调（接收循环线程）里调它，这里就不能做慢事——
+否则整个宿主一起卡住。要慢慢做的活，在方法里排个队、立刻返回。
+
+⚠️ `ServiceMethodFn` 是 `extern "C"`，**方法里不能有 panic**：逃出这个边界的 panic 会直接
+abort 整个宿主，不是只挂你的插件。解析失败回 `{"ok":false,"error":"…"}`；确实可能 panic 的
+代码段自己 `catch_unwind`。
+
+### 2. 打包 VTable 与它引用的缓冲 [#2-打包-vtable-与它引用的缓冲]
+
+`ServiceVTable` 里全是裸指针：`name` 指向服务名，`methods` 指向方法数组，每个方法项又指向
+自己的名字。这些缓冲必须和 VTable **活一样久**，所以打包进同一个结构体，一起放进 `Box`：
+
+```rust
+use std::ffi::CString;
+use fuyubot_abi::{ServiceMethod, ServiceVTable};
+
+struct HelpService {
+    vtable: ServiceVTable,
+    // 代码里不读这两个字段，但 vtable 的裸指针指向它们的堆缓冲：
+    // 必须和 vtable 同生共死，所以靠「持有」保活。
+    #[allow(dead_code)]
+    methods: Vec<ServiceMethod>,
+    #[allow(dead_code)]
+    names: Vec<CString>,
+}
+
+fn build_service() -> Box<HelpService> {
+    let names = vec![
+        CString::new("fuyubot.help.commands").unwrap(),
+        CString::new("register").unwrap(),
+        CString::new("list").unwrap(),
+    ];
+    let methods = vec![
+        ServiceMethod { name: names[1].as_ptr(), func: Some(svc_register) },
+        ServiceMethod { name: names[2].as_ptr(), func: Some(svc_list) },
+    ];
+    let vtable = ServiceVTable {
+        name: names[0].as_ptr(),
+        version: 1,
+        size: core::mem::size_of::<ServiceVTable>() as u32,
+        context: core::ptr::null_mut(),
+        methods: methods.as_ptr(),
+        method_count: methods.len(),
+    };
+    Box::new(HelpService { vtable, methods, names })
+}
+```
+
+这里有几个容易写错的点：
+
+- `Vec` 的**堆缓冲**在结构体移动时不会跟着搬，所以 `Box::new` 之后 `names[i].as_ptr()` /
+  `methods.as_ptr()` 仍然有效。**别在注册之后再 `push`**——重新分配会让宿主手里的指针悬空。
+- `version` 是提供方自己的协议版本，宿主**不校验**；它只用于调用方自己判断。
+- `context` 会原样传给每个方法。需要实例状态就把 `self` 指针放这里；`/help` 用的是进程级
+  `static` 注册表，所以留空。
+
+### 3. `start()` 注册，`stop()` 放下 [#3-start-注册stop-放下]
+
+```rust
+impl Plugin for HelpPlugin {
+    fn start(&mut self, _config_json: &str) -> Result<(), String> {
+        let service = build_service();
+        let handle = self
+            .host
+            .provide_service_shared("fuyubot.help.commands", &service.vtable);
+        if !handle.is_valid() {
+            self.host.log(
+                LogLevel::Error,
+                "注册 fuyubot.help.commands 失败（同名服务已存在？）",
+            );
+        }
+        // 持有到 stop：vtable 里的指针全都指向它。
+        self.service = Some(service);
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        // 放下即释放；宿主随后按 owner 整批回滚服务注册（顺序是 stop → rollback）。
+        self.service = None;
+    }
+}
+```
+
+<Callout type="warn">
+  **跨插件共享必须用 `provide_service_shared`。** `provide_service` 写的是调用者自己的
+  子作用域，兄弟插件沿父链往上看不到它；两个插件各注册一份同名私有服务也不会冲突，
+  但也就谈不上联动。`_shared` 写进程级的根表，同名会和别人撞——所以它必须显眼。
+</Callout>
+
+<Callout type="info">
+  `ServiceHandle` **不是** RAII：它没有 `Drop`，丢在一边不会注销。正常也不需要手动注销——
+  插件卸载时宿主按 owner 回滚它注册的一切，共享服务也一样（写在根表也记得 owner）。
+  这里的 `Option<Box<HelpService>>` 只是为了**保活 VTable**，不是为了「用句柄控制注册」。
+</Callout>
+
+### 4. 提供方也要能单独活 [#4-提供方也要能单独活]
+
+`/help` 的静态基线 `BUILTIN_COMMANDS` 始终包含 `start` / `help` / `plugins` 三个命令；
+动态注册表只是叠加，渲染时按名字去重。所以：
+
+- 没有消费方登记命令，`/help` 仍然列得出内置三件套；
+- 消费方没起来，只是少几条动态说明，不会让 `/help` 整个失效。
+
+这是可选联动的通用做法：**提供方给自己留一份能独立工作的兜底**，别把「有人来调我」
+当成自己启动的前提。
+
+## 消费方：按名字调用 + 软依赖 [#消费方按名字调用--软依赖]
+
+`fuyubot.start` 的接线只有两段：`start()` 里调服务，`soft_inject()` 里声明排队偏好。
+
+```rust
+impl Plugin for StartPlugin {    fn start(&mut self, _config_json: &str) -> Result<(), String> {
+        // …订阅 /start…
+
+        // 经共享服务把自己的命令登记进 /help。
+        // 失败也不影响 /start 本身：/help 有静态兜底，这里只是少一条动态登记。
+        match self.host.call_service(
+            "fuyubot.help.commands",
+            "register",
+            r#"{"name":"start","description":"开始使用"}"#,
+        ) {
+            Ok(reply) => self
+                .host
+                .log(LogLevel::Info, &format!("start 已向 /help 登记命令：{reply}")),
+            Err(error) => self.host.log(
+                LogLevel::Warn,
+                &format!("start 登记命令到 /help 失败（继续跑）：{error}"),
+            ),
+        }
+
+        Ok(())
+    }
+
+    fn soft_inject() -> Vec<String> {
+        vec!["fuyubot.help.commands".to_owned()]
+    }
+}
+```
+
+`call_service` 是普通安全函数，返回 `Result<String, AbiError>`：
+
+- 服务不存在 / 方法不存在 / 方法指针是 `None` → `Err`；
+- 方法返回 `NULL` → `Ok(String::new())`（「成功但没输出」）；
+- 方法返回字符串 → 立刻拷成 `String`，调用方拿到的是自己的一份，可以随便留着。
+
+⚠️ 目前错误类型不细分「服务不存在」和「没有这个方法」，都是 `AbiError::BadString`。
+所以日志里要把服务名、方法名一起打出来，否则排查时只看得到一句「失败了」。
+
+### `soft_inject` 做了什么、没做什么 [#soft_inject-做了什么没做什么]
+
+宿主在 `plugin_init` **之前**读 `plugin_manifest` 里的依赖列表（`define_plugin!` 会把
+`Plugin::soft_inject()` 写进去）。同步阶段分两轮：
+
+1. 先激活「硬依赖齐 **且** 软依赖也齐」的插件；
+2. 再激活「只有硬依赖齐」的插件。
+
+所以同一批加载时，只要 help 能正常起来，它一定先于 `/start` 和 `/plugins` 激活——
+不管文件名的字典序怎样。
+
+但它**不是**「提供方一定在」的保证：
+
+- 如果 help 自己卡在硬依赖上（停在 `Pending`），消费方的软依赖就不算齐，第二轮照样会激活
+  消费方。这时 `call_service` 会失败。
+- 如果 help 的 `start()` 报错（`Failed`），软依赖同样不阻塞消费方。
+- 运行期中提供方被卸载，消费方仍然处于 `Active`、不会重新跑 `start()`；之后的每次调用
+  都要自己处理错误。
+
+一句话：**软依赖管排队，不管可用性**。所以上面的 `match` 分支不是客套，是必须的。
+
+### 软依赖写服务名还是插件名？ [#软依赖写服务名还是插件名]
+
+`inject` / `soft_inject` 里的名字，宿主认两种：
+
+| 写法 | 宿主查什么 | 什么时候用 |
+| --- | --- | --- |
+| 服务名（`"fuyubot.help.commands"`） | 根作用域的 `Context` 里有没有这个名字 | 推荐。换一个插件提供同名服务，排序仍然成立 |
+| 插件名（`"fuyubot.help"`） | 有没有同名插件处于 `Active` | 只关心「那个插件」而不是「那个能力」时 |
+
+⚠️ 软依赖写**私有**服务名是排不上序的：兄弟插件看不到它，管理器在根作用域里也查不到。
+跨插件的能力一律走 `provide_service_shared`，依赖也写同一个服务名。
+
+### 软还是硬？ [#软还是硬]
+
+| 场景 | 选择 |
+| --- | --- |
+| 没有 `/help` 也要能跑，只是少一条登记 | `soft_inject` + 运行期降级 |
+| 没有数据库 / 鉴权就完全没意义，宁可别启动 | `inject`（硬依赖） |
+| 只要求「它先起来」，不直接调它的服务 | `soft_inject` 写插件名 |
+| 能力名稳定、可能有替代提供者 | `soft_inject` 写服务名 |
+
+硬依赖的语义是**准入**：缺了就不激活，停在 `Pending` 等；如果提供它的插件已经 `Failed`，
+依赖方会被级联标成 `Failed`，而不是永远假装在等。但它也不传值——到了 `start()` 里，
+你仍然要自己 `get_service` / `call_service`。
+
+依赖声明不要写进配置：manifest 是权威来源，`define_plugin!` 从 trait 自动生成。
+只有没有 `plugin_manifest` 的 v3 老插件，宿主才回退到 `[plugin.<名字>].inject` /
+`.soft_inject`（manifest 该侧非空时**覆盖**配置，不是合并）。见[插件总览](./index.mdx#声明依赖inject-与-soft_inject)。
+
+## 生命周期与所有权 [#生命周期与所有权]
+
+| 事 | 规则 |
+| --- | --- |
+| 什么时候注册 | `start()`。`init()` 阶段插件还没被准入，别在那时对外暴露能力 |
+| 注册进宿主的是什么 | 裸指针，**不复制**。VTable 和它引用的字符串 / 方法数组必须一直活着 |
+| 什么时候释放 | `plugin_stop` 先跑，然后宿主 `rollback_owner` 撤销注册。`stop()` 里放下 `Box` 即可 |
+| 同名冲突 | `provide_service_shared` 返回无效句柄，宿主只打一条 `warn`；调用方必须检查 `is_valid()` |
+| 方法返回值 | 提供方持有，宿主当场拷走；不要跨调用保存那个指针 |
+| `get_service` 的指针 | 同样是借的。别长期缓存——提供方一旦卸载，指针就悬空 |
+| 方法在哪跑 | 调用方线程，同步执行。命令回调里调服务 = 在接收循环线程上跑，不能阻塞 |
+| 输入可信吗 | 共享服务任何插件都能调。方法里自己校验 JSON、限制大小、别信 `context` 之外的东西 |
+
+## 其它语言 [#其它语言]
+
+| 语言 | 提供方 | 消费方 |
+| --- | --- | --- |
+| Rust | `provide_service` / `provide_service_shared` | `call_service`，或 `get_service` + 自己扫方法表 |
+| C / C++ | VTable 里第 9 / 20 项 | `get_service` + 按 `method_count` 扫 `methods[i]` |
+| Go | 同上（c-shared 不能卸载，见 ABI 页） | 同上 |
+| Python / JS / TS | 薄 SDK 目前只暴露调用侧 | `call_service` / `callService`，见[脚本插件](./scripts.mdx) |
+
+C 侧的字段布局与调用示例见 [插件 ABI](./abi.mdx#服务的形状servicevtable) 和
+[原生插件](./native.mdx)；脚本侧的同步封装见 [Python](./python.mdx) / [JS / TS](./js-ts.mdx)。
+
+## 排查 [#排查]
+
+- `/help` 里少了一条命令：先看 `start` / `manage` 的日志有没有
+  `… 已向 /help 注册命令：{"ok":true}`；失败那条会带 `call_service` 的错误。
+- 服务注册失败：宿主日志里有一行 `注册共享服务 … 失败: 命名服务 … 已经注册过了`
+  （或「收到了空 vtable」）。
+- 谁在跑、谁在等：`/plugins` 走宿主预置的 `fuyubot.host.plugins` 服务，会列出
+  `active` / `pending`（带 `missing`）/ `failed`（带 `reason`）；`fuyubot status` 读的是
+  实例发布的同一份快照（摘要 + pending / failed 明细）。
+- 依赖声明从哪来：`plugin_manifest`。激活时日志里那行
+  `激活 <名字> v<版本>（硬依赖 N、软依赖 M）` 就是宿主实际读到的数量；`status` 里的
+  `pending` / `missing` 也是按它算的。别只改配置——manifest 非空时配置那份会被覆盖。
+
+## 一页检查清单 [#一页检查清单]
+
+- [ ] 提供方用 `provide_service_shared`，方法名和 JSON 协议写进文档。
+- [ ] VTable、方法数组、名字缓冲装在同一个 `Box` 里，注册后不再扩容。
+- [ ] 检查 `ServiceHandle::is_valid()`；`stop()` 里放下持有物，不手动 free 宿主的东西。
+- [ ] 消费方对 `call_service` 的失败有降级分支，不 `unwrap`。
+- [ ] 可选联动用 `soft_inject`，并接受「提供方可能不在」；缺了就活不了才用 `inject`。
+- [ ] 方法里不做慢活、不阻塞调用方线程；也不让 panic 逃出 `extern "C"` 边界。
 
 
 # C 与 C++ 插件 (/docs/plugin/native)
@@ -5057,6 +5521,12 @@ Media::video("/tmp/a.mp4")
 `command_of(update)` 从一条 `updateNewMessage` 里认出命令（只认文本消息，**跳过自己发的**）；
 `on_command(host, handler)` 一次性订阅，`CommandSubscription` **drop 即退订**——把它存进插件状态。
 
+**点名给别人的命令不会送到 `handler`。** Telegram 的约定是：裸命令（`/start`）所有 bot 都响应，
+带 `@` 的只有被点名的那一方响应。`on_command` 按这条规则过滤，所以插件里不用自己再判断 `@`：
+`/start@别的Bot` 根本到不了你手上。判据来自宿主预置的 `fuyubot.host.identity` 服务：登录时由
+`getMe` 写入，之后每条 `updateUser` 都跟着刷新，所以改用户名之后不会按旧名字判断。
+遇到点名命令时**现问一次**（纯内存读，不是 TDLib 请求，不会卡接收循环）。
+
 <TypeTable
   type={{
     chat_id: { description: '命令所在的会话。', type: 'i64' },
@@ -5066,6 +5536,10 @@ Media::video("/tmp/a.mp4")
       type: 'String',
     },
     args: { description: '/cmd 后面那一段（去首尾空白，可能为空）。', type: 'String' },
+    addressed_to: {
+      description: '@ 后面那个名字（原样保留大小写，比较时不分）。裸命令是 None。经 on_command 拿到时它要么是 None、要么就是你自己。',
+      type: 'Option<String>',
+    },
     text: { description: '整条消息原文。', type: 'String' },
   }}
 />
@@ -5077,6 +5551,16 @@ let _guard = on_command(host, |command| {
     }
 });
 ```
+
+<Callout type="info">
+  要看「点名给别人的」那种消息，就别走 `on_command`——自己订阅原始更新
+  `host.on("updateNewMessage", None, …)`，再配 `command_of` 解析。判定规则本身也是公开的：
+  `command.addressed_to`（`@` 后面的名字）、`command.is_addressed_to("FuyuBot")`、
+  `command.is_for(&usernames)`；`my_usernames(&host)` 就是问宿主「我是谁」。
+
+  **没登录 / `--no-tdlib` / `--replay` 时身份未知**，这时 `on_command` 不过滤——分不清
+  「点名的是别人」还是「我还不知道自己是谁」，宁可多回一句也不吞命令。
+</Callout>
 
 ## 8. 等待与订阅 [#8-等待与订阅]
 
@@ -5349,7 +5833,7 @@ if self.connection.as_ref().is_some_and(|c| c.is_ready()) { /* … */ }
 | `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
 | `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(..)` | 响应 → `formattedText`；拿不到退回纯文本 |
 | `plain_text(&Text)` | 纯文本 → `formattedText`（不花往返），也是默认渲染器 |
-| `command_of(&Value)` / `on_command(host, handler)` | 见[第 7 节](#7-命令与输入) |
+| `command_of(&Value)` / `on_command(host, handler)` / `my_usernames(&host)` | 见[第 7 节](#7-命令与输入) |
 
 ## 16. 参数名为什么是这几个 [#16-参数名为什么是这几个]
 
@@ -6062,6 +6546,9 @@ cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 
 `fuyubot run` 读 `fuyubot.toml`，**所有键都有默认值**。缺这个文件时 `run` 会按模板自动生成一份（等价于先跑一次 `fuyubot init`）——`--replay` 是例外，它不会为了回放在你的目录里留配置。
 
+> `run --tui` 的**配置页**可以直接改核心项：`↑↓` 选中、`Enter` / `e` 编辑，写回时保留注释与 CRLF。
+> 运行中改完需重启实例；`api_hash`、Bot Token / 手机号 / 密码和 `[plugin.*]` 段只读。
+
 一个项目目录长这样：
 
 ```text
@@ -6084,7 +6571,7 @@ demo/
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
 | `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
-| `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错** |
+| `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错**。运行中也可以在 `run --tui` 的日志页按 `Tab` 聚焦工作区后按 `l` 临时调整（只对本次运行生效） |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
 | `[plugin.<插件名>]` | 无 | 插件自己的配置段（见下） |
@@ -6147,6 +6634,7 @@ log_verbosity = 1
 ## 几条约定 [#几条约定]
 
 - **相对路径相对配置文件所在目录**（也就是项目根）：`plugins`、`data`、日志目录都按它解析。
+  插件也吃这一条：`fuyubot run` 在加载插件之前会把**进程工作目录切到项目根**，所以插件配置里的相对路径（如 `cache` / `Cache`）和插件起的子进程，都落在 `fuyubot.toml` 旁边，而不是「你在哪个目录敲的命令」。
 - **自动 init 只认默认文件名**：缺 `fuyubot.toml` 时 `run` 会生成一份；但用 `--config 别的名字` 时不会凭空造，直接报错。
 - `status` / `stop` **不替你造配置**：找不到 `fuyubot.toml` 就报「先 `fuyubot init` 建一个」——面对的是已经存在的实例，凭空建一个只会更迷惑。
 - `--plugin-dir` 覆盖 `[plugins].dir`，`--config` 换配置文件本身。
@@ -6442,16 +6930,17 @@ fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
 
 ## 一个目录一个实例 [#一个目录一个实例]
 
-实例状态放在 `<项目根>/.fuyubot/` 下的三个文件里，**三件事各占一个文件**：
+实例状态与运行期控制放在 `<项目根>/.fuyubot/` 下，**每件事各占一个文件**：
 
 | 文件 | 作用 |
 | --- | --- |
 | `.fuyubot/lock` | **只用来独占**（`try_lock`，进程死即释放）。里面不存内容——Windows 的文件锁是强制的，别的进程读不到被锁的字节 |
-| `.fuyubot/status` | `key=value`：pid / started / version / plugins / name。**启动完成之后**才发布（拿上锁只说明进程活着） |
+| `.fuyubot/status` | `key=value`：pid / started / version / log_level / plugins / name。**启动完成之后**才发布（拿上锁只说明进程活着） |
 | `.fuyubot/stop` | 停止请求，内容是 PID。`fuyubot stop` 先写它，让实例自己收摊 |
+| `.fuyubot/log-level` | **可选的运行期控制**：面板在日志页按 `l` 写它，实例每 500ms 读一次并切换插件日志级别；新实例拿锁时清掉，不会带到下一轮 |
 
 - 第二次 `run`（前台后台都算）会被拒，报错里带上在跑的那个 PID。
-- 陈旧的 `lock` **不用手工清理**：拿锁时会顺手删掉上一个实例的 `status` / `stop`。
+- 陈旧的 `lock` **不用手工清理**：拿锁时会顺手删掉上一个实例的 `status` / `stop` / `log-level`。
 - `--replay` **不占锁、不发布状态**：离线开发路径不该和跑着的实例互斥。
 
 ## 前台运行 [#前台运行]
@@ -6470,6 +6959,7 @@ fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
 | `--no-login` | 只起框架、不走登录流程（CI / 容器；已有 session 仍会被 TDLib 打开） |
 | `--no-tdlib` | 不接 TDLib，只加载插件 |
 | `--background` | 放到后台跑 |
+| `--tui`（短写 `-t`） | 打开终端操作面板（见下节）；与 `--background` / `--replay` 互斥 |
 | `--replay <JSON>` / `--replay-wait <MS>` | 见 [离线回放](./replay.mdx) |
 
 凭据来源（按序）：`TG_API_ID` / `TG_API_HASH` → 配置里已保存的 `[telegram].api_id` / `.api_hash` → 交互式提问。**交互问出来的会被写回配置文件**，下次冷启动不用再输（这两个值每次都要随 `setTdlibParameters` 发出去，session 有效也一样）。Bot Token 仍只认 `TG_BOT_TOKEN` 或交互输入、不落盘，详见 [环境变量](./env.mdx)。
@@ -6485,13 +6975,81 @@ fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
 `fuyubot status` 看状态，`fuyubot stop` 停掉它
 ```
 
-它派生一个没有终端的自己，stdout/stderr 追加进 `<目录>logs\fuyubot.log`；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
+它派生一个没有终端的自己，stdout/stderr 写进 `<目录>logs\fuyubot.log`（每次新启动先清空旧日志）；父进程等子进程**真起来**（`.fuyubot/status` 发布）才返回。
 
 <Callout type="warn">
   后台跑**没有 stdin**。要交互式登录的场合（还没有 session、也没给 `TG_BOT_TOKEN`）会直接失败，并把日志尾巴打出来指路——先用前台 `run` 或 `fuyubot login` 登一次，session 会落在 `data/`。首次连 `api_id` / `api_hash` 也问不了：先在前台跑一次让它写回配置，或设好 `TG_API_ID` / `TG_API_HASH`。
 </Callout>
 
 想单独把登录走完而不起框架，用 [`fuyubot login`](../cli/fuyubot.mdx#login)；要退出登录（清掉本地会话）用 `fuyubot logout`。
+
+## 操作面板（`--tui`） [#操作面板--tui]
+
+```powershell
+.\fuyubot.exe run --tui --config demo\fuyubot.toml
+```
+
+打开的是**操作面板**，不是前台 bot：顶部版本栏（`[fuyubot - v…]`；实例运行中才显示状态，
+没跑时只显示刷新时间）、左侧导航、中央工作区、底部两行（当前可用操作 / 资源占用）。
+顶部和底部不铺背景色，当前焦点靠窗口边框高亮 + 底栏的 `[导航]` / `[工作区]` 标记。
+
+底部资源行：`CPU · 内存 · 运行时长 · 插件数 · 日志级别 · PID`，采的是**运行中实例的 PID**
+（`sysinfo`）。实例没跑时 CPU / 内存 / 运行 / PID 显示 `—`、插件数为 0，日志级别显示
+面板下次启动会用哪一档；第一个采样点的 CPU 是 `0.0%`，下一秒才有真实值。
+
+| 按键 | 作用 |
+| --- | --- |
+| `Tab` / `Shift+Tab` | 切换焦点：导航 ↔ 工作区（边框高亮） |
+| `Enter` / `Esc` | 导航 → 工作区 / 工作区 → 导航（在导航上按 `Esc` 才退出） |
+| `↑` / `↓`、`j` / `k` | 导航焦点：切页；工作区焦点：滚动日志 / 选择配置项 / 移动日志选择 |
+| `←` / `→` | 切换顶部标签页（窄屏横向导航；工作区焦点也生效） |
+| `h` / `l` | 导航焦点：上一页 / 下一页 |
+| `1`–`5` | 直接跳到概览 / 插件 / 日志 / 配置 / 帮助 |
+| `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同） |
+| `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
+| `s` | 启动 bot（派生 `run --background`，带上面板拿到的 `--api-id` / `--log-level` 等参数） |
+| `x` → `y` | 停止 bot（`y` 是确认；`.fuyubot/stop` 走插件的 `plugin_stop`） |
+| `r` | 立刻刷新状态 / 插件 / 日志 / 配置 |
+| `l` | 日志页 + 工作区焦点：调整运行中实例的日志级别（下一圈生效） |
+| `F` | 日志页 + 工作区焦点：按级别 / 来源过滤日志 |
+| `c` | 日志页 + 工作区焦点：清空当前日志文件（要确认） |
+| `f` | 日志页 + 工作区焦点：跟随末尾开关 |
+| `PgUp` / `PgDn`、`Home` / `End` | 工作区焦点：日志 / 帮助翻页、首尾；配置页选择翻页、首尾 |
+| `q`、`Ctrl+C` | 退出面板（不会停掉已启动的实例） |
+
+面板**不占实例锁、不加载插件、不接 TDLib**——TDLib 的数据库同一时刻只能一个进程打开。
+它读 `.fuyubot/status`、配置、插件目录与 `logs/fuyubot.log`；启停都派生子进程，
+和手敲命令走同一条路，所以看到的就是真正在跑的那个实例。
+
+日志级别是**运行期**的：配置里的 `[plugins].log_level` 决定启动值，日志页按 `l` 选的值只对
+**本次运行**生效（写 `.fuyubot/log-level`，实例下一圈读并切换），重启后回到配置值。
+`fuyubot status`、面板的日志页与概览都会显示当前生效的级别。
+
+日志过滤（`F`）：级别是下限（`info+` = error / warn / info，排除 debug / trace），来源分
+**插件 / 宿主 / 管道 / 更新 / TDLib / 其他**。新日志格式按「插件行 / source 词」归类（旧四列
+也兼容）：`TDLib Update` 追踪归**更新**（级别 trace），TDLib C 库的 `[ N][t …]` 原样行归
+**TDLib**；认不出级别的启动提示按 info 对待。应用后底栏显示 `过滤 info+ · 全部` 与
+`x/y 行`，`c` 在弹框里一键重置。日志字段不按固定列补空格，长行按显示宽度折行
+（续行缩进两格）。
+
+TDLib Update 行只显示 `@type`（如 `updateNewMessage`），不铺整段 JSON。日志页按 `Enter`
+进入选择模式，`↑↓` 选行，`y` / `Enter` 复制：TDLib Update 复制**完整 JSON**，其它行复制整行；
+`Esc` 退出选择。
+
+后台实例每次新启动都会先清空 `logs/fuyubot.log`；日志页按 `c` 可手动清空当前日志
+（确认后清空并回到跟随末尾，运行中的实例继续写新行）。
+
+窄终端（手机 / Termux）会自动收缩：宽度 < 60 列时导航移到工作区上方，变成一行
+横向标签，用 `←` / `→`（工作区焦点也生效）或 `h` / `l`（导航焦点）切换；更窄时标签
+退化成单字。底栏窄屏只留 `CPU / 内存 / 级别`，不显示运行时长、插件数量和 PID；
+配置项窄屏改成「完整键 + 值」两行，帮助页可 `↑↓` / `PgUp` / `PgDn` 滚动；日志窄屏只留
+`HH:MM:SS`、插件名最后一段和级别。复制优先 `termux-clipboard-set`（`termux-api`），
+否则 OSC 52。
+
+配置页是**可编辑表格**：段 / 键 / 生效值 / 来源，`↑↓` 选中、`Enter` / `e` 编辑。
+文本、整数和枚举（`account_type` / `log_level`）先校验再写回；写回只替换那一行，
+保留注释、顺序和 CRLF。运行中保存的配置**重启后生效**；`api_hash`、Bot Token / 手机号 /
+密码和 `[plugin.*]` 段只读。配置读不出来时页面显示错误原文，改好按 `r` 重读。
 
 ## 看状态 [#看状态]
 
@@ -6505,11 +7063,15 @@ demo：运行中
   已运行     0 秒
   版本       0.1.0
   名字       mybot
+  日志级别   info
   插件       0 个
   日志       demo\logs\fuyubot.log
 ```
 
 `status` 只读 `.fuyubot/`，**不加载插件、不接 TDLib**。三种结果：运行中 / 陈旧（没人在跑，附上次的 pid 与启动时间）/ 没有运行中的实例。还有一种是「有实例在跑、但状态还没发布」，也就是卡在启动里。
+
+登录成功之后还会多一行「账户」（`名字 @用户名（id=…） [bot]`）：`getMe` 拿到就写进 status，
+之后 TDLib 用 `updateUser` 改名字 / 用户名时实例跟着刷新并重发——面板的概览页读的是同一份。
 
 ## 停掉 [#停掉]
 

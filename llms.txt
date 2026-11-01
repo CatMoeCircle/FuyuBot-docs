@@ -17,6 +17,7 @@
   - [Python 插件](/docs/plugin/python): 薄 SDK 全部方法的用法、事件怎么触发、可抄的例子
   - [JS 与 TypeScript 插件](/docs/plugin/js-ts): 薄 SDK 全部方法的用法、事件怎么触发、可抄的例子
   - [订阅与事件](/docs/plugin/events): on/off/emit、过滤器、双通道与归属
+  - [插件联动](/docs/plugin/linkage): 用共享服务互相调用、用软依赖排好启动顺序——以内置 /help 的命令注册为例
   - [调用 TDLib](/docs/plugin/tdlib): td_invoke、请求号与 response 通道、便捷封装
   - [Simplify 封装](/docs/plugin/simplify): fuyubot-simplify 的 API 参考：按功能范围分组的参数结构体、链式设置器与返回值
   - [外部仓库插件](/docs/plugin/external): 不进本体 workspace 的原生插件，怎么接依赖、怎么拿插件目录
