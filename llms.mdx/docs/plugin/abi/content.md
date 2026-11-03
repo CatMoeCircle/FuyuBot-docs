@@ -7,7 +7,7 @@
 ## 插件必须导出的符号 [#插件必须导出的符号]
 
 v3 的四个契约符号仍是必需/可选的底线；v4 另外导出三个**静态符号**，让
-`fuyubot-sdk check` 不 dlopen 也能看见插件是按哪个 ABI 编的（版本值仍只能运行时判定）。
+宿主与静态工具**不 dlopen** 也能看见插件是按哪个 ABI 编的（版本值仍只能运行时判定）。
 
 | 符号 | 类型 | 必须吗 | 说明 |
 | --- | --- | --- | --- |
@@ -179,8 +179,9 @@ Rust 侧有现成封装 `HostApi::call_service(name, method, input_json)`：
   后、下一次宿主函数调用之前有效（与 `list_tools` / `get_config` 同一套线程局部缓冲）。
 
 C / Go 侧没有封装，就手动做同一件事：`get_service` 拿表 → 按 `method_count` 扫
-`methods[i]` 比名字 → 调 `func(context, input_json)`。脚本插件（Python / JS）的
-`call_service` / `callService` 就是这条路径的薄封装，见[脚本插件 API](./python.mdx)。
+`methods[i]` 比名字 → 调 `func(context, input_json)`。脚本插件（Python / JS）目前
+**没有**服务调用接口——薄 SDK 只覆盖订阅 / 请求 / 日志 / 工具元数据，
+见[脚本插件](../script/index.mdx)。
 
 ### 宿主预置的服务 [#宿主预置的服务]
 
@@ -347,13 +348,13 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 | --- | --- | --- | --- |
 | C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 5` | 5 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
 | C++ | 同一份 `fuyubot_plugin.h` | 5 | 同上（导出符号放 `extern "C"`） |
-| Rust | `fuyubot_plugin_api::SDK_ABI_VERSION`、`COMPATIBLE_HOST_ABI_VERSIONS`、`is_compatible()` | 5 | `define_plugin!` 把它填进 `PluginHandle::abi_version` |
-| Python | **脚本不接触 ABI** | — | 由中间插件 `fuyubot_python_host` 承载（标准 ABI v5 cdylib），`abi_version` 它填 |
-| JS / TS | **脚本不接触 ABI** | — | 同上，由 `fuyubot_js_host` 承载 |
+| Rust | `fuyubot_abi::ABI_VERSION` | 5 | `define_plugin!` 把它填进 `PluginHandle::abi_version`，并导出一份 `fuyubot_abi_version` |
+| Python | **脚本不接触 ABI** | — | 由 `fuyubot.script` 承载（标准 ABI v5 cdylib），`abi_version` 它填 |
+| JS / TS | **脚本不接触 ABI** | — | 同上，同一个 `fuyubot.script` 插件 |
 
-脚本插件走的是薄 SDK（`fuyubot.py` / `fuyubot.ts`）→ 原生桥 → 中间插件这条路，
-**作者永远不碰 C ABI**；ABI 版本由承载它的那份 cdylib 声明。Python 与 JS 的中间插件
-是同一套机制的两份实现，「两门语言对 ABI 的理解」不可能漂移。
+脚本插件走的是薄 SDK（PyPI / npm 的 `fuyubot`）→ 原生桥 → `fuyubot.script` 这条路，
+**作者永远不碰 C ABI**；ABI 版本由承载它的那份 cdylib 声明。那是一个**独立仓库的插件**，
+不属于运行时本体，见[脚本插件](../script/index.mdx)。
 
 ## 回调为什么是 `C-unwind` [#回调为什么是-c-unwind]
 
@@ -369,6 +370,4 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
   新增一律追加在尾部；改动必须同时抬 `ABI_VERSION`。
 </Callout>
 
-```bash
-fuyubot-sdk abi-version   # 打印 3
-```
+宿主 ABI 版本是 `fuyubot_abi::ABI_VERSION`（当前 **5**）；插件编译时用它做校验，不用手抄。

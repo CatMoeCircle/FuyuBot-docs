@@ -6,6 +6,7 @@
 | --- | --- | --- | --- |
 | TDLib 动态库 `TDLib-<os>-<arch>` | `TDLib-v<版本>` | `build-tdlib.yml` + `.github/scripts/*.sh` | 构建期（`fuyubot-tdlib` 的 loader 表） |
 | fuyubot 本体 `fuyubot-<版本>-<OS>-<平台>.zip` | `v<版本>` | `release-bot.yml` | 终端用户下载、解压即跑 |
+| Android JNI 包 `fuyubot-<版本>-android-jni-<abi>.zip` | `v<版本>` | `release-bot.yml`（同一个 `build-android` job） | 应用作者拷进 `jniLibs/` |
 
 ## TDLib 资产（构建期契约） [#tdlib-资产构建期契约]
 
@@ -45,7 +46,7 @@ plugins/          # 内置插件：/start、/help、/plugins
 README.txt
 ```
 
-`fuyubot-sdk-<os>-<arch>.zip` 由 **SDK 仓库**（`FuyuBot-SDK` 的 `release-sdk.yml`）发布，
+脚本插件的 `fuyubot-script-<os>-<arch>.zip` 由 **FuyuBot-Script 仓库**单独发布，
 不混进运行时的包。
 
 平台集合与 `ASSETS` 表一致：Windows / Linux 各 x86_64 + aarch64，**macOS 只有 aarch64**。
@@ -56,6 +57,27 @@ README.txt
 三条契约：**资产名 `fuyubot-<版本>-<OS>-<平台>.zip`**、**zip 解压即本体**（无套层目录）、
 **`tdjson` 与可执行文件同级**（靠 loader 优先级 2「可执行文件所在目录」命中）。
 zip 只在 `publish`（Linux runner）里生成，Windows runner 的 bash 没有 `zip` 命令。
+
+### Android：JNI 包 [#androidjni-包]
+
+同一个 `build-android` job 里还会出一份**只有 `.so`** 的包（不是可执行文件、也不是 APK）：
+
+```text
+fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
+├─ libfuyubotjni.so      # System.loadLibrary("fuyubotjni")
+├─ libtdjson.so
+├─ plugins/*.so          # 可选内置插件
+├─ include/fuyubot_jni.h
+└─ README.txt
+```
+
+`abi` 用的是 **AGP 口径**（`arm64-v8a`），因为这两个 `.so` 要直接进 `jniLibs/<abi>/`；
+可执行文件那份包仍用 cargo 口径（`aarch64` / `x86_64`），两种包在 Release 页并排出现，
+下载说明里会写明哪个是「可执行文件」、哪个是「JNI 库」。组包与校验在
+`.github/scripts/package-fuyubot-jni.sh`：ELF 类型必须是共享库（`ET_DYN`）、ABI 机器码对得上、
+`PT_LOAD` 按 16 KB 页对齐、7 个导出符号齐全、`RegisterNatives` 的绑定类名在（方法名/签名由单测钉住）、
+`DT_NEEDED` 只允许 bionic 的那几个。
+用法见 [Android：JNI 运行时](./android.mdx)。
 
 <Callout type="warn">
   GitHub Actions 在本机验不了。改 workflow 的组包步骤时，把 `Package the runtime` 与

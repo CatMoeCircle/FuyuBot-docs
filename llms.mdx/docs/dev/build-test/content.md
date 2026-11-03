@@ -39,7 +39,7 @@ FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作�
 
 `.cargo/config.toml` 另有两个别名：`cargo bot`（= `fuyubot run`）、`cargo package-bot`
 （release 构建 `fuyubot` + 三个内置插件，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级）。
-**没有 `package-sdk`**：`fuyubot-sdk` 在 FuyuBot-SDK 仓库，那边用 `cargo build -p fuyubot-sdk-cli`。
+
 
 ## 两类测试 [#两类测试]
 

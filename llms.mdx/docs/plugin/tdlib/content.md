@@ -72,8 +72,8 @@
 
 ```rust
 // 发出去
-let request = host.invoke_value("getMe", json!({}))?;
-host.info(&format!("请求号 {}", request.id));
+let request = host.td_invoke_simplified("getMe", "{}")?;
+host.log(LogLevel::Info, &format!("请求号 {}", request.id));
 
 // 单独订阅这条响应（阻塞等也行：wait_for_update）
 let filter = json!({ "event_type": "response", "request_id": request.id });
@@ -107,21 +107,17 @@ sendMessage chat_id:int53 topic_id:MessageTopic reply_to:InputMessageReplyTo
 ```
 
 ```rust
-host.invoke_value("sendMessage", json!({
+host.td_invoke_simplified("sendMessage", &serde_json::json!({
     "chat_id": chat_id,
     "input_message_content": {
         "@type": "inputMessageText",
         "text": { "@type": "formattedText", "text": "你好", "entities": [] },
     },
-}))?;
+}).to_string())?;
 ```
 
-查方法名最快的办法是问 SDK（它读的是真 `td_api.tl`）：
-
-```bash
-fuyubot-sdk td-methods --filter sendMessage
-fuyubot-sdk td-method sendMessage
-```
+方法名与字段名以 `td_api.tl` 为准：在运行时仓库里搜 `sendMessage`，或者看
+[`td_api.tl`](https://core.telegram.org/tdlib/docs/td_api.html)。
 
 ## 便捷封装：`fuyubot-simplify` [#便捷封装fuyubot-simplify]
 
@@ -207,13 +203,17 @@ simplify.send_message(chat_id, &SendMessageParams::media(photo))?;
 
 ## Python / JS [#python--js]
 
-脚本里的 `invoke` 有第三参数 `on_response`，按 `request_id` 自动配对，脚本不用自己记请求号：
+脚本里的 `invoke` 有第三个参数 `onResponse`（Python 是 `on_response`），响应按请求号
+自动配对，脚本不用自己记。细节在脚本板块：[Python](../script/python.mdx) /
+[JS 与 TypeScript](../script/js-ts.mdx)。
 
 ```python
-def on_sent(payload):
-    host.log("发出去了：" + str(payload.get("request_id")))
+from fuyubot import invoke, log
 
-host.invoke("sendMessage", {
+def on_sent(payload):
+    log("发出去了：" + str(payload.get("@type")))
+
+invoke("sendMessage", {
     "chat_id": chat_id,
     "input_message_content": {
         "@type": "inputMessageText",

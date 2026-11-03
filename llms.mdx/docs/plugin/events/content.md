@@ -116,31 +116,31 @@
 要让别的插件收到你的事件，**让对方订阅全局事件**，不要指望你的 `emit` 是一次广播。
 
 <Callout type="warn">
-  订阅句柄必须活着。Rust 侧 `HostExt::subscribe_json` 返回的是 `#[must_use]` 的
-  `Subscription`，**drop 就是退订**；`let _ = …` 会立刻退订。插件卸载时宿主还会整批回滚，
-  但那已经是另一回事了。
+  订阅句柄不会自动退订。`HostApi::on` 返回的是 `SubscriptionHandle`（一个 `u64`），
+  drop 它什么也不会发生；要提前退订就自己留住句柄并调 `host.off(handle)`。
+  插件卸载时宿主会整批回滚。
 </Callout>
 
 ## Rust [#rust]
 
 ```rust
-use fuyubot_plugin_api::{HostApi, HostExt, Subscription};
+use fuyubot_abi::HostApi;
 use serde_json::json;
 
 struct MyPlugin {
     host: HostApi,
-    _all: Option<Subscription>,
-    _mine: Option<Subscription>,
+    all: fuyubot_abi::SubscriptionHandle,
+    mine: fuyubot_abi::SubscriptionHandle,
 }
 
 fn start(&mut self, _config_json: &str) -> Result<(), String> {
     // 兜底通道 + 无条件
-    self._all = self.host.subscribe_json("update", None, on_any, std::ptr::null_mut());
+    self.all = self.host.on("update", None, on_any, std::ptr::null_mut());
 
     // 具体 @type + 字段过滤
-    let filter = json!({ "message.chat_id": -1001234567890 });
-    self._mine = self.host.subscribe_json(
-        "updateNewMessage", Some(filter), on_mine, std::ptr::null_mut(),
+    let filter = json!({ "message.chat_id": -1001234567890 }).to_string();
+    self.mine = self.host.on(
+        "updateNewMessage", Some(&filter), on_mine, std::ptr::null_mut(),
     );
     Ok(())
 }
@@ -151,33 +151,13 @@ fn emit_job_done(&self) {
 }
 ```
 
-回调用 `extern "C-unwind" fn(user_data, payload) -> i32`，返回 `0` 表示成功；`payload` 是宿主临时的
-NUL 结尾字符串，要留就当场拷走（`parse_payload` 已经替你解析成 `serde_json::Value`）。
+回调用 `extern "C-unwind" fn(user_data, payload: *const c_char) -> i32`，返回 `0` 表示成功；
+`payload` 是宿主临时的 NUL 结尾字符串，要留就当场拷走（`serde_json::from_str` 解析）。
 
-## Python / JS（薄 SDK） [#python--js薄-sdk]
+## 脚本插件 [#脚本插件]
 
-```python
-from fuyubot import on, emit, log
-
-on("updateNewMessage",
-   lambda p: log("有人说 /hello"),
-   {"message.content.text.text": "/hello"})
-
-emit("job_done", {"ok": True})   # 自己 + 全局订阅者收得到
-```
-
-```js
-import { on, emit, log } from "./fuyubot";
-
-on("updateNewMessage", (payload) => {
-  log("有人说 /hello");
-}, { "message.content.text.text": "/hello" });
-
-emit("job_done", { ok: true });
-```
-
-脚本侧的订阅**没有退订接口**——注册后一直有效，随插件停止一起撤。
-方法的逐个说明见 [Python 插件](./python.mdx) / [JS 与 TS 插件](./js-ts.mdx)。
+脚本侧的事件模型与此完全相同（同样的通道、同样的点分过滤），只是入口换成了薄 SDK
+的 `on(event, handler, filter)`。那一套不在本板块：见[脚本插件](../script/index.mdx)。
 
 要按固定次数等一条更新（阻塞式），用 `wait_for_update`，见 [调用 TDLib](./tdlib.mdx)。
 要改流经管线的负载，用中间件，见 [工具与中间件](./tools.mdx)。

@@ -60,16 +60,17 @@ $env:TEMP = "$PWD\target\linktmp"; $env:TMP = $env:TEMP; New-Item -ItemType Dire
 
 | 现象 | 原因 / 怎么查 |
 | --- | --- |
-| `ABI 版本是 N，宿主是 M` | 插件与宿主的 ABI 不匹配：用同一份 SDK 重新编译，别拿旧产物硬跑 |
-| 缺 `plugin_init` / 根本不是动态库 | `fuyubot-sdk check <路径>` **静态**看导出符号；非零退出码 = 宿主一定拒绝加载 |
-| Node 报 `Cannot find module '...\counter.ts'` | 脚本同伴不在 cdylib 旁边。用 `plugin install` 装（会连 `.py` / `.js` / `.ts` / `.pyi` 一起拷），或把脚本和 dll 拷进同一目录 |
+| `ABI 版本是 N，宿主是 M` | 插件与宿主的 ABI 不匹配：用与宿主同版本的 `fuyubot-abi` 重新编译，别拿旧产物硬跑 |
+| 缺 `plugin_init` / 根本不是动态库 | `dumpbin /exports`（Windows）或 `nm -D`（Linux/macOS）**静态**看导出符号 |
+| 脚本插件没被加载 | 目录不在 `plugins/scripts/` 下，或缺 `[tool.fuyubot]` / `"fuyubot"` 身份段；见[脚本插件 › 排查](../script/index.mdx#排查) |
 | `.dll` 加载报找不到依赖 | 插件把兄弟 DLL 放自己旁边是支持的（加载器先查库所在目录），别把它挪走，也别只拷主 dll |
 
-脚本插件还有一条硬约定：`.py` / `.js` / `.ts` 必须和那个 cdylib **同目录**，宿主按「库旁边找脚本」的规则找它。
+脚本插件不和 dll 同目录：它住在 `plugins/scripts/<目录>/`，由 `fuyubot.script` 插件托管。
+上面那条「文件加载失败」只适用于原生插件。
 
 ## 回放以非零码中止 [#回放以非零码中止]
 
-多半是插件目录里有你不想要的东西：`--plugin-dir` 指向 `target/debug` 会混进所有示例产物，其中脚本插件的脚本不在旁边，加载失败就把回放整个拉停。把要验的插件装进一个干净目录即可。见 [离线回放](./replay.mdx)。
+多半是插件目录里有你不想要的东西：`--plugin-dir` 指向 `target/debug` 会把整仓示例产物一起加载，任何一个起不来都会让回放中止或输出混进「跳过 xxx」。把要验的插件装进一个干净目录即可。见 [离线回放](./replay.mdx)。
 
 ## 收不到更新 / 进程停不下来 [#收不到更新--进程停不下来]
 

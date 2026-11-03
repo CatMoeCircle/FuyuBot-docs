@@ -3,7 +3,7 @@
 `fuyubot run --replay` 把一批更新的 JSON 灌进整条管线后退出：**不接 TDLib、不用账号**，用来在任何机器上验插件。
 
 ```powershell
-.\fuyubot.exe run --replay examples\replay\new_message.json --plugin-dir <插件目录>
+.\fuyubot.exe run --replay examples/replay/new_message.json --plugin-dir <插件目录> --replay-wait 5000
 ```
 
 ```text
@@ -31,14 +31,15 @@ fuyubot（fuyubot 0.1.0）已启动：插件 1 个，工具 0 个
 
 ## 慢插件与脚本插件：`--replay-wait` [#慢插件与脚本插件--replay-wait]
 
-回放完不是立刻退出，而是等一个**安静窗口**再看结果（脚本插件的反应是异步的）。窗口的默认值按插件形态自动选：
+回放完不是立刻退出，而是等一个**安静窗口**再看结果。窗口的默认值按插件形态自动选：
 
 | 插件形态 | 默认窗口 |
 | --- | --- |
-| 有脚本（`.py` / `.js` / `.ts`） | 2000 ms |
-| 纯原生（Rust / C / C++） | 150 ms |
+| 有脚本（`plugins/scripts/` 下有目录，或插件包里 `kind` 是 `python` / `js`） | 2000 ms |
+| 纯原生（Rust / C / C++ / Go） | 150 ms |
 
-插件要发慢速网络请求就把它调大：
+脚本插件跑在子进程里：事件要经管道过去、反应再经管道回来，还可能捎带网络请求，
+窗口太短会把它们的日志与请求整批漏掉。插件要发慢速网络请求就把它调大：
 
 ```powershell
 .\fuyubot.exe run --replay examples\replay\new_message.json --plugin-dir <插件目录> --replay-wait 5000
@@ -46,15 +47,15 @@ fuyubot（fuyubot 0.1.0）已启动：插件 1 个，工具 0 个
 
 ## 插件目录别指 `target\debug` [#插件目录别指-targetdebug]
 
-`--plugin-dir` 要指向「只放你要验的插件」的目录。指 `target\debug` 会混进所有示例产物：其中 `counter.dll` 是**脚本插件**，脚本不在它旁边，于是 Node 报 `Cannot find module '...\counter.ts'`，并且**整个回放以非零码中止**。
+`--plugin-dir` 要指向「只放你要验的插件」的目录。指 `target\debug` 会把整仓的示例产物一起加载，
+任何一个起不来都会让输出混进一堆「跳过 xxx」。
 
-正确做法是 `plugin install` 到一个干净目录，或把 dll + 脚本一起拷进去：
+正确做法是先装到一个干净目录再回放：
 
 ```bash
-# examples/ 下的示例是 workspace 成员：产物落在仓库根的 target/，不在工程自己的 target/ 里
-cargo build -p fuyubot-example-counter
-mkdir demo-ts && cp target/debug/counter.dll examples/ts-counter/counter.ts examples/ts-counter/fuyubot_plugin.js demo-ts/
-fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
+cargo build -p fuyubot-plugin-demo
+fuyubot plugin install target/debug/fuyubot_plugin_demo.dll --plugin-dir demo-plugins
+fuyubot run --replay examples/replay/new_message.json --plugin-dir demo-plugins
 ```
 
 ## 与实例的关系 [#与实例的关系]
@@ -65,4 +66,4 @@ fuyubot run --replay examples/replay/counter.json --plugin-dir demo-ts
 
 - 回放**不接 TDLib**（无论有没有 `tdjson`）：这是硬约定，否则回放就要账号和网络。
 - 要看运行中的实例、后台跑、优雅停止，见 [运行与实例管理](./run.mdx)。
-- 回放里插件加载失败，多半是 ABI 版本或脚本同伴位置的问题，见 [常见问题](./troubleshooting.mdx)。
+- 回放里插件加载失败，多半是 ABI 版本或路径的问题，见 [常见问题](./troubleshooting.mdx)。

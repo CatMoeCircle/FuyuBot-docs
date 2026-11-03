@@ -1,12 +1,12 @@
 # Go 插件 (/docs/plugin/go)
 
 Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态库，宿主只要看到七个导出符号
-就认它。完整可跑的示例在 [`examples/go-ping`](https://github.com/CatMoeCircle/FuyuBot-SDK/tree/main/examples/go-ping)。
+就认它。Go 这条路线没有脚手架——照本页的结构自己搭，ABI 头文件从 `fuyubot-abi` 落盘
+（见 [C 与 C++ 插件](./native.mdx)）。
 
 <Callout type="info">
-  目前**没有** `fuyubot-sdk init --lang go` 模板——Go 这条路线是「自己搭工程」：
-  抄 `examples/go-ping`，或者照下面这两段写。C 头文件仍然用
-  `fuyubot-sdk codegen --lang c --dir <工程目录>` 生成，不要手抄。
+  Go 没有脚手架模板，也没有官方的 `go-ping` 示例——照下面这几段自己搭工程。
+  C 头文件仍然由 `fuyubot-abi` 生成，两门语言共用同一份，不要手抄。
 </Callout>
 
 ## 结构：Go 写逻辑，C 写壳 [#结构go-写逻辑c-写壳]
@@ -15,7 +15,7 @@ Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态�
 | --- | --- |
 | `main.go` | 逻辑：解析更新 JSON、拼 `sendMessage`、打日志 |
 | `plugin.c` | 四个 ABI 符号：`plugin_init` / `plugin_start` / `plugin_stop` / `plugin_free_string` |
-| `fuyubot_plugin.h` | 生成物（`codegen --lang c` 落的），**不提交** |
+| `fuyubot_plugin.h` | 生成物（由 `fuyubot-abi` 的 `PLUGIN_HEADER` 落盘），**不提交** |
 
 为什么不直接 `//export plugin_init`：`PluginHandle` 是**按值返回**的结构体，由 C 侧构造最稳；
 也避免把宿主 VTable 的函数指针搬进 Go。C 侧只做转发：
@@ -51,7 +51,7 @@ func go_on_update(_ unsafe.Pointer, payload *C.char) C.int {
 
 ## 常用 ABI 怎么调：在 `plugin.c` 里加桥 [#常用-abi-怎么调在-pluginc-里加桥]
 
-`examples/go-ping` 只带了两个桥（`fy_log` / `fy_invoke`）。要用别的 ABI 函数就照同样形状加——
+本页的 `plugin.c` 只带了两个桥（`fy_log` / `fy_invoke`）。要用别的 ABI 函数就照同样形状加——
 **每个桥一行转发**，Go 侧不碰函数指针：
 
 ```c
@@ -156,7 +156,7 @@ func getConfig(section, key string) string {
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> ⚠️ Go 没有 `fuyubot-sdk init --lang go` 模板（见页首），但可以直接调 VTable 上的
+> Go 没有脚手架（见页首），但可以直接调 VTable 上的
 > `simplify_invoke` / `simplify_invoke_result`（见下），或者照下面手写 `invoke(sendMessage, …)`。
 
 
@@ -211,16 +211,16 @@ func sendText(chatID int64, text string) int64 {
 }
 ```
 
-方法名拿不准就查：`fuyubot-sdk td-method sendMessage`。
+方法名与字段名以 `td_api.tl` 为准（见[调用 TDLib](./tdlib.mdx#方法名以-tdlib-为准)）。
 
 ## 编译 [#编译]
 
 cgo 需要 C 编译器：Linux / macOS 用 `cc`，Windows 用 mingw-w64（如
 [w64devkit](https://github.com/skeeto/w64devkit)）。
 
-```powershell
-fuyubot-sdk codegen --lang c --dir examples\go-ping   # 先落 ABI 头
+先把 `fuyubot_plugin.h` 落到工程里（见 [C 与 C++ 插件 › 头文件](./native.mdx)），然后：
 
+```powershell
 $env:CGO_ENABLED = "1"
 $env:CC = "gcc"                                       # Linux/macOS：cc
 go build -buildmode=c-shared -o ping.dll .             # Linux: ping.so / macOS: ping.dylib
@@ -248,7 +248,7 @@ access violation（`0xC0000005`）。
 ## 验证 [#验证]
 
 ```powershell
-fuyubot-sdk check ping.dll                                   # 静态读导出符号
+dumpbin /exports ping.dll | findstr plugin_                  # 静态看导出符号（Linux/macOS 用 nm -D）
 fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录>
 ```
 

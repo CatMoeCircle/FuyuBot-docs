@@ -58,9 +58,9 @@ flowchart LR
 
 ## 提供方：把能力做成服务 [#提供方把能力做成服务]
 
-下面代码用 `fuyubot-abi` 的类型写（三个内置插件就是这么写的）。外部 Rust 插件把
-`fuyubot_abi` 换成 `fuyubot_plugin_api` 即可：后者把 `ServiceVTable` / `ServiceMethod` /
-`Plugin` / `define_plugin!` 原样重导出，形状完全一样。
+下面代码用 `fuyubot-abi` 的类型写（三个内置插件就是这么写的）。外部 Rust 插件直接依赖
+crates.io 上的 `fuyubot-abi` 即可，拿到的是同一套 `ServiceVTable` / `ServiceMethod` /
+`Plugin` / `define_plugin!`。
 
 ### 1. 写方法 [#1-写方法]
 
@@ -334,10 +334,10 @@ impl Plugin for StartPlugin {    fn start(&mut self, _config_json: &str) -> Resu
 | Rust | `provide_service` / `provide_service_shared` | `call_service`，或 `get_service` + 自己扫方法表 |
 | C / C++ | VTable 里第 9 / 20 项 | `get_service` + 按 `method_count` 扫 `methods[i]` |
 | Go | 同上（c-shared 不能卸载，见 ABI 页） | 同上 |
-| Python / JS / TS | 薄 SDK 目前只暴露调用侧 | `call_service` / `callService`，见[脚本插件](./scripts.mdx) |
+| Python / JS / TS | 暂不支持 | 薄 SDK 还没暴露服务调用，见[脚本插件](../script/index.mdx) |
 
 C 侧的字段布局与调用示例见 [插件 ABI](./abi.mdx#服务的形状servicevtable) 和
-[原生插件](./native.mdx)；脚本侧的同步封装见 [Python](./python.mdx) / [JS / TS](./js-ts.mdx)。
+[原生插件](./native.mdx)。
 
 ## 排查 [#排查]
 

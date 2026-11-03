@@ -7,8 +7,10 @@
 - **`extern "C"` 边界逃出去的 panic 直接 abort**，宿主来不及 `catch_unwind`：插件与中间件回调必须是
   `unsafe extern "C-unwind"`，`define_plugin!` 自己也要包一层。
 - **一个 crate 只能展开一次 `define_plugin!`**：七个导出符号名是 ABI 定死的，展开两次必然重复定义。
-- **订阅句柄必须活着**：每轮循环里 `let _h = …` 就是每轮退订；`for` 里注册要把句柄收进循环外的 `Vec`。
-- **`Effect` / `Subscription` 是 `#[must_use]`**：`let _ =` 会立刻回滚；`drop` 就是注销。
+- **订阅不会自动退订**：`HostApi::on` 返回的 `SubscriptionHandle` 只是个 `u64`，`drop` 什么也不会发生。
+  循环里注册、事后想撤，必须自己把句柄收进 `Vec` 并调 `off`；插件卸载时宿主会整批回滚。
+- **`Effect` 是 `#[must_use]`**：`let _ =` 会立刻回滚；`drop` 就是注销。
+  （`fuyubot-simplify` 的 `CommandSubscription` 是另一回事——它是封装层的 RAII 守卫。）
 
 ## 事件语义 [#事件语义]
 

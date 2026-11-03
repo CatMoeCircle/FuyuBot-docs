@@ -1,19 +1,12 @@
 # 插件总览 (/docs/plugin)
 
-**插件有两种形态**，按需求选：
-
-| | 原生插件 | 脚本插件 |
-| --- | --- | --- |
-| 语言 | Rust / C / C++ | Python / JS / TS |
-| 形态 | 一个 cdylib（`.dll` / `.so` / `.dylib`） | 一个目录（manifest + 脚本 + 薄 SDK） |
-| 边界 | 与宿主同进程，C ABI 函数调用 | 一个脚本一个解释器子进程 |
-| 崩溃 | 拖垮宿主 | 只有子进程死，宿主记一条错 |
-| 要编译吗 | 要（用你自己的工具链） | 不要，装上就跑 |
-| 起步 | `fuyubot-sdk init demo --lang rust` | 看 [脚本插件](./scripts.mdx) |
+本板块只讲**原生插件**：一个 cdylib（`.dll` / `.so` / `.dylib`）就是一个插件，
+用 Rust / C / C++ / Go 写，直接和宿主同进程跑 C ABI。
 
 <Callout type="info">
-  **只想写脚本？** 看 [脚本插件](./scripts.mdx)：一个目录就是一个插件，
-  不编译、不碰 ABI，`fuyubot plugin install` 装上就跑。
+  **只想写脚本？** Python / JS / TS 不走这条路。脚本能力完全由独立的
+  `fuyubot.script` 插件提供，见[脚本插件](../script/index.mdx)：一个目录就是一个插件，
+  不编译、不碰 ABI，装上就跑。
 </Callout>
 
 ## 原生插件：七个导出符号 [#原生插件七个导出符号]
@@ -28,7 +21,7 @@
 | `plugin_stop` | 可选 | 卸载前调一次，回收自己的状态 |
 | `plugin_free_string` | **必须** | 释放**插件自己**分配的字符串（宿主从不 free 插件的指针） |
 | `plugin_manifest` | v4 可选 | 返回自描述 JSON（名字 / 版本 / `inject` / `soft_inject`）。宿主在 `plugin_init` **之前**读它来决定激活顺序 |
-| `fuyubot_abi_version` | v4 可选 | 静态返回编译期 `ABI_VERSION`，`fuyubot-sdk check` 靠它 |
+| `fuyubot_abi_version` | v4 可选 | 静态返回编译期 `ABI_VERSION`；静态检查工具不加载也能看到它 |
 | `plugin_free_handle` | v4 可选 | 只在 ABI 版本不匹配时被调——那一刻不能调 `plugin_stop`，只能用它把 `init` 分配的状态还回来 |
 
 契约细节（字段布局、内存所有权、版本协商、服务作用域）见 [ABI 契约](./abi.mdx)。
@@ -37,11 +30,13 @@
 
 ```bash
 fuyubot init --name mybot --api-id 12345   # 建项目：fuyubot.toml + plugins/
-fuyubot-sdk init demo --lang rust          # 生成 plugins/demo/（含 Cargo.toml）
-cd plugins/demo && cargo build --release   # 用**你自己的**工具链编译
-cd ../.. && fuyubot plugin install plugins/demo
+# 照 examples/fuyubot-plugin-demo 建一个 cdylib crate：crate-type = ["cdylib"] + fuyubot-abi
+cargo build --release                      # 用**你自己的**工具链编译
+fuyubot plugin install target/release/fuyubot_demo.dll
 fuyubot run                                # 加载插件目录里的所有 cdylib
 ```
+
+最小可跑的 Rust 插件全文见 [Rust 插件](./rust.mdx)；C / C++ / Go 见各自页面。
 
 - `fuyubot init` 重复执行会被挡住（不覆盖你改过的配置）；三个键都有默认值，最简可以只有 `[bot]`。
 - 插件名只允许字母、数字和 `.` `_` `-`（会拼进源码与 TOML）；目录名里的 `.` / `-` 换成 `_` 当 crate 名
@@ -49,11 +44,9 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 - **产物落在哪**：`plugin install <工程目录>` 按 `<工程>/target/{release,debug}` → 工程目录本身 →
   **沿父链最近的** `target/{release,debug}` 找产物（两边都有时取较新的）。插件若是**当前 workspace 的成员**，
   `cargo build -p <crate>` 默认把产物放在仓库根的 `target/`，靠最后一档照样能找到，不需要额外参数。
-- **SDK 走源码开发时**设 `FUYUBOT_SDK_PATH` 指向 FuyuBot-SDK 仓库的 `crates/`，生成的插件会写 `path = "…"`；
-  不设就写 crates.io 版本号。
 
 <Callout type="info">
-  `fuyubot` 管运行，`fuyubot-sdk` 管开发，**两个都不编译插件**：编译是作者自己语言工具链的事
+  `fuyubot` 不编译、也不打包插件：编译是作者自己语言工具链的事
   （`cargo build` / `cl /LD` / `gcc -shared`）。`fuyubot plugin install` 只**复制**已编好的产物。
 </Callout>
 
@@ -64,7 +57,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | 回调是 `extern "C-unwind"` | 用 `extern "C"` 的话，逃出去的 panic 直接 abort 整个进程，宿主来不及 `catch_unwind` |
 | 一个 crate 只展开一次 `define_plugin!` | 七个符号名是 ABI 定死的，展开两次就是重复定义 |
 | ABI 版本目前是 `5` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
-| 订阅句柄必须活着 | Rust 侧是 `#[must_use]` 的守卫，drop 就是退订 |
+| 订阅句柄要自己管 | `HostApi::on` 返回 `SubscriptionHandle`（`u64`），drop 不会退订；要退订就 `host.off(handle)` |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
 
@@ -142,8 +135,6 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
   <Card title="Rust 插件" href="/docs/plugin/rust/" />
   <Card title="C 与 C++ 插件" href="/docs/plugin/native/" />
   <Card title="Go 插件" href="/docs/plugin/go/" />
-  <Card title="Python 插件" href="/docs/plugin/python/" />
-  <Card title="JS 与 TypeScript 插件" href="/docs/plugin/js-ts/" />
 </Cards>
 
 ## 按能力看 [#按能力看]
@@ -164,7 +155,7 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 
 - 插件名只允许字母、数字和 `.` `_` `-`（它会拼进源码和 TOML）；目录名里的 `.` / `-` 换成 `_` 当 crate 名
   （`fuyubot.weather` → `fuyubot_weather`）。
-- **原生插件名只有 dlopen 之后才知道**：它来自 `plugin_init` 返回的 `PluginHandle`，所以
-  `fuyubot plugin list` 会真的加载一次再看名字。
-- **脚本插件的身份在 manifest 里**（Python 的 `[tool.fuyubot]` / JS 的 `"fuyubot"` 段），
-  目录名是装卸载的单位（`fuyubot plugin install|uninstall <目录>`），见 [脚本插件](./scripts.mdx)。
+- **原生插件名来自插件包根上的 `plugin.json`**（静态读，不加载）；没有清单的旧形态平铺 dll
+  只能按文件名认。`fuyubot plugin list` 两种都列。
+- 脚本插件的目录与身份是另一套（`plugins/scripts/<目录>/` + `[tool.fuyubot]` / `"fuyubot"` 段），
+  见[脚本插件](../script/index.mdx)。

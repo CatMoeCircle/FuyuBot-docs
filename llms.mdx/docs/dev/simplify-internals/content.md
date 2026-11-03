@@ -286,5 +286,5 @@ let user_data = (&raw mut *latest).cast::<c_void>();
   方法名 / 字段名**不要按 Telegram Bot API 的直觉写**。TDLib 里一切发送都是 `sendMessage`，
   媒体类型在 `input_message_content.@type` 里；话题是 `topic_id`（而且是 `MessageTopic`，
   论坛话题是 `messageTopicForum` **不是** `messageTopicThread`）、回复是 `reply_to`、
-  没有顶层 `caption`。要查就查真 `td_api.tl`（或 `fuyubot-sdk td-method <名字>`）。
+  没有顶层 `caption`。要查就查真 `td_api.tl`。
 </Callout>

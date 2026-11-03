@@ -121,10 +121,9 @@ let handle = host.register_tool(
 `list_tools()` 返回全部工具的元数据 JSON 数组。**宿主线程局部缓冲**：读完即弃，
 要留就当场拷走，**不要试图释放它**。
 
-脚本侧（`fuyubot_plugin.*` 内嵌桥）：Python `host.call_tool(name, input, on_response)`、
-JS `host.callTool(name, input, onResponse)` 现在都走同步结果，回调收到 `output`
-（失败是 `{"error": …}`）。脚本注册工具仍只有元数据（`registerTool` / `register_tool`），
-没有处理器指针——脚本进程不能把函数指针交回宿主。
+脚本侧：薄 SDK 只能 `register_tool` / `registerTool` **登记元数据**，没有处理器指针——
+脚本进程不能把函数指针交回宿主，所以工具调用不会回到脚本。调用别的插件的工具、读配置、
+调服务这些也还没在薄 SDK 里暴露，见[脚本插件](../script/index.mdx)。
 
 ## 中间件：六阶段洋葱 [#中间件六阶段洋葱]
 
@@ -177,14 +176,18 @@ PreUpdate → 解析 @type → PreRoute → InPlugin → 分发监听器 → Pos
 数值就是 ABI 里的 `stage` 参数，与 `fuyubot-middleware::Stage` 一一对应。
 
 ```rust
-use fuyubot_plugin_api::Stage;
+use fuyubot_abi::Stage;
 
 extern "C-unwind" fn drop_outgoing(
     _user: *mut std::ffi::c_void,
     _stage: u32,
     payload: *const std::ffi::c_char,
 ) -> i32 {
-    let update = unsafe { fuyubot_plugin_api::parse_payload(payload) };
+    // SAFETY: 宿主传的是临时 NUL 结尾字符串。
+    let text = unsafe { std::ffi::CStr::from_ptr(payload) }.to_string_lossy();
+    let Ok(update) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return 0;
+    };
     let outgoing = update
         .pointer("/message/is_outgoing")
         .and_then(|v| v.as_bool())
@@ -192,8 +195,8 @@ extern "C-unwind" fn drop_outgoing(
     if outgoing { 1 } else { 0 }   // 1 = 中断本阶段；0 = 继续往下走
 }
 
-// 返回的句柄必须活着：drop 即摘除
-let _mw = self.host.use_middleware(Stage::PreRoute, drop_outgoing, std::ptr::null_mut());
+// 句柄只是个 u64；中间件没有单独的注销接口，插件卸载时整批回滚
+let mw = self.host.use_middleware(Stage::PreRoute, drop_outgoing, std::ptr::null_mut());
 ```
 
 要点：
@@ -203,7 +206,7 @@ let _mw = self.host.use_middleware(Stage::PreRoute, drop_outgoing, std::ptr::nul
 - **中间件一条更新跑一遍，不是每个监听器跑一遍**：`InPlugin` 的产出就是所有监听器看到的版本。
   按监听器各跑一遍的话，第 N 个会看到被改过 N 次的负载。
 - 洋葱模型：进入段在「继续往下」之前，退出段在之后。不往下走就是中断。
-- Rust 侧注册返回的 `MiddlewareHandle` 也是 `#[must_use]`，drop 即摘除。
+- Rust 侧 `MiddlewareHandle` 只是一个 `u64`，drop 不会摘除；注册后一直有效到插件卸载。
 - 阶段号非法或回调为空会让 `use_middleware` 直接返回无效句柄（不会静默挂个空层）。
 
 <Callout type="info">
