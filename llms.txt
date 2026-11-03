@@ -10,6 +10,9 @@
   - [常见问题](/docs/usage/troubleshooting): tdjson 找不到、%TEMP%、乱码、插件加载失败
 - 插件开发: Rust / C / C++ / Go / Python / JS / TS 写插件
   - [插件总览](/docs/plugin): 原生插件（一个 cdylib）与脚本插件（一个目录），以及四种导出符号
+  - [插件分发格式 v1](/docs/plugin/bundle): plugins/<id>/plugin.json、静态探测、CLI 安装与商店索引契约
+  - [插件商店与分发](/docs/plugin/store): 目录布局、发布与打包规范、索引格式、TUI 商店边界
+  - [插件迁移](/docs/plugin/migration): 旧形态 dll / 脚本目录迁移到 bundle 的步骤与排错
   - [脚本插件](/docs/plugin/scripts): 一个目录就是一个插件：Python / JS / TS 写逻辑，装上就跑
   - [Rust 插件](/docs/plugin/rust): fuyubot-plugin-api 与 define_plugin! 的完整写法
   - [C 与 C++ 插件](/docs/plugin/native): 同一份头文件、extern "C"、用你自己的工具链编译
