@@ -31,7 +31,7 @@ Linux 是 `.so`，macOS 是 `.dylib`。
   "kind": "native",
   "entry": "bin/weather.dll",
   "abi": 5,
-  "platforms": ["windows-x86_64", "linux-x86_64", "macos-aarch64"]
+  "platforms": ["windows-x86_64", "linux-x86_64", "macos-aarch64", "android-aarch64"]
 }
 ```
 
@@ -88,6 +88,8 @@ weather.zip
   （大小写也算冲突）；
 - 资产名建议 `<id>-<version>-<平台>.zip`，例如
   `com.example.weather-1.2.0-windows-x86_64.zip`；纯脚本包用 `-any.zip`。
+  Android 用 `android-aarch64` / `android-x86_64`，入口是 `.so`（例如
+  `bin/libweather.so`），不能拿 Linux 的包代替。
 
 商城按资产名和 `plugin.json` 校验，不符合上面的规则会被拒绝收录。
 

@@ -2127,7 +2127,7 @@ Linux 是 `.so`，macOS 是 `.dylib`。
   "kind": "native",
   "entry": "bin/weather.dll",
   "abi": 5,
-  "platforms": ["windows-x86_64", "linux-x86_64", "macos-aarch64"]
+  "platforms": ["windows-x86_64", "linux-x86_64", "macos-aarch64", "android-aarch64"]
 }
 ```
 
@@ -2184,6 +2184,8 @@ weather.zip
   （大小写也算冲突）；
 - 资产名建议 `<id>-<version>-<平台>.zip`，例如
   `com.example.weather-1.2.0-windows-x86_64.zip`；纯脚本包用 `-any.zip`。
+  Android 用 `android-aarch64` / `android-x86_64`，入口是 `.so`（例如
+  `bin/libweather.so`），不能拿 Linux 的包代替。
 
 商城按资产名和 `plugin.json` 校验，不符合上面的规则会被拒绝收录。
 
@@ -6263,9 +6265,11 @@ weather-plugin-1.2.0-windows-aarch64.zip
 weather-plugin-1.2.0-linux-x86_64.zip
 weather-plugin-1.2.0-linux-aarch64.zip
 weather-plugin-1.2.0-macos-aarch64.zip
+weather-plugin-1.2.0-android-aarch64.zip
+weather-plugin-1.2.0-android-x86_64.zip
 ```
 
-纯脚本插件只需要一个 `-any.zip`。
+纯脚本插件只需要一个 `-any.zip`。Android 必须单独交叉编译，不能复用 Linux 的 `.so`。
 
 4. 把插件提交到索引（见下一节），或者直接把索引地址给用户。
 
@@ -6320,7 +6324,7 @@ weather-plugin-1.2.0-macos-aarch64.zip
 | `plugins[].tags` | 否 | 搜索标签 |
 | `plugins[].latest` | 否 | 最新版本号；缺省时取版本列表里最大的非 yanked 版本 |
 | `versions[].version` | 是 | 版本号，与包内 `plugin.json` 一致 |
-| `versions[].assets` | 是 | 平台 → 资产；平台键用 `windows-x86_64` 这类写法，纯脚本用 `any` |
+| `versions[].assets` | 是 | 平台 → 资产；平台键用 `windows-x86_64`、`android-aarch64` 这类写法，纯脚本用 `any` |
 | `versions[].assets[].url` | 是 | 只允许 `https://` |
 | `versions[].assets[].sha256` | 是 | 64 位小写十六进制；下载后必须匹配 |
 | `versions[].assets[].size` | 是 | 字节数 |
