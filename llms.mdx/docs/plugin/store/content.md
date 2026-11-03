@@ -5,14 +5,14 @@
 
 ## 配置并打开 [#配置并打开]
 
-在 `fuyubot.toml` 里写索引地址：
+新建项目会在 `fuyubot.toml` 里默认写入官方商店：
 
 ```toml
 [plugins]
 registry_url = "https://catmoecircle.github.io/FuyuBot-plugins/index.json"
 ```
 
-也可以用环境变量临时覆盖（优先级更高）：
+想换商店改这一行；删掉或留空则关闭商店。也可以用环境变量临时覆盖（优先级更高）：
 
 ```bash
 export FUYUBOT_REGISTRY_URL="https://example.com/fuyubot/index.json"
