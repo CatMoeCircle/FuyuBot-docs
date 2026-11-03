@@ -4,20 +4,30 @@ description: '同一份头文件、extern "C"、用你自己的工具链编译'
 ---
 
 C 与 C++ 用**同一份头文件** `fuyubot_plugin.h`，差别只有两条：导出符号要不要放进 `extern "C"`，
-以及用什么拼 JSON。头文件是**产物**，不是源码——它由 cbindgen 从 Rust 定义生成，
-用 `fuyubot-sdk codegen` 落盘，别手改（改了下次就被覆盖）。
+以及用什么拼 JSON。头文件是**产物**，不是源码——它由 cbindgen 从 `fuyubot-abi` 的 Rust 定义生成，
+权威副本是 `fuyubot_abi::PLUGIN_HEADER`，别手改。
 
 <Callout type="info">
   C / C++ / Go 没有 async 运行时：请求与更新用回调（`on`），工具结果用
-  `call_tool_result` 同步拿。可 await 的版本只在 Rust / JS / TS / Python 的脚本 SDK 里，
-  见 [异步等待](./async.mdx)。
+  `call_tool_result` 同步拿。Rust 侧有 `ResponseRouter`（可 await），见 [异步等待](./async.mdx)；
+  脚本侧有自己的异步写法，见[脚本插件](../script/index.mdx)。
 </Callout>
 
-```bash
-fuyubot-sdk init ping --lang c --dir .        # 生成 ping.c + fuyubot_plugin.h
-fuyubot-sdk init ping --lang cpp --dir .      # 生成 plugin.cpp + fuyubot_plugin.h
-fuyubot-sdk codegen --lang c --dir <工程目录>   # 只刷新头文件（C++ 用 --lang cpp，同一份）
+工程里加一个 `build.rs` 把头文件落出来（与 Rust 插件同一个来源）：
+
+```toml
+[build-dependencies]
+fuyubot-abi = "0.1.2"
 ```
+
+```rust
+// build.rs
+fn main() {
+    std::fs::write("fuyubot_plugin.h", fuyubot_abi::PLUGIN_HEADER).unwrap();
+}
+```
+
+`cargo build` 之后工程根上就有 `fuyubot_plugin.h`；C 与 C++ 共用这一份。
 
 ## 七个符号
 
@@ -30,7 +40,7 @@ v3 是四件套，v4 又加了三个（都可以不写，但写了才有对应�
 | `plugin_stop` | 可选 | 清状态；只登记元数据的插件可以不写 |
 | `plugin_free_string` | **必须** | 释放本插件 `malloc` 出来的字符串（`plugin_manifest` 返回的那块也走它） |
 | `plugin_manifest` | v4 可选 | 返回自描述 JSON（名字 / 版本 / `inject` / `soft_inject`），宿主在 `init` 之前读 |
-| `fuyubot_abi_version` | v4 可选 | 静态返回 `ABI_VERSION`，`fuyubot-sdk check` 用它判断版本 |
+| `fuyubot_abi_version` | v4 可选 | 静态返回 `ABI_VERSION`；宿主与静态检查工具不加载也能看到它 |
 | `plugin_free_handle` | v4 可选 | ABI 版本不匹配时宿主靠它回收 `init` 分配的状态（那时不能调 `plugin_stop`） |
 
 `PluginHandle` 的判据是「`abi_version != 0` **且** `context` 非空」，所以 `context` 不能给 `NULL`。
@@ -215,7 +225,7 @@ if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
 > **op 表**（`{"op":"send_message","args":{…}}`），所有语言都能用——发消息等结局、超时撤回、
 > bot 与用户号挑不同反应方法、Markdown → entities、富消息本地块树，都不用手写。
 > 见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)。
-> C / C++ **不需要** SDK 薄封装——直接调 VTable 上的 `simplify_invoke` /
+> C / C++ **不需要**任何封装——直接调 VTable 上的 `simplify_invoke` /
 > `simplify_invoke_result`（见下），或者照下面手写 `sendMessage`。
 
 
@@ -267,8 +277,8 @@ static void send_text(long long chat_id, const char *text) {
 ```
 
 要 Markdown 就分两步：先 `td_execute` 拿 `parseTextEntities` 的结果（一个 `formattedText`），
-把它的 `text` 与 `entities` 拼进上面的 `input_message_content`。方法名拿不准时用
-`fuyubot-sdk td-method sendMessage` 查真签名。
+把它的 `text` 与 `entities` 拼进上面的 `input_message_content`。方法名与字段名以
+`td_api.tl` 为准（见[调用 TDLib](./tdlib.mdx#方法名以-tdlib-为准)）。
 
 ## 注意
 

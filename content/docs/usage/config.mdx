@@ -56,10 +56,9 @@ api_key = "……"      # 密钥这类东西别写进全局配置——它会被
   （`[bot]` / `[telegram]` 等），`key` 空串读整段，`key` 是点路径（`nested.k`）。
 - **写**：`set_config(key, value_json)` —— **只能写自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。成功会写内存并回写 `fuyubot.toml`。
 
-各语言的写法：[Rust 插件](../plugin/rust.mdx)、[C / C++ 插件](../plugin/native.mdx)、
-[Python 插件](../plugin/python.mdx)、[JS / TS 插件](../plugin/js-ts.mdx)（每页都有「读 / 写配置」一节），
-函数签名在[插件 ABI](../plugin/abi.mdx)。脚本插件读**自己**那段还有个同步入口
-（`plugin_config()` / `pluginConfig()`），`run()` 之前就能用。
+各语言的写法：[Rust 插件](../plugin/rust.mdx)、[C / C++ 插件](../plugin/native.mdx)，
+函数签名在[插件 ABI](../plugin/abi.mdx)。**脚本插件的薄 SDK 目前还没有读写配置的接口**——
+脚本要参数只能写在脚本目录里（跟着目录一起装），配置段暂时读不到。
 
 <Callout type="warn">
   **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。唯一会被保住的是 `[telegram].api_hash`——它不在插件能读到的配置树里，回写时会从磁盘补回来。

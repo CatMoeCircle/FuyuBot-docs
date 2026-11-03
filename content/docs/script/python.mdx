@@ -1,0 +1,232 @@
+---
+title: Python 插件
+description: 薄 SDK 的方法表、事件与过滤、异步等待，以及能直接抄的例子
+---
+
+Python 脚本插件就是一个目录：`pyproject.toml` 写身份，`main.py` 写逻辑，
+`fuyubot` 是从 PyPI 装的薄 SDK。装宿主插件、装脚本的流程见 [脚本插件](./index.mdx)，
+本页只讲**怎么写**。
+
+```text
+weather/
+  pyproject.toml   ← [project] + [tool.fuyubot]（name / entry）
+  main.py          ← 你写的逻辑
+  uv.lock          ← uv sync 生成
+  .venv/           ← 依赖，不进版本库
+```
+
+要求 Python ≥ 3.11。SDK 的 Python 包是 `fuyubot`，用 uv 装进项目：
+
+```bash
+uv add fuyubot          # 等价于 pip install fuyubot，同时写进 pyproject
+uv sync                 # 机器人启动时也会跑这一步
+```
+
+## 方法一览
+
+| 方法 | 干什么 |
+| --- | --- |
+| `on(event, handler, filter=None)` | 订阅一条事件；返回回调对象，可交给 `off` |
+| `off(callback)` | 退订 `on` 返回的那个对象 |
+| `invoke(method, params=None, on_response=None)` | 发一条 TDLib 请求；给了 `on_response` 就按请求配对回调 |
+| `invoke_async(method, params=None)` | `invoke` 的 `await` 版，只能在 `run_async` 的事件循环里用 |
+| `wait_async(filter=None, timeout_ms=0)` | `await` 一条匹配的更新；超时/取消返回 `None` |
+| `emit(event, payload=None)` | 发一条自定义事件（自己 + 全局订阅者收得到） |
+| `log(message, level="info")` | 打日志；`level`：`error` / `warn` / `info` / `debug` / `trace` |
+| `register_tool(name, description="", input_schema=None)` | 登记工具的**元数据**（没有执行回调） |
+| `use_middleware(stage, handler)` | 挂中间件，`handler(stage, payload)`，`stage` 是 0..5 |
+| `run()` | 发 `ready` 握手，然后阻塞收事件——**永远最后一行** |
+| `run_async(main=None)` | 同上，但跑 asyncio 事件循环；要 `invoke_async` / `wait_async` 就用它 |
+
+三个容易踩的：
+
+- **不是装饰器**。`@on("updateNewMessage")` 会报错，老老实实写 `on("updateNewMessage", handler)`。
+- **回调只在 `run()` / `run_async()` 之后才有**。模块顶层可以注册订阅、挂中间件，
+  但事件要等握手完成才会来。
+- **`run()` 和 `run_async()` 都阻塞到进程结束**，写在文件最后，后面不要有代码。
+
+## 事件
+
+事件有两个来源：
+
+1. **TDLib 更新**：事件名就是更新的 `@type`（`updateNewMessage`、`updateMessageSendSucceeded`……）。
+   每条更新同时发到两条通道：具体的 `@type`，和兜底的 `"update"`。
+2. **你自己 `emit()` 的事件**：只送**自己 + 全局订阅者**，不会广播给别的插件。
+
+```python
+from fuyubot import on, log, run
+
+on("updateNewMessage", lambda u: log(f"新消息 {u['message']['id']}"))
+on("update", lambda u: log(f"来了一条更新：{u.get('@type')}"))
+run()
+```
+
+**过滤器**是「点分路径 = 期望值」，所有条件都相等才触发：
+
+```python
+# 只听某个群
+on("updateNewMessage", handler, {"message.chat_id": -1001234567890})
+
+# 只听 /hello 这一条文本（文本在 message.content.text.text）
+on("updateNewMessage", on_hello, {"message.content.text.text": "/hello"})
+```
+
+同一个事件可以订阅多次，各带各的过滤器。订阅会一直有效到进程结束，
+需要提前退订就留住 `on` 的返回值、交给 `off`。
+
+## 调 TDLib
+
+```python
+invoke(method, params=None, on_response=None)
+```
+
+`method` 是 TDLib 的方法名（**不是** Bot API），`params` 是方法参数（不需要写 `@type`）。
+给了 `on_response` 时，响应回来会调它——请求号由 SDK 配对，你不用记。
+
+```python
+from fuyubot import invoke, log
+
+def echo(update):
+    message = update["message"]
+    invoke("sendMessage", {
+        "chat_id": message["chat_id"],
+        "input_message_content": {
+            "@type": "inputMessageText",
+            "text": {"@type": "formattedText", "text": "收到", "entities": []},
+        },
+    }, lambda resp: log(f"发送结果：{resp.get('@type')}"))
+```
+
+<Callout type="warn">
+  `invoke` **不阻塞**、立刻返回。不传 `on_response` 就是「发完不管」；
+  要等结果请用异步版，别在回调里轮询。
+</Callout>
+
+方法名和字段拿不准就查 TDLib 文档或 `td_api.tl`：发送一律是 `sendMessage` +
+`input_message_content`，`sendPhoto` / `sendDocument` 这类 Bot API 名字在 TDLib 里不存在。
+
+## 异步：`run_async` / `invoke_async` / `wait_async`
+
+同步的 `run()` 没有事件循环，回调里不能 `await`。要 `await` 就把启动换成 `run_async`：
+
+```python
+import asyncio
+from fuyubot import invoke_async, log, run_async, wait_async
+
+async def main():
+    me = await invoke_async("getMe", {})
+    log(f"我是 {me.get('first_name', '?')}")
+
+    update = await wait_async({"@type": "updateNewMessage"}, 30_000)
+    if update is None:
+        log("30 秒内没有新消息")
+    else:
+        log(f"等到了 {update['message']['id']}")
+
+run_async(main)
+```
+
+- `run_async` 把读 stdin 的原生桥放到后台线程，主线程跑 asyncio 事件循环；
+  `main` 在握手之后作为任务启动，函数返回后循环继续跑，直到宿主关掉管道。
+- `invoke_async` 的 **TDLib 业务错误也会 resolve**（返回 `@type: "error"` 的对象），
+  只有宿主拒绝请求时才抛异常——别指望 `try/except` 接住 TDLib 的报错。
+- `wait_async` 是**一次性**订阅：命中或超时后自动退订；`timeout_ms=0` 表示一直等。
+- 不想用 `main` 也行：`run_async()` 只跑事件循环，`on` 回调里自己
+  `asyncio.create_task(...)`。
+
+## 日志、工具与中间件
+
+```python
+from fuyubot import log, register_tool, use_middleware
+
+log("普通信息")
+log("要坏事了", "warn")
+
+# 只登记元数据：宿主知道有这个工具，但调用不会路由回脚本
+register_tool("weather.now", "查天气", {
+    "type": "object",
+    "properties": {"city": {"type": "string"}},
+    "required": ["city"],
+})
+
+def audit(stage, payload):
+    log(f"阶段 {stage} 看到一条更新")
+
+use_middleware(2, audit)
+```
+
+中间件的六阶段与原生插件一致，细节见 [工具与中间件](../plugin/tools.mdx)。
+
+## 完整示例
+
+**回声机器人**——只复读别人发的文本：
+
+```python
+from fuyubot import invoke, on, run
+
+def echo(update):
+    message = update.get("message") or {}
+    if message.get("is_outgoing"):
+        return                      # 别回自己发的，否则自激
+    text = ((message.get("content") or {}).get("text") or {}).get("text", "")
+    if not text:
+        return
+    invoke("sendMessage", {
+        "chat_id": message["chat_id"],
+        "input_message_content": {
+            "@type": "inputMessageText",
+            "text": {"@type": "formattedText", "text": text, "entities": []},
+        },
+    })
+
+on("updateNewMessage", echo)
+run()
+```
+
+**命令处理器**——不同命令各干各的，靠过滤器分流：
+
+```python
+from fuyubot import invoke, on, run
+
+def reply(chat_id, text):
+    invoke("sendMessage", {
+        "chat_id": chat_id,
+        "input_message_content": {
+            "@type": "inputMessageText",
+            "text": {"@type": "formattedText", "text": text, "entities": []},
+        },
+    })
+
+def hello(update):
+    reply(update["message"]["chat_id"], "你好！")
+
+def ping(update):
+    reply(update["message"]["chat_id"], "pong")
+
+on("updateNewMessage", hello, {"message.content.text.text": "/hello"})
+on("updateNewMessage", ping,  {"message.content.text.text": "/ping"})
+run()
+```
+
+## 现在还没有的能力
+
+薄 SDK 只覆盖「收事件、发请求、打日志、登记工具、挂中间件」。下面这些宿主的 ABI
+有、但 Python 侧**还没暴露**，遇到需要它们的场景只能等 SDK 补：
+
+- 读写 `[plugin.<名字>]` 配置段
+- 调用其它插件注册的工具 / 共享服务
+- `simplify` 操作表（发消息等结局、Markdown → entities 之类）
+
+原生插件不受这个限制，见 [插件 ABI](../plugin/abi.mdx)。
+
+## 常见问题
+
+- **`ModuleNotFoundError: fuyubot`**：依赖没装进脚本自己的 `.venv`。在脚本目录里
+  `uv add fuyubot`，再重启机器人（或先手动 `uv sync`）。
+- **「找不到 fuyubot 原生桥库」**：SDK 靠 `FUYUBOT_NATIVE_LIB` 找 `fuyubot_script` 那份 dll，
+  宿主起脚本时会自动设好；把 dll 挪出 `plugins/fuyubot.script/` 就会失效。
+  排法见 [脚本插件 › 排查](./index.mdx#排查)。
+- **自检**：`python -m fuyubot` 只验证 API 形状、不碰宿主，输出 `fuyubot: self-test ok`；
+  它仍要能加载原生桥，先把 `FUYUBOT_NATIVE_LIB` 指到 `fuyubot_script` 那份 dll。
+- **payload 取字段先判空**：不同更新类型字段位置不同；`updateNewMessage` 的文本在
+  `message.content.text.text`，而且 `message.content` 可能根本没有 `text`。

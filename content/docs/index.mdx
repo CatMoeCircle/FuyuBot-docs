@@ -3,7 +3,7 @@ title: fuyubot 文档
 description: 基于 TDLib 的 Telegram bot / user 框架
 ---
 
-**fuyubot** 是一个基于 TDLib 的 Telegram bot / user 框架：Rust 内核 + C ABI 插件 + 多语言 SDK。
+**fuyubot** 是一个基于 TDLib 的 Telegram bot / user 框架：Rust 内核 + C ABI 插件 + 可选的脚本插件。
 插件就是一个动态库（`.dll` / `.so` / `.dylib`），一个 cdylib 就是一个插件。
 
 <Cards>
@@ -15,7 +15,7 @@ description: 基于 TDLib 的 Telegram bot / user 框架
   <Card
     title="插件开发"
     href="/docs/plugin/"
-    description="Rust / C / C++ / Python / JS / TS 插件、事件、TDLib 调用与 ABI"
+    description="用 Rust / C / C++ / Go 写原生插件：导出符号、事件、TDLib 调用与 ABI"
   />
   <Card
     title="开发文档"
@@ -23,21 +23,26 @@ description: 基于 TDLib 的 Telegram bot / user 框架
     description="改框架本身：架构、构建测试、常见陷阱、发布"
   />
   <Card
+    title="脚本插件"
+    href="/docs/script/"
+    description="Python / JS / TS：由独立的 fuyubot.script 插件托管，不编译、装上就跑"
+  />
+  <Card
     title="CLI 文档"
     href="/docs/cli/"
-    description="fuyubot 与 fuyubot-sdk 的完整命令参考"
+    description="fuyubot 的完整命令参考"
   />
 </Cards>
 
-## 两个 CLI，职责严格分离
+## 两条插件路线
 
-| CLI | 干什么 | 子命令 |
+| 路线 | 写什么 | 要编译吗 |
 | --- | --- | --- |
-| `fuyubot` | 跑框架 | `init` / `run` / `status` / `stop` / `plugin` |
-| `fuyubot-sdk` | 写插件 | `init` / `codegen` / `check` / `abi-version` / `td-methods` / `td-method` |
+| 原生插件（[插件开发](./plugin/index.mdx)） | Rust / C / C++ / Go，一个 cdylib | 要（`cargo build` / `cl /LD` / `gcc -shared`） |
+| 脚本插件（[脚本插件](./script/index.mdx)） | Python / JS / TS，一个目录 | 不要 |
 
-两个都**不编译、不打包插件**——编译是插件作者用自己语言工具链（`cargo build`、`cl /LD`、`gcc -shared`）完成的事，
-`fuyubot plugin install` 只负责把编好的产物**复制**进插件目录。
+脚本能力**不在运行时本体里**：它由独立仓库的 `fuyubot.script` 插件提供，装上才有。
+`fuyubot` 自己**只跑不编译**——`fuyubot plugin install` 只负责把编好的产物**复制**进插件目录。
 
 ## 下一步
 

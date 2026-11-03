@@ -1,6 +1,6 @@
 ---
 title: 从源码构建
-description: 开发者路线：自己编 fuyubot 与 fuyubot-sdk
+description: 开发者路线：自己编 fuyubot
 ---
 
 普通用户请走 [下载与安装](./index.mdx)——发布包里有可执行文件和 `tdjson`，不用编译。
@@ -41,18 +41,16 @@ cargo build --workspace --offline
 | `cargo package-bot` | `target\release\fuyubot.exe` | 本地打包（tdjson 已在同级目录） |
 | `cargo bot` | — | 一键 `fuyubot run` 当前目录 |
 
-别名就这三个，都写在仓里的 `.cargo/config.toml`（只影响本仓，**没有** `package-sdk`）：
-`fuyubot-sdk` 属于 [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK) 那个仓库，
-在那边用 `cargo build -p fuyubot-sdk-cli` 编，它不需要 `tdjson`。
+别名就这三个，都写在仓里的 `.cargo/config.toml`（只影响本仓）。
 
 本文档其余页面里的 `fuyubot` / `fuyubot.exe` 指的就是这些产物；从发布包安装的用户手里就是解压出来的那个。
 
 ## 发布包是怎么出的
 
-`.github/workflows/release-bot.yml` 在 `v*` tag 上按平台编 `fuyubot`、三个内置插件与 `fuyubot-sdk`，
-**分开**打三份中间包（本体 / 插件 / SDK），`publish` 再把本体 + 内置插件叠成各平台一个 zip：
+`.github/workflows/release-bot.yml` 在 `v*` tag 上按平台编 `fuyubot` 与三个内置插件，
+**分开**打两份中间包（本体 / 插件），`publish` 再把它们叠成各平台一个 zip：
 解压得到 `<资产名>/`，里面有可执行文件、该平台的 `tdjson`（从 `TDLib-v<版本>` 那个 Release 取）
-和 `plugins/`。SDK 是单独的 `fuyubot-sdk-<系统>-<架构>.zip`。
+和 `plugins/`。
 名字与 `crates/fuyubot-tdlib/src/loader/vendored.rs` 的 `ASSETS` 表同一套口径（`x86_64` / `aarch64`），
 加平台时两边一起加。
 

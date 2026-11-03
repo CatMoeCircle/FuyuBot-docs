@@ -5,8 +5,8 @@ description: 一个宿主进程 + N 个动态库插件，以及它们之间的�
 
 结论先说：**一个宿主进程 + N 个动态库插件（cdylib）**。插件不认识 Rust，只认识 `HostApiVTable`；
 宿主是**唯一**实现这张表的 crate（`fuyubot-loader`）。脚本插件（Python / JS / TS）不改变这个结构
-——目录形态由两个中间插件（`fuyubot_python_host` / `fuyubot_js_host`）托管，旧的胶水形态
-则把解释器子进程藏在自己的 cdylib 里。
+——目录形态由独立仓库的 `fuyubot.script` 这一个插件托管（它按语言各建一个 `ScriptHost`），
+运行时本体对它一无所知。
 
 本文只讲**结构与数据流**；构建、发布与排错见 [开发文档](/docs/dev/)。
 
@@ -25,12 +25,16 @@ graph TD
   loader --> tool
   loader --> middleware
   loader --> core
-  loader --> tdlib["fuyubot-tdlib<br/>加载 / 循环 / 授权"]
+  loader --> tdlib["fuyubot-tdlib<br/>加载 / 循环 / 授权 / Session"]
   tdlib --> sys["fuyubot-tdlib-sys<br/>类型 / 元数据 / FFI"]
   loader --> abi["fuyubot-abi<br/>不依赖 core / 机制 crate"]
-  cli["fuyubot-cli · 二进制 fuyubot"] --> loader
-  pluginapi["fuyubot-plugin-api<br/>SDK 仓"] --> abi
-  sdkscript["fuyubot-sdk-script<br/>SDK 仓"] --> pluginapi
+  app["fuyubot-app<br/>宿主编排层（AppHost）"] --> loader
+  app --> tdlib
+  app --> core
+  cli["fuyubot-cli · 二进制 fuyubot"] --> app
+  cli --> loader
+  android["fuyubot-android · libfuyubotjni.so"] --> app
+  script["fuyubot.script<br/>独立仓库的插件"] --> abi
   simplify["fuyubot-simplify<br/>TDLib 便捷封装"] --> sys
 ```
 
@@ -41,9 +45,46 @@ graph TD
 | `event` / `service` / `tool` / `middleware` 互相依赖 | 禁止（彼此不依赖） |
 | `fuyubot-tdlib-sys` → 任何 fuyu crate | 禁止（它是最底层） |
 | `fuyubot-loader` → 四个机制 + `tdlib` + `abi` + `core` | 允许（**只有它**） |
+| `fuyubot-app` → `core` / `loader` / `tdlib` | 允许（编排层；反过来禁止） |
 
 组合只发生在两处：`HostRuntime::new`（把四个机制 `install` 进 `Context`）与 `HostRuntime` 里的
 20 个 `unsafe extern "C"` 桥（VTable 的 20 个函数指针各对应一个）。四个机制 crate 绝不彼此调用。
+
+## 编排层：`fuyubot-app`
+
+启动顺序、登录、收摊这一串**只有一份实现**，在 `fuyubot-app` 里；CLI 与 Android 的 JNI 运行时
+都只是它的宿主：
+
+```text
+fuyubot-cli  ─┐                        ┌ 控制台（stdin / stderr）
+              ├─▶ fuyubot-app ─▶ AppHost ┼ 终端面板（弹输入框）
+fuyubot-android ┘                        └ JNI 回调（onState / onAsk / onQr）
+```
+
+| 谁 | 只负责 |
+| --- | --- |
+| `fuyubot-app` | 内核 → 宿主运行时 → 接 TDLib → 装插件 → 登录 → 分发 → 收摊；`AppHost` 的三个出口 |
+| `fuyubot-cli` | clap、实例锁、`.fuyubot/status` 发布、`--replay`、重登循环、TUI |
+| `fuyubot-android` | C / JNI 符号、目录与日志重定向、停止位、JNI 版 `AppHost` |
+
+`AppHost` 只有三个方法——`state(state, detail)` / `ask(kind, prompt)` / `qr(link)`——所以「宿主」
+可以是控制台、终端面板或 Java 回调，编排层完全不知道自己在跟谁说话。
+
+### 顺序为什么不能换
+
+| 步 | 动作 | 不能换的理由 |
+| --- | --- | --- |
+| ① | 指 `TDLIB_TDJSON_PATH`（可选） | 必须在建客户端**之前**：`TdClient::new` 只读进程环境 |
+| ② | `Kernel::start` | — |
+| ③ | `PluginLoader::new` + 管线 | — |
+| ④ | 配置 / 日志门槛 / 生命周期桥 | 必须在插件加载**之前**：插件 `start` 里就会读配置、打日志 |
+| ⑤ | `Session::create` + `attach_tdlib` | 必须在插件加载**之前**：插件 `start` 期发的请求要真的进 TDLib |
+| ⑥ | 装插件 | 必须在登录**之前**：插件要在 TDLib 开始产出前订阅好 |
+| ⑦ | `Session::login`（阻塞） | 期间**不能有接收循环**：它自己 `receive`，并发 `td_receive` 会串号 |
+| ⑧ | `spawn_dispatch` | 最后一步：登录窗口里的更新靠 ⑦ 的 `bypass` 转给管线，不吞 |
+
+下面那张五步图是**装载层**看到的同一个顺序（`App::boot` + `load_plugins` + `login` + `dispatch`
+做的就是这五步）：
 
 ## 启动顺序：先 attach TDLib，再 load 插件
 
@@ -310,7 +351,7 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 
 <svg viewBox="0 0 680 348" width="100%" role="img" aria-label="进程边界：动态库插件同进程，脚本插件一进程一脚本" style={{ maxWidth: '680px', margin: '1.75rem auto', display: 'block' }}>
   <title>进程边界：动态库插件同进程，脚本插件一进程一脚本</title>
-  <desc>宿主进程里跑 fuyubot 本体、原生 cdylib 插件、以及 python_host / js_host 这两个中间插件；中间插件再用 uv run / bun 起子进程跑脚本。</desc>
+  <desc>宿主进程里跑 fuyubot 本体、原生 cdylib 插件、以及 fuyubot.script 这个中间插件；中间插件再用 uv run / bun 起子进程跑脚本。</desc>
   <defs>
     <marker id="proc-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -329,7 +370,7 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 
   <rect x="370" y="116" width="250" height="44" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
   <text x="495" y="132" fontSize="12" fontWeight="500" textAnchor="middle" dominantBaseline="central" fill="currentColor">中间插件 cdylib</text>
-  <text x="495" y="148" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">python_host / js_host</text>
+  <text x="495" y="148" fontSize="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" fillOpacity="0.55">fuyubot.script</text>
 
   <path d="M300 92 L240 112" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#proc-arrow)" />
   <path d="M380 92 L440 112" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#proc-arrow)" />
@@ -360,9 +401,9 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 | 启动时序 / 崩溃 | 同步；崩了拖垮宿主 | 装依赖后起进程，等 `ready`；子进程死，宿主记一条错 |
 | 已知天花板 | panic 靠 `C-unwind` + `catch_unwind` 接住 | 改代码不热载（watch 只认目录增删） |
 
-脚本侧（薄 SDK 与目录形态）见文档站的
-[脚本插件](https://catmoecircle.github.io/FuyuBot-docs/docs/plugin/scripts/)。
-两门语言的中间插件是同一套机制的两份实现，所以「Python SDK 与 JS SDK 对 ABI 的理解」不可能漂移。
+脚本侧（薄 SDK 与目录形态）**不属于运行时本体**：它由独立仓库的 `fuyubot.script` 插件提供，
+文档见[脚本插件](https://catmoecircle.github.io/FuyuBot-docs/docs/script/)。
+那一个 dll 同时托管 Python（uv）与 JS/TS（bun）两类 `ScriptHost`，共用同一份 stdio 协议实现。
 
 ## 四大机制与内核
 

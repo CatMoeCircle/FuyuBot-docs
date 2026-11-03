@@ -1,0 +1,7 @@
+{
+  "title": "脚本插件",
+  "description": "Python / JS / TS：由独立的 fuyubot.script 插件提供，不编译、装上就跑",
+  "icon": "FileCode",
+  "root": true,
+  "pages": ["index", "python", "js-ts"]
+}

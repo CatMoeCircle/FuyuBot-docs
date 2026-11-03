@@ -6,46 +6,39 @@ description: 回放验证、静态检查、装进插件目录
 插件出问题通常不是「代码写得不对」，而是「没被加载」「加载了但没订阅上」「订阅了但请求拼错」。
 这三步各有对应的工具，全都不需要 Telegram 账号。
 
-| 命令 | 干什么 | 需要账号吗 |
+| 做什么 | 用什么 | 需要账号吗 |
 | --- | --- | --- |
-| `fuyubot-sdk check <产物>` | **静态**读导出符号，不 dlopen | 否 |
-| `fuyubot run --replay <文件>` | 把一批更新灌进管线后退出，不接 TDLib | 否 |
-| `fuyubot plugin install <路径>` | 复制产物（＋脚本同伴）进插件目录 | 否 |
-| `fuyubot plugin list` | 真的加载一次，看插件名与 ABI 版本 | 否 |
-| `fuyubot run` | 真登录、真更新 | 是 |
+| 看导出符号 | `dumpbin /exports`（Windows）/ `nm -D`（Linux/macOS） | 否 |
+| 跑一遍更新管线 | `fuyubot run --replay <文件>` | 否 |
+| 装进插件目录 | `fuyubot plugin install <路径>` | 否 |
+| 看装了哪些插件 | `fuyubot plugin list`（静态读清单，不加载） | 否 |
+| 真登录、真更新 | `fuyubot run` | 是 |
 
-## 静态检查：`fuyubot-sdk check`
+## 静态检查导出符号
+
+宿主只认七个符号，缺 `plugin_init` 一定加载失败。**不要用 `dlopen` 去验**——那会在你的进程里
+跑插件的初始化代码，已经算加载了。直接读导出表：
+
+```powershell
+# Windows
+dumpbin /exports target\debug\fuyubot_plugin_demo.dll | findstr plugin_
+```
 
 ```bash
-fuyubot-sdk check target\debug\fuyubot_plugin_demo.dll
+# Linux / macOS
+nm -D --defined-only target/debug/libfuyubot_plugin_demo.so | grep plugin_
 ```
 
-```text
-文件：target\debug\fuyubot_plugin_demo.dll
-格式：Pe / X86_64 / Dynamic
-同伴脚本：无（按纯原生插件加载）
-导出符号：
-  [ok] plugin_init           必需
-  [ok] plugin_start
-  [ok] plugin_stop
-  [ok] plugin_free_string
-  [缺] plugin_free_handle    宿主容错（缺了也能加载）
-  [缺] plugin_abi_version    宿主容错（缺了也能加载）
-  [缺] plugin_manifest       宿主容错（缺了也能加载）
-ABI 版本：宿主是 4。三个版本别混：
-    - 宿主 ABI 世代 = 这个数（`HostApiVTable::version` 就在首字段）；
-    - 插件声明的 ABI 版本在 `PluginHandle::abi_version`，是 `plugin_init`
-      的返回值——**装载时才判定**，静态检查看不到；
-    - 插件自己的 crate 版本在 `plugin_manifest` 的 `version` 字段里。
-    细节见 docs/abi-contract.md。
-结论：可以加载。
-```
+应该看到 `plugin_init` / `plugin_start` / `plugin_stop` / `plugin_free_string`，
+以及可选的 `plugin_manifest` / `fuyubot_abi_version` / `plugin_free_handle`。
+看不到 `plugin_init` = 宿主一定拒绝，先查 `crate-type = ["cdylib"]` 和 `extern "C"`。
 
-- **非零退出 = 宿主会拒绝加载**（缺必需的 `plugin_init`，或根本不是动态库），可以进 CI。
-- 它**不加载、不运行**：走 `object` 解析 PE / ELF / Mach-O 的导出表，不碰 `dlopen`
-  （`dlopen` 会在宿主进程里跑插件的初始化代码，那已经算「加载」了）。
-- 因此它**看不到 ABI 版本**——版本是 `plugin_init` 的**返回值**，不是符号。它只会如实报
-  「只能运行时判定」，不编一个看起来可信的结论。
+三个版本别混：
+
+- **宿主 ABI 世代** = `HostApiVTable::version`（当前 5），就在 VTable 首字段；
+- **插件声明的 ABI 版本** 在 `PluginHandle::abi_version`，是 `plugin_init` 的返回值——
+  静态检查看不到，**装载时才判定**；
+- **插件自己的 crate 版本** 在 `plugin_manifest` 的 `version` 字段里。
 
 ## 回放：不接账号也能验插件
 
@@ -90,8 +83,7 @@ fuyubot plugin list
 已安装 F:\…\plugins\demo.dll
 ```
 
-- 传**工程目录**时会把旁边的 `.py` / `.js` / `.ts` / `.pyi` 一起拷；传单个 dll 时看不到脚本在哪，
-  **脚本插件请传工程目录**。
+- 脚本插件走另一条路（目录形，装进 `plugins/scripts/<目录名>/`），见[脚本插件](../script/index.mdx)。
 - `plugin install <工程目录>` 找产物的顺序是 `<工程>/target/{release,debug}` → 工程目录本身 →
   **沿父链最近的** `target/{release,debug}`（两边都有时取**较新**的那个）。最后一档专为 workspace
   成员准备：`cargo build -p <crate>` 的产物默认落在仓库根 `target/`，工程自己那份 `target/` 并不存在，
@@ -101,11 +93,11 @@ fuyubot plugin list
 
 | 症状 | 先看 |
 | --- | --- |
-| `check` 报 `[缺] plugin_init` | crate 是不是 `crate-type = ["cdylib"]`；C++ 的七个符号在不在 `extern "C"` 里 |
+| 导出表里没有 `plugin_init` | crate 是不是 `crate-type = ["cdylib"]`；C++ 的七个符号在不在 `extern "C"` 里 |
 | 日志里有「跳过 xxx」 | ABI 版本不匹配，或 `dlopen` 失败（缺兄弟 DLL：把依赖放在插件旁边，加载器会先查库自己的目录） |
-| 加载了但一条事件都没收到 | 订阅句柄是不是被 drop 了（Rust 侧 `let _ =` 会立刻退订） |
-| 脚本插件起不来 | manifest 身份段（`[tool.fuyubot]` / `"fuyubot"`）与 `entry` 对不对；`run()` 是不是最后一行；`uv` / `bun` 在不在；原生桥库找不找得到（见 [脚本插件常见问题](./scripts.mdx#常见问题)） |
+| 加载了但一条事件都没收到 | 订阅是不是没注册成功（`HostApi::on` 返回的句柄 `is_valid()` 为假），或事件名写成了别名 |
+| 脚本插件起不来 | 不在本板块——见[脚本插件 › 排查](../script/index.mdx#排查)（manifest 身份段、`run()`、`uv` / `bun`、原生桥库） |
 | 请求发出去了但没收到响应 | 回放里本来就不会有响应（请求只留档）；真环境下等的是 `"response"` 通道，见 [调用 TDLib](./tdlib.mdx) |
 
-要查 TDLib 的方法名与参数名，用 `fuyubot-sdk td-methods --filter <片段>` / `td-method <名字>`；
+TDLib 的方法名与参数名以 `td_api.tl` 为准（见[调用 TDLib](./tdlib.mdx#方法名以-tdlib-为准)）；
 契约与所有权规则见 [ABI 契约](./abi.mdx)。

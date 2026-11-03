@@ -1,17 +1,16 @@
 ---
 title: Rust 插件
-description: fuyubot-plugin-api 与 define_plugin! 的完整写法
+description: 依赖 fuyubot-abi，实现 Plugin trait + define_plugin! 的最小写法
 ---
 
-Rust 插件只依赖一个 crate：`fuyubot-plugin-api`。它把 `fuyubot-abi` 的形状转成用着不疼的样子——
-`HostApi`（已解包、调用路径上没有 `Option` 和 panic 分支）、`HostExt` 便利方法、
-drop 即退订的 `Subscription`、`ResponseRouter`（可 `await` 的请求/更新等待），以及
-`define_plugin!` 宏。异步写法见 [异步等待](./async.mdx)。
+Rust 插件只依赖一个 crate：[`fuyubot-abi`](https://crates.io/crates/fuyubot-abi)。
+它给出 `HostApi`（VTable 的 Rust 封装）、`Plugin` trait、`define_plugin!` 宏与
+`ResponseRouter`；**没有第二层 SDK**——写插件就是实现一个 trait，再把 C ABI 导出交给宏。
 
 ## 依赖
 
 ```toml
-# 由 `fuyubot-sdk init` 生成：独立插件 crate，不属于任何 workspace
+# 独立插件 crate：不属于任何 workspace
 [workspace]
 
 [package]
@@ -24,92 +23,151 @@ rust-version = "1.99"
 crate-type = ["cdylib"]          # 宿主 dlopen 的就是它
 
 [dependencies]
-fuyubot-plugin-api = "0.1.1"        # crates.io；对 SDK 源码开发时换成 path = "…/crates/fuyubot-plugin-api"
+fuyubot-abi = "0.1.2"
 ```
 
 那个空的 `[workspace]` 不是多余的：没有它，cargo 会一路往上找父目录的 workspace 声明然后报错。
+`fuyubot-abi` 的版本号跟着宿主走（当前 ABI 版本是 **5**）。
 
 ## 最小可用插件
 
-这就是 `fuyubot-sdk init demo --lang rust` 生成的模板：
-
 ```rust
-use fuyubot_plugin_api::{HostApi, HostExt, Plugin, Subscription, define_plugin};
+use std::ffi::CStr;
 
-struct MyPlugin {
+use fuyubot_abi::{HostApi, LogLevel, Plugin, define_plugin};
+
+struct DemoPlugin {
     host: HostApi,
-    /// 订阅句柄**必须活着**：它 drop 的那一刻就退订了。
-    _updates: Option<Subscription>,
 }
 
-impl Plugin for MyPlugin {
+impl Plugin for DemoPlugin {
     fn init(host: HostApi) -> Result<Self, String> {
-        host.info("demo: init");
-        Ok(Self { host, _updates: None })
+        host.log(LogLevel::Info, "demo: init");
+        Ok(Self { host })
     }
 
     fn start(&mut self, config_json: &str) -> Result<(), String> {
-        self.host.info(&format!("demo: start({config_json})"));
+        self.host
+            .log(LogLevel::Info, &format!("demo: start({config_json})"));
+
         // 兜底通道 "update" 收全部；要精确就换成 "updateNewMessage" 之类具体的 @type。
-        self._updates = self
-            .host
-            .subscribe_json("update", None, on_update, std::ptr::null_mut());
+        let handle = self.host.on(
+            "update",
+            None,
+            on_update,
+            std::ptr::null_mut(),
+        );
+        if !handle.is_valid() {
+            return Err("订阅 update 失败".to_owned());
+        }
         Ok(())
     }
 }
 
-/// 回调没有捕获环境；要状态就放进插件字段、经 `user_data` 传进来。
 extern "C-unwind" fn on_update(
     _user: *mut std::ffi::c_void,
     payload: *const std::ffi::c_char,
 ) -> i32 {
     // SAFETY: 宿主按 ABI 契约传的是临时 NUL 结尾字符串。
-    let update = unsafe { fuyubot_plugin_api::parse_payload(payload) };
-    let update_type = update.get("@type").and_then(|v| v.as_str()).unwrap_or("?");
-    println!("demo: 收到 {update_type}");
+    let text = unsafe { CStr::from_ptr(payload) }.to_string_lossy();
+    println!("demo: 收到 {text}");
     0
 }
 
-define_plugin!(MyPlugin, "demo");
+define_plugin!(DemoPlugin, "demo");
 ```
+
+`define_plugin!(类型, "插件名")` 展开出七个导出符号
+（`plugin_init` / `plugin_start` / `plugin_stop` / `plugin_free_string` /
+`plugin_free_handle` / `fuyubot_abi_version` / `plugin_manifest`），
+并把插件的名字、crate 版本、`inject` / `soft_inject` 填进 `plugin_manifest`。
 
 ## `Plugin` trait
 
 | 方法 | 对应符号 | 说明 |
 | --- | --- | --- |
-| `init(host) -> Result<Self, String>` | `plugin_init` | 构造状态；返回 `Err` = 加载失败 |
-| `start(&mut self, config_json) -> Result<(), String>` | `plugin_start` | 宿主已把 VTable、插件目录都准备好；订阅/注册都写在这里 |
-| `stop(&mut self)` | `plugin_stop` | 可选；宏随后把状态收回 `Box` 释放 |
+| `init(host) -> Result<Self, String>` | `plugin_init` | 构造状态；返回 `Err` = 拒绝加载 |
+| `start(&mut self, config_json) -> Result<(), String>` | `plugin_start` | 订阅 / 注册都写在这里；`config_json` 是宿主传来的配置 |
+| `stop(&mut self)` | `plugin_stop` | 可选，回收 `Box::into_raw` 之类的状态 |
+| `inject() -> Vec<String>` | `plugin_manifest` | 硬依赖：缺了不激活 |
+| `soft_inject() -> Vec<String>` | `plugin_manifest` | 软依赖：只影响排队顺序 |
 
-`define_plugin!` 还会把插件代码包在 `catch_unwind` 里——和 `C-unwind` 是两层，
-**两层都要**：一层防 panic 逃出 ABI，一层防 panic 把宿主线程带走。
+`define_plugin!` 还把 `init` / `start` / `stop` 包在 `catch_unwind` 里——和回调的
+`C-unwind` 是两层，**两层都要**：一层防 panic 逃出 ABI，一层防 panic 把宿主线程带走。
+
+## 回调与状态
+
+回调是裸函数指针，没有捕获环境。状态要么放插件字段、经 `user_data` 传进去：
+
+```rust
+struct CallbackState {
+    host: HostApi,
+}
+
+struct DemoPlugin {
+    host: HostApi,
+    /// `Box<CallbackState>` 的地址；`stop` 时收回。
+    state: usize,
+}
+
+fn start(&mut self, _config_json: &str) -> Result<(), String> {
+    let state = Box::into_raw(Box::new(CallbackState { host: self.host }));
+    self.state = state as usize;
+
+    self.host.on(
+        "updateNewMessage",
+        None,
+        on_message,
+        state as *mut std::ffi::c_void,
+    );
+    Ok(())
+}
+
+fn stop(&mut self) {
+    if self.state != 0 {
+        // SAFETY: 指针来自 start 里的 Box::into_raw，只在这里收回一次。
+        drop(unsafe { Box::from_raw(self.state as *mut CallbackState) });
+        self.state = 0;
+    }
+}
+```
+
+<Callout type="warn">
+  订阅句柄**不会**在 drop 时自动退订——`SubscriptionHandle` 只是个 `u64`。
+  要提前退订就留住它、调 `host.off(handle)`；插件卸载时宿主会整批回滚，
+  但 `user_data` 指向的状态还是得自己释放。
+</Callout>
 
 ## 读 / 写配置
 
-每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段配置（详见[配置文件](../usage/config.mdx)）。
-`HostApi` 上两个方法直接读写它：
+每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段（见[配置文件](../usage/config.mdx)）。
+
+<Callout type="info">
+  `plugin_start` 收到的 `config_json` **不是**这一段。那是宿主给的运行环境信息
+  （`plugins_dir` / `scripts_dir` / `spawn` 等）；你自己的配置要用 `get_config("你的插件名", key)` 读。
+</Callout>
 
 | 方法 | 作用 |
 | --- | --- |
 | `get_config(section, key) -> Option<String>` | 读**任意**段。`section` 空串读顶层（`[bot]` 等），`key` 空串读整段、否则按点路径取键。返回 JSON 文本，找不到就是 `None` |
-| `set_config(key, value_json) -> Result<(), AbiError>` | 写**自己**的段。**没有 section 参数**——宿主按调用者身份判定，写不到别人那段。`key` 空串覆盖整段。成功后写内存并回写 `fuyubot.toml` |
+| `set_config(key, value_json) -> Result<(), AbiError>` | 写**自己**的段。**没有 section 参数**——宿主按调用者身份判定，写不到别人那段。`key` 空串覆盖整段 |
 
 ```rust
 fn start(&mut self, _config_json: &str) -> Result<(), String> {
-    // 读自己的段 `[plugin.demo]`（插件名点分，宿主当点路径下钻到 plugin.demo）。
+    // 读自己的段 `[plugin.demo]`（插件名点分，宿主当点路径下钻）。
     let greeting: String = self
         .host
         .get_config("demo", "greeting")
         .and_then(|json| serde_json::from_str(&json).ok())
         .unwrap_or_else(|| "hello".to_owned());
-    self.host.info(&format!("greeting = {greeting}"));
+    self.host.log(LogLevel::Info, &format!("greeting = {greeting}"));
 
     // 读别人的段：允许（只读）。
     if let Some(city) = self.host.get_config("my.weather", "city") {
-        self.host.info(&format!("天气插件的 city = {city}"));
+        self.host.log(LogLevel::Info, &format!("天气插件的 city = {city}"));
     }
 
-    // 写自己的段：把上次启动时间存回去（会回写 fuyubot.toml）。
+    // 写自己的段（会回写 fuyubot.toml）。
     self.host
         .set_config("last_started", "\"2026-01-01\"")
         .map_err(|e| format!("写自己的配置失败: {e}"))?;
@@ -118,169 +176,66 @@ fn start(&mut self, _config_json: &str) -> Result<(), String> {
 ```
 
 <Callout type="warn">
-  `set_config` 回写是**全量重写** `fuyubot.toml`——你手写在文件里的注释、空行会被 `toml`
-  序列化丢掉。插件写配置属于程序化修改，这是可接受的取舍；要保注释就别让插件运行时去改，
-  把值手工维护进文件。
+  `set_config` 回写是**全量重写** `fuyubot.toml`——手写的注释、空行会被 `toml`
+  序列化丢掉。要保注释就别让插件运行时去改，把值手工维护进文件。
 </Callout>
 
-## 回调里带状态
+## 常用 ABI 速查
 
-回调是裸函数指针，没有捕获环境。状态要么放插件字段、经 `user_data` 传进去，要么像
-`examples/rust-echo` 那样把 `Box<HostApi>` 的地址当 `user_data`：
-
-```rust
-// 结构体里另加一个 state: usize 字段，stop 时清零。
-fn start(&mut self, _config_json: &str) -> Result<(), String> {
-    let state = Box::into_raw(Box::new(self.host));
-    self.state = state as usize;
-    self._updates = self.host.subscribe_json(
-        "updateNewMessage", None, on_message, state as *mut std::ffi::c_void,
-    );
-    Ok(())
-}
-```
-
-`stop` 里用 `Box::from_raw` 收回，只收一次；否则就是内存泄漏（或重复释放）。
-
-<Callout type="warn">
-  `Subscription` 是 `#[must_use]`：`let _ = host.subscribe_json(…)` 会**立刻退订**。
-  一定要存进插件字段。插件卸载时宿主还会整批回滚，但那时插件自己的状态已经漏了。
-</Callout>
-
-## 一次看全：常用 ABI 怎么调
-
-`HostApi` 上是 VTable 那 22 个函数的一对一封装，`HostExt` 另外给了几个「不用自己拼 JSON 字符串」
-的便利方法（`subscribe_json` / `invoke_value` / `call_tool_value` / `config_value` /
-`set_config_value` / `wait_for_update_json` / `info|warn|error`）。下面这段把它们用了一遍
-（省掉了 `user_data` 取 `HostApi` 的样板，见上面「回调里带状态」一节）：
-
-```rust
-use fuyubot_plugin_api::{HostApi, HostExt, Stage};
-use serde_json::json;
-
-fn start(&mut self, _config_json: &str) -> Result<(), String> {
-    // ① 订阅：第二个参数是过滤器（None = 全收）
-    self._updates = self.host.subscribe_json(
-        "updateNewMessage",
-        Some(json!({ "message.content.text.text": "/ping" })),
-        on_ping,
-        std::ptr::null_mut(),
-    );
-
-    // ② 发自定义事件：自己 + 全局订阅者收得到
-    self.host
-        .emit("demo.ready", &json!({ "ok": true }).to_string())
-        .map_err(|e| e.to_string())?;
-
-    // ③ 登记工具：带处理器；只登记元数据用 register_tool_meta
-    self._tool = Some(self.host.register_tool(
-        r#"{"name":"demo.echo","description":"回显入参","input_schema":{"type":"object"}}"#,
-        Some(on_echo),
-        std::ptr::null_mut(),
-    ));
-
-    // ④ 挂中间件：阶段数值见「工具与中间件」
-    self.host
-        .use_middleware(Stage::InPlugin as u32, on_stage, std::ptr::null_mut());
-
-    // ⑤ 读写配置（HostExt 的版本直接吃 serde_json::Value）
-    if let Some(city) = self.host.config_value("my.weather", "city") {
-        self.host.info(&format!("天气插件 city = {city}"));
-    }
-    self.host.set_config_value("last_seen", json!(123))?;
-
-    // ⑥ 看看进程里都有哪些工具 / 插件（返回的是宿主线程局部缓冲，读完即弃）
-    if let Some(tools) = self.host.list_tools() {
-        self.host.info(&format!("工具表：{tools}"));
-    }
-    Ok(())
-}
-
-extern "C-unwind" fn on_ping(user: *mut std::ffi::c_void, payload: *const std::ffi::c_char) -> i32 {
-    // SAFETY: 宿主按 ABI 契约传的是临时 NUL 结尾字符串。
-    let update = unsafe { fuyubot_plugin_api::parse_payload(payload) };
-    // SAFETY: user_data 是 start 里塞进去的 Box<HostApi>。
-    let Some(host) = (unsafe { (user as *const HostApi).as_ref() }) else {
-        return -1;
-    };
-    let chat_id = update.pointer("/message/chat_id").and_then(|v| v.as_i64());
-    let Some(chat_id) = chat_id else { return 0 };
-
-    // ⑦ 发请求：只拿请求号，响应走 "response" 通道（见「调用 TDLib」）
-    match host.invoke_value("sendMessage", json!({
-        "chat_id": chat_id,
-        "input_message_content": {
-            "@type": "inputMessageText",
-            "text": { "@type": "formattedText", "text": "pong", "entities": [] },
-        },
-    })) {
-        Ok(request) => host.info(&format!("已发 #{}", request.id)),
-        Err(e) => host.error(&format!("发不出去：{e}")),
-    }
-
-    // ⑧ 同步执行不碰网络的方法：当场返回，不进接收循环
-    let parsed = host.td_execute(r#"{"@type":"parseTextEntities","text":"*粗体*",
-        "parse_mode":{"@type":"textParseModeMarkdown","version":2}}"#);
-
-    // ⑨ 调别人的工具（同步拿结果）
-    match host.call_tool_value("weather.now", json!({ "city": "上海" })) {
-        Ok(out) => host.info(&format!("天气：{out}")),
-        Err(e) => host.warn(&format!("调工具失败：{e}")),
-    }
-    0
-}
-```
+`HostApi` 上的方法就是 VTable 的一对一封装（都替你处理了 `CString` 与线程局部缓冲）：
 
 | 想干什么 | 用哪个 |
 | --- | --- |
-| 订阅 / 退订 | `subscribe_json`（返回 `Subscription`，drop 即退订）/ 句柄 `off` |
-| 发 TDLib 请求 | `invoke_value(method, params)`（或底层 `td_invoke_simplified` 吃字符串） |
-| 同步执行 | `td_execute`（`parseTextEntities` / `getTextEntities` 这类） |
-| 等一条更新 / 一条响应 | `wait_for_update_json`（阻塞）或 `ResponseRouter` 的 `await` 版，见[异步等待](./async.mdx) |
-| 工具 | `register_tool` / `register_tool_meta` / `call_tool` / `call_tool_result` / `list_tools` |
-| 服务 | `provide_service`（自己作用域）/ `provide_service_shared`（进程级）/ `get_service` |
-| 配置 | `get_config` / `set_config`（字符串版）、`config_value` / `set_config_value`（`Value` 版） |
-| 中间件 | `use_middleware(Stage::X as u32, cb, user_data)` |
-| 看别人 | `list_tools` / `list_plugins` |
-| 跨语言简化入口（v5） | `simplify_invoke(op_json)` / `simplify_invoke_result(op_json)`——和 JS/TS/Python/Go/C 同一条 op 表（见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)）；要类型安全的封装仍可用上面的 `fuyubot-simplify` crate |
+| 打日志 | `log(LogLevel, &str)` |
+| 订阅 / 退订 | `on(event, Some(filter), cb, user_data)` / `off(handle)`；过滤器是 `{"字段路径": 期望值}` |
+| 发自定义事件 | `emit(event, payload_json)`——只送自己 + 全局订阅者 |
+| 发 TDLib 请求 | `td_invoke_simplified(method, params_json)`；响应走 `"response"` 通道（见[调用 TDLib](./tdlib.mdx)） |
+| 同步执行不碰网络的方法 | `td_execute(request_json)` |
+| 工具 | `register_tool(descriptor, handler, user_data)` / `register_tool_meta` / `call_tool` / `call_tool_result` / `list_tools` |
+| 服务 | `provide_service`（自己作用域）/ `provide_service_shared`（进程级）/ `get_service` / `call_service`，见[插件联动](./linkage.mdx) |
+| 中间件 | `use_middleware(Stage::InPlugin, cb, user_data)`，见[工具与中间件](./tools.mdx) |
+| 等一条更新 | `wait_for_update(filter_json, timeout_ms)`（阻塞）或 `ResponseRouter`（可 await），见[异步等待](./async.mdx) |
+| 看别人 | `list_tools()` / `list_plugins()` |
+| simplify 操作表 | `simplify_invoke(op_json)` / `simplify_invoke_result(op_json)`，见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表) |
 
-## 用封装层发消息：`fuyubot-simplify`
-
-上面 ⑦ 那种手写 JSON 能跑，但每个方法都要自己拼嵌套结构、还要自己等「发送结局」。
-Rust 插件可以直接用封装层——**只有 Rust 有这个**（它是 crate，不是 ABI）：
-
-```toml
-[dependencies]
-fuyubot-simplify = "0.1"      # 与 fuyubot-plugin-api 同版本线
-```
+## 注册一个带处理器的工具
 
 ```rust
-use fuyubot_simplify::{SendMessageParams, Simplify, Text};
+use std::cell::RefCell;
+use std::ffi::{CStr, CString};
+
+thread_local! {
+    static REPLY: RefCell<CString> = RefCell::new(CString::default());
+}
+
+unsafe extern "C-unwind" fn on_echo(
+    _user: *mut std::ffi::c_void,
+    input: *const std::ffi::c_char,
+) -> *const std::ffi::c_char {
+    // SAFETY: 宿主传的是临时 NUL 结尾字符串。
+    let input = unsafe { CStr::from_ptr(input) }.to_string_lossy();
+    let out = format!(r#"{{"echo":{input}}}"#);
+    // 返回值必须活到宿主读完：线程局部的 CString 正好满足。
+    REPLY.with(|slot| {
+        *slot.borrow_mut() = CString::new(out).unwrap_or_default();
+        slot.borrow().as_ptr()
+    })
+}
 
 fn start(&mut self, _config_json: &str) -> Result<(), String> {
-    let simplify = Simplify::new(self.host);        // HostApi 是 Copy
-
-    // 等到「真发出去」才返回，拿到最终那条 Message
-    let sent = simplify
-        .send_message(chat_id, &SendMessageParams::text("你好"))
-        .map_err(|e| e.to_string())?;
-
-    // Markdown + 回复 + 内联键盘一次到位；Markdown 不自己解析，问 TDLib 要 entities
-    simplify
-        .send_message(chat_id, &SendMessageParams {
-            text: Some(Text::markdown("*粗体*")),
-            reply_to_message_id: Some(sent["id"].as_i64().unwrap_or(0)),
-            ..SendMessageParams::default()
-        })
-        .map_err(|e| e.to_string())?;
+    let tool = self.host.register_tool(
+        r#"{"name":"demo.echo","description":"回显入参","input_schema":{"type":"object"}}"#,
+        Some(on_echo),
+        std::ptr::null_mut(),
+    );
+    if !tool.is_valid() {
+        return Err("注册工具失败".to_owned());
+    }
     Ok(())
 }
 ```
 
-它只简化**输入**，不改变输出：每个方法仍经 `td_invoke*` 发出，原始更新照旧对插件可见。
-完整 API（发送 / 相册 / 编辑 / 富消息 / 命令解析）见 [Simplify 封装](./simplify.mdx)。
-⚠️ 在更新回调里**不能**用这些等待版——等更新要靠接收循环那个线程送回来，而回调就跑在它上面；
-回调里请用 `*_then`，见[异步等待](./async.mdx)。
+只想登记声明、不要处理器，就用 `register_tool_meta(descriptor_json)`。
 
 ## 编译与安装
 

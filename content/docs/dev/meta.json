@@ -3,5 +3,5 @@
   "description": "改框架本身：架构、封装层的实现、构建、陷阱、发布",
   "icon": "Wrench",
   "root": true,
-  "pages": ["index", "architecture", "simplify-internals", "build-test", "pitfalls", "release"]
+  "pages": ["index", "architecture", "android", "simplify-internals", "build-test", "pitfalls", "release"]
 }

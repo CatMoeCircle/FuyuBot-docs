@@ -38,7 +38,7 @@ fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
 $ fuyubot init --dir demo --name mybot --api-id 12345
 已生成 demo\fuyubot.toml
 插件目录：demo\plugins
-下一步：fuyubot-sdk init demo --lang rust（插件脚手架由开发 CLI 生成）
+下一步：装 fuyubot-script 插件，或按文档站示例自己写插件（plugins/ 或 plugins/scripts/）
 ```
 
 ## `run`
@@ -46,6 +46,7 @@ $ fuyubot init --dir demo --name mybot --api-id 12345
 ```text
 fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--no-tdlib]
             [--no-login] [--background] [--tui] [--replay <REPLAY>] [--replay-wait <MS>]
+            [--log-level <LEVEL>] [--log-plugin <NAME>] [--trace-updates]
 ```
 
 | 参数 | 作用 |
@@ -59,6 +60,9 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `--tui`（短写 `-t`） | 打开**终端操作面板**（顶部版本栏 + 导航/工作区 + 底部操作与资源占用），而不是前台跑 bot。面板自己不接 TDLib、不加载插件；`s` 派生 `run --background`，`x` 走优雅停止。与 `--background` / `--replay` 互斥 |
 | `--replay <文件>` | 把一批更新 JSON 灌进管线后退出：**不接 TDLib、不用账号** |
 | `--replay-wait <MS>` | 回放后等插件的静默窗口；不填按插件形态自选（脚本插件 2000，原生 150） |
+| `--log-level <LEVEL>` | 覆盖 `[plugins].log_level`（error / warn / info / debug / trace），不用改配置 |
+| `--log-plugin <NAME>` | 只看这些插件打出来的日志（可重复 / 逗号分隔；按 manifest 里的插件名，如 `fuyubot.start`） |
+| `--trace-updates` | 把 TDLib 的每一条原始更新 / 响应打到 stderr（含消息内容，别在正式环境开） |
 
 `run` 不带 `--replay` 的顺序：自动 init → 把**工作目录切到项目根**（插件眼里的相对路径都从这里算）→ 拿单实例锁 → attach TDLib → 问/读凭据 → **加载全部插件** →
 发 `setTdlibParameters` 并登录 → `getMe` 打印账户 → 发布状态 → 才开始分发。
@@ -103,6 +107,7 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同） |
 | `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
 | `s` | 启动 bot（等价于 `fuyubot run --background`） |
+| `L`（大写） | **登录**（等价于 `fuyubot login`）：按授权状态弹输入框（bot token / 手机号 / 验证码 / 两步验证密码），`Enter` 提交、`Esc` 取消。只在**实例停着**时可用 |
 | `x` → `y` | 停止 bot（`y` 是确认框里的确认；走 `.fuyubot/stop` 的优雅停止） |
 | `r` | 刷新状态 / 插件 / 日志 / 配置 |
 | `l` | 日志页 + 工作区焦点：调整日志级别（error / warn / info / debug / trace） |
@@ -115,6 +120,16 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 面板**不占实例锁、不加载插件、不接 TDLib**：同一个 TDLib 数据目录同一时刻只能一个进程打开，
 所以它只读 `.fuyubot/status`、配置、插件目录和 `logs/fuyubot.log`。启停都派生子进程，
 和手敲命令走同一条路——面板里看到的就是真正在跑的那个实例。
+
+唯一的例外是**登录**（`L`）：它在面板进程里跑一次和 `fuyubot login` 完全相同的流程
+（同一份 `fuyubot-app` 的 `App::boot` + `login`），把授权状态机的提问弹成输入框，结束后
+立刻关掉 TDLib 交还目录。因此：
+
+- **只在实例停着时可用**——跑着的时候按 `L` 只会提示你先停止；
+- `api_id` / `api_hash` 要事先在环境变量（`TG_API_ID` / `TG_API_HASH`）或 `fuyubot.toml` 里准备好，
+  面板不会再问这两项（那是 `fuyubot login` 的事）；
+- 密码框会打码，验证码不打码；`Esc` 取消等同于这一步没给输入，登录会失败并退回待命状态；
+- 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`。
 
 日志页按 `l` 打开级别选择框：写入 `.fuyubot/log-level`，运行中的实例每 500ms 读一次并切换，
 `status` 随后显示新的 `log_level`。这是**运行期**开关：只对本次运行生效，重启回到
@@ -278,38 +293,40 @@ $ fuyubot config --config demo\fuyubot.toml
 | `fuyubot plugin list [--config …] [--plugin-dir <目录>]` | 列出插件；脚本插件会**展平到每个脚本** |
 | `fuyubot plugin install <文件或目录> [--config …] [--plugin-dir <目录>]` | 装一个插件：传**目录**是脚本插件，传**文件**是原生插件 |
 | `fuyubot plugin uninstall <名字> [--config …] [--plugin-dir <目录>]` | 卸载：脚本插件按**目录名**，原生插件按动态库名 |
+| `fuyubot plugin migrate [--dry-run] [--config …] [--plugin-dir <目录>]` | 把旧形态平铺 dll / 老脚本目录迁成插件包（补 `plugin.json`） |
 
 ```text
-$ fuyubot plugin install ./my-plugin
-已安装 plugins\scripts\my-plugin
+$ fuyubot plugin install ./weather
+已安装插件包 plugins\scripts\weather（`fuyubot plugin list` 可见；重启后生效）
 
 $ fuyubot plugin list
-fuyubot.js-host  ABI 4  plugins\fuyubot_js_host.dll
-fuyubot.python-host  ABI 4  plugins\fuyubot_python_host.dll
-脚本插件（1 个，由中间插件托管）：
-  mybot.my-plugin  python  plugins\scripts\my-plugin\main.py
+原生插件包（1 个）：
+  fuyubot.script	0.1.2	ABI 5	native	plugins\fuyubot.script
+旧形态动态库（0 个，建议 `fuyubot plugin migrate` 迁成插件包）：
+  （无）
+脚本插件（1 个，由 fuyubot.script 托管）：
+  mybot.weather	0.1.0	python	plugins\scripts\weather\main.py	plugins\scripts\weather
 
-$ fuyubot plugin uninstall my-plugin
-已卸载 plugins\scripts\my-plugin
+$ fuyubot plugin uninstall weather
+已卸载 plugins\scripts\weather（正在跑的实例要重启才彻底放手）
 ```
 
-- **脚本插件**（推荐，见 [脚本插件](../plugin/scripts.mdx)）：传的是**整个目录**
+- **脚本插件**（见 [脚本插件](../script/index.mdx)）：传的是**整个目录**
   （里面有 `pyproject.toml` / `package.json` 身份段），装到 `plugins/scripts/<目录名>/`。
   目标已存在会报错，要覆盖先 `uninstall` 再 `install`。
 - **原生插件**：传编好的 `.dll` / `.so` / `.dylib`，或**工程目录**。传目录时按
   `<工程>/target/{release,debug}` → 工程目录本身 → **沿父链最近的** `target/{release,debug}`
   这个顺序找产物（两边都有时取**较新**的那个）。最后一档就是给 workspace 成员准备的
   （`cargo build -p <crate>` 的产物落在仓库根 `target/`，工程自己那份 `target/` 根本不存在），
-  所以那种情况**直接传工程目录就行**，没有 `--target-dir` 这个参数。产物连同旁边 / 工程根的
-  `.py` / `.js` / `.ts` / `.pyi` 同伴脚本一起拷进插件目录。
-- `list` 会**真的加载一次**动态库才知道名字，但**只发现不启动**脚本——不装依赖、
-  不起进程，随时可以跑。脚本的名字取自 manifest（`name` 字段），路径是入口文件。
+  所以那种情况**直接传工程目录就行**，没有 `--target-dir` 这个参数。
+- `list` 是**纯静态**的：原生插件读插件包根上的 `plugin.json`（不 dlopen），脚本插件按
+  `plugins/scripts/<目录>/` 的清单列——不装依赖、不起进程，随时可以跑。
 - `uninstall` 对**跑着的实例也安全**：文件删掉后目录 watch 会自动卸载对应脚本，
   不需要先 `stop`。
 
 ## 相关页面
 
-- 脚本插件上手：[脚本插件](../plugin/scripts.mdx)
+- 脚本插件上手：[脚本插件](../script/index.mdx)
 - 配置字段：[配置文件](../usage/config.mdx)
 - 实例与后台运行：[运行与实例管理](../usage/run.mdx)
 - 回放的输出与等待窗口：[离线回放](../usage/replay.mdx)

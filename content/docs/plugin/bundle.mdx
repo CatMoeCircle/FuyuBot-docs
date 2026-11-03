@@ -132,7 +132,7 @@ fuyubot run --config fuyubot.toml
 | 提示 `id` 与目录不一致 | 目录名和 `plugin.json` 的 `id` 不同会以 `id` 为准；改名保持一致 |
 | 提示平台不匹配 | 压缩包不是给当前系统的；换对应平台的资产 |
 | 提示入口不存在 | `entry` 写错，或打包时漏了 `bin/` 里的文件 |
-| 启动时报 ABI 不匹配 | 插件编译时的 ABI 与宿主不一致；用当前宿主 SDK 重新编译 |
+| 启动时报 ABI 不匹配 | 插件编译时的 ABI 与宿主不一致；用与宿主同版本的 `fuyubot-abi` 重新编译 |
 | 加载后名字对不上 | `plugin_init` 返回的名字必须等于 `plugin.json` 的 `id` |
 
 ## 卸载

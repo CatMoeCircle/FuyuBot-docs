@@ -6,6 +6,19 @@ description: fuyubot-simplify 的 API 参考：按功能范围分组的参数结
 `fuyubot-simplify` 只做一件事：**把 TDLib 的输入拼好、把结果等回来**，返回值仍然是 TDLib 的原始 JSON
 （`Value` / `Vec<Value>`）。
 
+<Callout type="info">
+  它是**运行时仓库里的 crate，不发 crates.io**（`publish = false`），所以只能按路径依赖：
+
+  ```toml
+  [dependencies]
+  fuyubot-abi      = "0.1.2"
+  fuyubot-simplify = { path = "<你的 Fuyu-Bot 检出>/crates/fuyubot-simplify" }
+  ```
+
+  写 `fuyubot-simplify = "0.1"` 会编不过。不想引路径依赖就用宿主暴露的 op 表
+  （`simplify_invoke` / `simplify_invoke_result`，见 [ABI › simplify 操作表](./abi.mdx#simplify-操作表)）。
+</Callout>
+
 ```rust
 let simplify = Simplify::new(host); // HostApi 是 Copy，随手复制
 ```

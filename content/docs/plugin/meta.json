@@ -1,7 +1,7 @@
 {
   "title": "插件开发",
-  "description": "Rust / C / C++ / Go / Python / JS / TS 写插件",
+  "description": "用 Rust / C / C++ / Go 写原生插件（一个 cdylib）",
   "icon": "Puzzle",
   "root": true,
-  "pages": ["index", "bundle", "store", "migration", "scripts", "rust", "native", "go", "python", "js-ts", "events", "linkage", "tdlib", "simplify", "external", "rich", "tools", "async", "abi", "testing"]
+  "pages": ["index", "bundle", "store", "migration", "rust", "native", "go", "events", "linkage", "tdlib", "simplify", "external", "rich", "tools", "async", "abi", "testing"]
 }

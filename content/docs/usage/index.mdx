@@ -24,9 +24,8 @@ description: 下载对应平台的包，解压就能跑
 - **解压出来就是本体**：zip 里没有额外的一层目录，建议先建一个空目录再往里解压。
 - 归档一律 `.zip`（Windows 资源管理器双击就能解，Linux / macOS 用 `unzip`）。
 - **上面没有的平台**（Intel Mac 等）暂时没有包，自己编：见 [从源码构建](./build.mdx)。
-- 插件开发 CLI（`fuyubot-sdk`）在**另一个仓库**的 Release 里：
-  [FuyuBot-SDK](https://github.com/CatMoeCircle/FuyuBot-SDK/releases) 的 `fuyubot-sdk-<系统>-<架构>.zip`，
-  它**不需要** `tdjson`。
+- 想让机器人支持 Python / JS / TS 脚本，再去下[脚本插件](https://github.com/CatMoeCircle/FuyuBot-Script/releases)
+  的 `fuyubot-script-<OS>-<平台>.zip`，解压后把 `plugins/fuyubot.script/` 放进插件目录。
 
 ## 解压、验证
 
@@ -72,7 +71,7 @@ fuyubot 0.1.0
 ```text
 已生成 demo\fuyubot.toml
 插件目录：demo\plugins
-下一步：fuyubot-sdk init demo --lang rust（插件脚手架由开发 CLI 生成）
+下一步：装 fuyubot-script 插件，或按文档站示例自己写插件（plugins/ 或 plugins/scripts/）
 ```
 
 `api_id` 到 [my.telegram.org](https://my.telegram.org) 申请，**它不是秘密**，可以直接写进配置；`api_hash` 是凭据，
