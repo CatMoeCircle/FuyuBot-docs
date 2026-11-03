@@ -98,12 +98,8 @@ weather.zip
 
 ### 从商店安装
 
-在 `fuyubot.toml` 里配置索引地址：
-
-```toml
-[plugins]
-registry_url = "https://catmoecircle.github.io/FuyuBot-plugins/index.json"
-```
+新建项目默认已配置官方商店（`fuyubot.toml` 的 `[plugins].registry_url`）。
+换商店改那一行，删掉则关闭商店。
 
 运行 `fuyubot run --tui`，进「商店」页搜索、选中、安装，然后重启实例。
 
