@@ -33,8 +33,8 @@ class Native(private val callback: Any) {
     external fun nativeIsRunning(): Boolean
     external fun nativeAnswer(id: Int, text: String?): Int
 
-    // ABI v2：运行时查询
-    external fun nativePlugins(): String                        // 插件列表 JSON
+    // 运行时查询（ABI v1 一共十个方法）
+    external fun nativePlugins(): String                        // 插件清单 + 计数 JSON
     external fun nativePluginInfo(name: String): String?        // 单个插件；没有 = null
     external fun nativeTdRequest(requestJson: String, timeoutMs: Long): String?  // 阻塞
     external fun nativeLastError(): String                      // 本线程最后一次错误
@@ -44,7 +44,7 @@ class Native(private val callback: Any) {
         // 与 extractNativeLibs 怎么配无关。
         System.loadLibrary("tdjson")
         System.loadLibrary("fuyubotjni")
-        check(nativeVersion() == 2)      // ABI 运行时判定
+        check(nativeVersion() == 1)      // ABI 运行时判定
         check(nativeRegister(callback) == 0)
     }
 }
@@ -55,7 +55,8 @@ class Native(private val callback: Any) {
 > 类名 / 方法名 / 签名必须与上面一字不差；包名不是符号名的一部分——自己编译时可以用
 > `FUYUBOT_JNI_CLASS=com/你的/包/Native` 换掉，预编译包就按默认包名写。
 > `nativeRegister` 在 JNI 层收的是 `Object`，所以回调对象没有包名限制：库按方法名调
-> `onState` / `onAsk` / `onQr`，你自己的 interface 或 class 只要有这三个方法即可。
+> `onState` / `onAsk` / `onQr`（以及可选的 `onPlugins`），你自己的 interface 或 class
+> 只要有这几个方法即可——`onPlugins` 可以没有。
 >
 > 开了 R8 / ProGuard 必须 keep 绑定类，否则混淆改掉类名/方法名就绑不上（第一次调用才报
 > `UnsatisfiedLinkError`）：`-keep class com.catmoecircle.fuyubot.runtime.Native { *; }`
@@ -102,6 +103,7 @@ Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**�
 Callback.onState(int state, String detail)
 Callback.onAsk(int id, int kind, String prompt)     // 回答走 nativeAnswer(id, text)
 Callback.onQr(String link)                          // 只展示，不需要回答
+Callback.onPlugins(String reportJson)               // 可选：插件清单 + 计数 + 跳过原因
 ```
 
 `state`：
@@ -129,6 +131,10 @@ Callback.onQr(String link)                          // 只展示，不需要回�
 ——它挡着登录状态机。`nativeAnswer(id, null)` 表示取消，登录会以失败收场。
 
 `onQr` 对应 TDLib 的「其它设备确认」登录：把链接显示出来（或自己画二维码）即可，不需要回答。
+
+`onPlugins` 在**装完插件、登录之前**调一次（所以登录窗口弹出时你已经能显示插件状态），
+参数就是 `nativePlugins()` 那份 JSON（见下）。它是**可选的**：不需要时不必实现；
+`nativePlugins()` 任何时候都能主动拉取。
 
 ## 停车 [#停车]
 
@@ -159,17 +165,20 @@ daemon，不调会把进程吊在那儿。
 库承诺的三件事：`start` 幂等（已在跑返回 `2`）、`stop` 幂等且会等收摊、`onState` 如实上报。
 同一个 `data_dir` 只允许一个实例——TDLib 的数据库同一时刻只能被一个进程打开。
 
-## 插件与 TDLib（ABI v2） [#插件与-tdlibabi-v2]
+## 插件与 TDLib（ABI v1） [#插件与-tdlibabi-v1]
 
 三个查询接口都是 **JSON 文本进、JSON 文本出**——加字段不破 ABI，也不用为每个 td_api
 方法生成一个绑定。
 
 ```kotlin
-// 1. 当前插件列表
+// 1. 当前插件清单 + 计数
 val list = nativePlugins()
-// {"count":2,"plugins":[{"name":"fuyubot.start","version":"0.1.2","abi_version":5,
-//   "state":"active","inject":["fuyubot.host.td"],"soft_inject":[],
-//   "path":"/data/…/plugins/libfuyubot_start.so","file":"libfuyubot_start.so"}]}
+// {"count":2,"scanned":3,"active":1,"pending":0,"activating":0,"failed":1,"unknown":0,
+//  "skipped":1,
+//  "plugins":[{"name":"fuyubot.start","version":"0.1.2","abi_version":5,
+//              "state":"active","inject":["fuyubot.host.td"],"soft_inject":[],
+//              "path":"/data/…/plugins/libfuyubot_start.so","file":"libfuyubot_start.so"}],
+//  "skipped_plugins":[{"path":"/data/…/plugins/libbroken.so","reason":"打开动态库失败 …"}]}
 
 // 2. 单个插件（就是上面数组里的一项）；不存在的名字 → null
 val one = nativePluginInfo("fuyubot.start")
@@ -180,20 +189,31 @@ val me = withContext(Dispatchers.IO) {
 }
 ```
 
+计数与数组：
+
+| 字段 | 说明 |
+| --- | --- |
+| `count` | 交给内核的插件数（= `plugins` 长度） |
+| `scanned` | 目录里扫到的候选数（= `count` + `skipped`） |
+| `active` / `pending` / `activating` / `failed` / `unknown` | 五个状态计数，和恒等于 `count` |
+| `skipped` | 没进内核的候选数 |
+| `skipped_plugins` | 那些候选的 `{path, reason}`：探测失败（不是插件 / ABI 不符 / 打不开）、或脚本插件放错位置 |
+
 插件条目的字段：
 
 | 字段 | 说明 |
 | --- | --- |
 | `name` | 插件名（点分，`plugin_init` 报的那个） |
-| `version` | 插件 manifest 的版本；老插件（ABI v3）是空串 |
+| `version` | 插件 manifest 的版本；未写版本时为空串 |
 | `abi_version` | 插件编进去的 ABI 版本 |
 | `state` | `active` / `pending` / `activating` / `failed` / `unknown` |
 | `inject` / `soft_inject` | 硬 / 软依赖（manifest 优先，配置段兜底） |
 | `path` / `file` | 插件文件与文件名 |
 | `missing` / `reason` | 仅 `pending` 有 `missing`（还缺哪些能力），仅 `failed` 有 `reason` |
 
-状态是**现算**的（内核的插件报告），不是装插件那一刻的快照；运行时没起来时
-`nativePlugins()` 返回 `{"count":0,"plugins":[]}`（不是 `null`，也不是错误）。
+状态是**现算**的（内核的插件报告），不是装插件那一刻的快照。装完插件、登录**之前**就
+能查，登录窗口期间也可以。运行时不在跑时返回**同一份形状**的空表（计数全 0、两个数组
+为空），不是 `null`，也不是错误。
 
 `nativeTdRequest` 的规矩：
 
@@ -218,8 +238,8 @@ int32_t     fuyubot_is_running(void);
 int32_t     fuyubot_answer(int32_t id, const char *text);   /* text = NULL 表示取消 */
 const char *fuyubot_last_error(void);                        /* 线程局部，下次调用前有效 */
 
-/* ABI v2 */
-const char *fuyubot_plugins(void);                           /* 列表 JSON；没起来 = 空表 */
+/* 运行时查询 */
+const char *fuyubot_plugins(void);                           /* 清单 + 计数；没起来 = 同形状空表 */
 const char *fuyubot_plugin_info(const char *name);           /* 单个插件；没有 = NULL */
 const char *fuyubot_td_request(const char *request_json,      /* 原始 td_api JSON → 响应 */
                                int32_t timeout_ms);           /* 阻塞；<=0 默认 30s，上限 600s */
@@ -228,7 +248,7 @@ const char *fuyubot_td_request(const char *request_json,      /* 原始 td_api J
 返回码：`0` 成功、`1` 参数错、`2` 已在运行、`3` 超时、`4` 内部 panic（已兜住）、`5` 内部错
 （细节看 `fuyubot_last_error()`）。三个返回字符串的函数同一套纪律：**线程局部缓冲**，
 下次在同一线程调本库前有效，别 free、别存、别跨线程传。
-纯 C 宿主没有回调通道：`onAsk` 那一步没人回答，所以只适合 `bot_token` 登录（把它放进 options）。
+纯 C 宿主没有回调通道：登录请在 options 里提供 `bot_token`。
 
 ## 与命令行的关系 [#与命令行的关系]
 
