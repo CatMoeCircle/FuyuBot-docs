@@ -15,6 +15,11 @@ APK 由应用作者自己出；这个包只提供**运行时本体**。宿主内
 （`fuyubot-app` 编排 + `fuyubot-loader` 宿主 + `fuyubot-tdlib`），只有「谁来回答登录提问」
 不同：Android 上是 Java 回调。
 
+> 想直接装一个能用的、不用自己出 APK：每次 `v*` 发布都会附
+> `fuyubot-<版本>-<abi>.apk`（例 `fuyubot-v0.1.3-arm64-v8a.apk`）。壳来自
+> [FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android)，
+> 里面的内核就是本页这个 JNI 包。说明见 [发布 · Android：APK](./release.mdx)。
+
 ## 装法 [#装法]
 
 1. 两个 `.so` 放进 `app/src/main/jniLibs/<abi>/`；

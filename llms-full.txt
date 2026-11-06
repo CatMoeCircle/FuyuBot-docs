@@ -389,6 +389,11 @@ APK 由应用作者自己出；这个包只提供**运行时本体**。宿主内
 （`fuyubot-app` 编排 + `fuyubot-loader` 宿主 + `fuyubot-tdlib`），只有「谁来回答登录提问」
 不同：Android 上是 Java 回调。
 
+> 想直接装一个能用的、不用自己出 APK：每次 `v*` 发布都会附
+> `fuyubot-<版本>-<abi>.apk`（例 `fuyubot-v0.1.3-arm64-v8a.apk`）。壳来自
+> [FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android)，
+> 里面的内核就是本页这个 JNI 包。说明见 [发布 · Android：APK](./release.mdx)。
+
 ## 装法 [#装法]
 
 1. 两个 `.so` 放进 `app/src/main/jniLibs/<abi>/`；
@@ -1347,6 +1352,7 @@ cargo fmt --all --check             # 0 diff
 | TDLib 动态库 `TDLib-<os>-<arch>` | `TDLib-v<版本>` | `build-tdlib.yml` + `.github/scripts/*.sh` | 构建期（`fuyubot-tdlib` 的 loader 表） |
 | fuyubot 本体 `fuyubot-<版本>-<OS>-<平台>.zip` | `v<版本>` | `release-bot.yml` | 终端用户下载、解压即跑 |
 | Android JNI 包 `fuyubot-<版本>-android-jni-<abi>.zip` | `v<版本>` | `release-bot.yml`（同一个 `build-android` job） | 应用作者拷进 `jniLibs/` |
+| Android APK `fuyubot-<版本>-<abi>.apk` | `v<版本>` | `release-bot.yml` 的 `build-apk` job | 终端用户直接安装 |
 
 ## TDLib 资产（构建期契约） [#tdlib-资产构建期契约]
 
@@ -1418,6 +1424,34 @@ fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
 `PT_LOAD` 按 16 KB 页对齐、7 个导出符号齐全、`RegisterNatives` 的绑定类名在（方法名/签名由单测钉住）、
 `DT_NEEDED` 只允许 bionic 的那几个。
 用法见 [Android：JNI 运行时](./android.mdx)。
+
+### Android：APK（可安装的图形客户端） [#androidapk可安装的图形客户端]
+
+同一页 Release 里还有 `.apk`：`fuyubot-<版本>-<abi>.apk`（`<abi>` = `arm64-v8a` / `x86_64`，
+例 `fuyubot-v0.1.3-arm64-v8a.apk`）。
+它是把上面那个 JNI 包塞进壳仓库
+[FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android)（Kotlin + Compose）再编一次
+得到的，内核与本仓**同版本**——`build-apk` job 取的就是本次运行产出的
+`fuyubot-<版本>-android-jni-<abi>.zip`，不是上游壳仓库自带的旧内核。
+
+壳不在本仓，按 `main` checkout；内核放的上游**指定目录**是
+`app/src/main/assets/fuyubot-kernel/`（不是 `jniLibs/`），由 `.github/scripts/build-android-apk.sh`
+铺进去。这个目录被上游 `.gitignore` 排除，缺了它 gradle 照样编得出 APK，只是装到设备上首次启动
+报「资产中缺少内核目录」——所以 CI 的判据是**APK 里真有 `assets/fuyubot-kernel/lib*.so`**，
+不是「`assembleRelease` 绿了」。
+
+脚本还会按本仓的 tag 改写上游两处常量，不改就会静默出错：
+
+| 上游位置 | 为什么要改 |
+| --- | --- |
+| `data/update/UpdateChannel.kt` 的 `CURRENT_KERNEL_VERSION` | `KernelManager` 拿它和已装内核比版本，**相等就跳过重装**。不改 = 用户装上新 APK 仍在跑旧内核 |
+| `app/build.gradle.kts` 的 `versionCode` / `versionName` | 不改的话每个 Release 都是 `1.0` / `1`，应用内的更新检查永远看不出新版本 |
+
+签名走 `apksigner`（`zipalign -P 16` 先对齐再签，minSdk 33 只要 v2 + v3），
+keystore 从 Actions Secrets 还原：`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
+`ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`，四个缺一个这条 job 就失败（宁可不发，也不发装不上的包）。
+**同一个 keystore 不能换**——换了老用户装新 APK 会报签名冲突，只能先卸载。
+keystore 容器类型按文件魔数判定（PKCS12 是 `30xx` DER、JKS 是 `feedfeed`），与扩展名无关。
 
 <Callout type="warn">
   GitHub Actions 在本机验不了。改 workflow 的组包步骤时，把 `Package the runtime` 与
