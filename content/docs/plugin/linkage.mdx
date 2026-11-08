@@ -49,7 +49,7 @@ flowchart LR
 
 | 角色 | 插件 | 做什么 |
 | --- | --- | --- |
-| 提供方 | `fuyubot.help` | `start()` 里 `provide_service_shared` 注册服务；`/help` 渲染时合并静态基线与动态注册表 |
+| 提供方 | `fuyubot.help` | `start()` 里 `provide_service_shared` 注册服务；`/help` 渲染时合并动态注册表（带归属）与静态基线 |
 | 消费方 | `fuyubot.start` | `soft_inject` 声明软依赖；`start()` 里 `call_service(…, "register", …)` |
 | 消费方 | `fuyubot.manage` | 同上，登记 `/plugins` |
 
@@ -88,7 +88,7 @@ fn reply(text: &str) -> *const c_char {
 }
 
 unsafe extern "C" fn svc_register(
-    _context: *mut c_void,
+    context: *mut c_void,
     input_json: *const c_char,
 ) -> *const c_char {
     let input = match unsafe { CStr::from_ptr(input_json) }.to_str() {
@@ -105,8 +105,20 @@ unsafe extern "C" fn svc_register(
     if name.is_empty() {
         return reply(r#"{"ok":false,"error":"name 为空"}"#);
     }
-    // …把 name / description 放进自己的注册表…
-    reply(r#"{"ok":true}"#)
+    // 归属由**宿主**判：问一句「现在是谁在调我」（`current_plugin`），
+    // 插件没法把自己冒充成别人。v6 起这次调用经过宿主，所以调用方即使在
+    // 自己的线程上调进来也认得出；宿主自己调时是 `None`。
+    let plugin = if context.is_null() {
+        None
+    } else {
+        // SAFETY: 提供方把 `vtable.context` 指向自持的 `Box<HostApi>`（见下面的打包）。
+        unsafe { &*(context as *const HostApi) }.current_plugin()
+    };
+    // …把 name / description / plugin 放进自己的注册表…
+    match plugin {
+        Some(plugin) => reply(&format!(r#"{{"ok":true,"plugin":"{plugin}"}}"#)),
+        None => reply(r#"{"ok":true,"plugin":null}"#),
+    }
 }
 
 /// `list` 方法：把自己的注册表序列化成 JSON 数组。
@@ -133,9 +145,12 @@ abort 整个宿主，不是只挂你的插件。解析失败回 `{"ok":false,"er
 
 ```rust
 use std::ffi::CString;
-use fuyubot_abi::{ServiceMethod, ServiceVTable};
+use fuyubot_abi::{HostApi, ServiceMethod, ServiceVTable};
 
 struct HelpService {
+    // 服务方法回问「谁在调我」用的宿主句柄；单独 Box 一层保证地址稳定。
+    #[allow(dead_code)]
+    host: Box<HostApi>,
     vtable: ServiceVTable,
     // 代码里不读这两个字段，但 vtable 的裸指针指向它们的堆缓冲：
     // 必须和 vtable 同生共死，所以靠「持有」保活。
@@ -145,7 +160,7 @@ struct HelpService {
     names: Vec<CString>,
 }
 
-fn build_service() -> Box<HelpService> {
+fn build_service(host: HostApi) -> Box<HelpService> {
     let names = vec![
         CString::new("fuyubot.help.commands").unwrap(),
         CString::new("register").unwrap(),
@@ -155,15 +170,17 @@ fn build_service() -> Box<HelpService> {
         ServiceMethod { name: names[1].as_ptr(), func: Some(svc_register) },
         ServiceMethod { name: names[2].as_ptr(), func: Some(svc_list) },
     ];
+    let host = Box::new(host);
     let vtable = ServiceVTable {
         name: names[0].as_ptr(),
         version: 1,
         size: core::mem::size_of::<ServiceVTable>() as u32,
-        context: core::ptr::null_mut(),
+        // 指进 Box 的堆内存：外层 HelpService 搬家也不会让这个地址失效。
+        context: (&*host as *const HostApi).cast_mut().cast::<c_void>(),
         methods: methods.as_ptr(),
         method_count: methods.len(),
     };
-    Box::new(HelpService { vtable, methods, names })
+    Box::new(HelpService { host, vtable, methods, names })
 }
 ```
 
@@ -172,15 +189,17 @@ fn build_service() -> Box<HelpService> {
 - `Vec` 的**堆缓冲**在结构体移动时不会跟着搬，所以 `Box::new` 之后 `names[i].as_ptr()` /
   `methods.as_ptr()` 仍然有效。**别在注册之后再 `push`**——重新分配会让宿主手里的指针悬空。
 - `version` 是提供方自己的协议版本，宿主**不校验**；它只用于调用方自己判断。
-- `context` 会原样传给每个方法。需要实例状态就把 `self` 指针放这里；`/help` 用的是进程级
-  `static` 注册表，所以留空。
+- `context` 会原样传给每个方法。需要实例状态就把 `self` 指针放这里；`/help` 用它放
+  **宿主句柄**（`HostApi`），注册时才能回问「谁在调我」——这是 `plugin_init` 交给你的那份
+  `HostApi`，`Copy` 且可以跨线程，配套的 `Box` 只是为了让地址稳定。
 
 ### 3. `start()` 注册，`stop()` 放下
 
 ```rust
 impl Plugin for HelpPlugin {
     fn start(&mut self, _config_json: &str) -> Result<(), String> {
-        let service = build_service();
+        // 把 `HostApi` 一起打包进服务：`register` 要靠它问出调用者是谁。
+        let service = build_service(self.host);
         let handle = self
             .host
             .provide_service_shared("fuyubot.help.commands", &service.vtable);
@@ -217,10 +236,10 @@ impl Plugin for HelpPlugin {
 ### 4. 提供方也要能单独活
 
 `/help` 的静态基线 `BUILTIN_COMMANDS` 始终包含 `start` / `help` / `plugins` 三个命令；
-动态注册表只是叠加，渲染时按名字去重。所以：
+动态注册表**优先**（它带宿主判定的归属），静态基线只补缺。所以：
 
-- 没有消费方登记命令，`/help` 仍然列得出内置三件套；
-- 消费方没起来，只是少几条动态说明，不会让 `/help` 整个失效。
+- 没有消费方登记命令，`/help` 仍然列得出内置三件套（只是不标归属）；
+- 消费方没起来，只是少几条带归属的动态条目，不会让 `/help` 整个失效。
 
 这是可选联动的通用做法：**提供方给自己留一份能独立工作的兜底**，别把「有人来调我」
 当成自己启动的前提。

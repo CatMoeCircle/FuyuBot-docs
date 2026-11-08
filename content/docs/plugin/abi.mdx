@@ -99,10 +99,10 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 版本不匹配时**只能**用 `plugin_free_handle` 收尾，那一刻 `plugin_stop` 不会被调；
 卸载顺序是 `plugin_stop` → 回滚注册 → 最后才 drop 那个 `Library`。
 
-## HostApiVTable：`host_ctx` + 22 个函数指针
+## HostApiVTable：`host_ctx` + 24 个函数指针
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **22 个是函数指针**，全是 `Option<...>`；
-总大小 = `2 * size_of::<u32>() + 23 * size_of::<*const c_void>()`（`host_ctx` + 22 个函数），
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **24 个是函数指针**，全是 `Option<...>`；
+总大小 = `2 * size_of::<u32>() + 25 * size_of::<*const c_void>()`（`host_ctx` + 24 个函数），
 由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
 下表签名省略第一个参数 `host`：
@@ -130,10 +130,12 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 16 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
 | 17 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
 | 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
-| 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + 回写 `fuyubot.toml`）；非 0 = 越权 / 解析失败 / 写盘失败 |
+| 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + **段级落盘**到 `<root>/plugin-config/<名>.toml`，原子替换，`fuyubot.toml` 永不改写）；非 0 = 越权 / 解析失败 / 写盘失败 / **这个键被用户配置钉住**（`fuyubot.toml` 的 `[plugin.<名>]` 里写了它）/ 这次启动没有可回写的配置文件（宿主不给 `config_path`，写入会丢，所以直接失败而不是静默只改内存） |
 | 20 | `provide_service_shared` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service_shared` | 注册到**进程级**（所有插件可见，这也是宿主那四个机制所在的层级）。同名会撞，只在真要共享时用。v4 起追加在 VTable **尾部** |
 | 21 | `simplify_invoke` | `(op_json) -> RequestId` | `api_simplify_invoke` | **跨语言跑一个 simplify 操作**（v5）。宿主起工作线程执行，结果照 `@request_id` 回投到 `"response"` 通道。见[「simplify 操作表」](#simplify-操作表) |
 | 22 | `simplify_invoke_result` | `(op_json) -> *const c_char` | `api_simplify_invoke_result` | **同步**跑一个不碰网络的 simplify 操作，当场返回结果 JSON（线程局部缓冲）。回调里安全；传异步 op 返回 `ok:false` / `code:"async_op"` |
+| 23 | `current_plugin` | `() -> *const c_char` | `api_current_plugin` | **当前调用者是谁**：宿主自己回 `NULL`，插件回它的名字（线程局部缓冲，读完即弃）。被别的插件调用时返回那个调用方（v6 起跨线程也成立），其余时候返回宿主最后交给的那个插件。两个来源都查同一份 `owner_names` 映射（与 `set_config` 的越权判定同一份），插件伪造不了 |
+| 24 | `call_service` | `(service, method, input_json) -> *const c_char` | `api_call_service` | **经过宿主调服务**（v6 尾部追加，Rust 侧即 `HostApi::call_service`）：宿主把调用转给提供方，并记下调用方，于是对方问得出「谁在调我」。返回 `NULL` = 失败（原因进宿主日志）；**空串 = 成功但对方没输出**；其余是对方给的 JSON 文本（线程局部缓冲，读完即弃） |
 
 ## 服务作用域
 
@@ -153,7 +155,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
   不给显式上下文就只能靠进程级全局，那样一个进程只能有一个宿主、测试也没法并行。
 - **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
-  Rust 侧 `HostApi::from_raw` 一次解包校验全部 22 个，之后调用路径上没有 `Option`、也没有 panic 分支。
+  Rust 侧 `HostApi::from_raw` 一次解包校验全部 24 个，之后调用路径上没有 `Option`、也没有 panic 分支。
 
 ### 服务的形状：`ServiceVTable`
 
@@ -173,18 +175,41 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 ### 怎么调方法
 
-Rust 侧有现成封装 `HostApi::call_service(name, method, input_json)`：
+**v6 起这次调用经过宿主**（VTable 第 24 项 `call_service`），Rust 侧写法没变：
+`HostApi::call_service(name, method, input_json)`。
 
-- 服务不存在 / 没这个方法 / `func` 是 `None` → 返回错误；
-- 调 `func(context, input_json)`，入参是方法的 JSON 负载字符串；
-- 返回 `NULL` = 成功但没有输出（宿主内部约定），调用方得到空字符串；
-- 返回非 `NULL` = **提供方持有的** NUL 字符串，立刻拷走——它只在本次调用返回
-  后、下一次宿主函数调用之前有效（与 `list_tools` / `get_config` 同一套线程局部缓冲）。
+- 宿主替你把这个调用转给提供方，并在调用期间记下调用方是谁；
+- 被调方因此能在方法里问出**真实调用方**（下一节），插件在自己的线程上调进来也成立；
+- 返回 `NULL` = **失败**（服务不存在 / 没这个方法 / 入参含 NUL），原因由宿主记日志；
+- 返回**空串** = 成功但没有输出（对方方法返回了 `NULL`）；
+- 其余 = **提供方持有的** NUL 字符串，立刻拷走——它只在本次调用返回后、
+  下一次宿主函数调用之前有效（与 `list_tools` / `get_config` 同一套线程局部缓冲）。
 
-C / Go 侧没有封装，就手动做同一件事：`get_service` 拿表 → 按 `method_count` 扫
-`methods[i]` 比名字 → 调 `func(context, input_json)`。脚本插件（Python / JS）目前
-**没有**服务调用接口——薄 SDK 只覆盖订阅 / 请求 / 日志 / 工具元数据，
-见[脚本插件](../script/index.mdx)。
+> `NULL` 与空串的分工是 v6 才明确的（v5 时两者都当「成功但没有输出」）。
+> 提供方想说「成功、无返回值」请 `return ""`，不要 `return NULL`。
+
+C / Go 侧**同样走这一步**：`host->call_service(host_ctx, name, method, input_json)`。
+自己 `get_service` 拿表再直调仍然能跑，但宿主不在场，被调方就拿不到调用方。
+脚本插件（Python / JS）目前 **没有**服务调用接口——薄 SDK 只覆盖订阅 / 请求 / 日志 /
+工具元数据，见[脚本插件](../script/index.mdx)。
+
+### 调用者身份：`current_plugin`
+
+服务方在方法里问一句「谁在调我」：
+
+```rust
+let caller = host.current_plugin();   // Option<String>
+if let Some(name) = caller {
+    // {"ok":true,"plugin":"fuyubot.manage"}
+}
+```
+
+取值规则（v6）：**正在被别人调用时就是调用方**；其余时候是宿主最后把控制权交给的那个插件
+（在插件自己起的线程上则是 `NULL`）。身份由宿主判定，插件自报不了，也拿不到别人的。
+`/help` 的命令归属就是这么来的。
+
+v5 只有第二级，所以「插件在自己起的线程上调服务」时归属会静默变成 `null`；
+这条差异以及 v5 → v6 的完整清单见 [ABI v5 → v6 迁移](./abi-v6)。
 
 ### 宿主预置的服务
 
@@ -228,7 +253,7 @@ C / Go 侧没有封装，就手动做同一件事：`get_service` 拿表 → 按
 
 | 位置 | 谁比 | 不匹配的后果 |
 | --- | --- | --- |
-| `ABI_VERSION`（当前 `5`） | 编译期常量，两侧共同引用 | — |
+| `ABI_VERSION`（当前 `6`） | 编译期常量，两侧共同引用 | — |
 | `HostApiVTable::version` | 插件侧 `HostApi::from_raw` | `AbiError::VersionMismatch` |
 | `HostApiVTable::size` | 同上 | `AbiError::VTableTooSmall` |
 | 某个函数指针是 `NULL` | 同上 | `AbiError::MissingFunction("<字段名>")` |
@@ -243,20 +268,33 @@ C / Go 侧没有封装，就手动做同一件事：`get_service` 拿表 → 按
 **版本 3 的改动**：尾部追加了 `get_config` / `set_config`（第 18 / 19 项），让插件能读全局配置、
 写自己的段。
 
-**版本 5 的改动**：尾部追加 `simplify_invoke` / `simplify_invoke_result`（第 21 / 22 项），
-把 `fuyubot-simplify` 的语义下沉到宿主——**所有语言**的插件都能用「发消息等结局 / 超时撤回 /
-bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地块树」，不再只有 Rust 有。
-详见[「simplify 操作表」](#simplify-操作表)。`ABI_VERSION` 跳到 5，旧插件重新编一次即可。
-
 **版本 4 的改动**：
 - `register_tool` 增加 `handler` / `user_data`，工具终于能真的执行；
 - 尾部追加 `call_tool_result`（同步拿工具结果）与 `list_plugins`（插件报告）；
 - 尾部追加 `provide_service_shared`（第 20 项）：服务默认按插件作用域隔离，要共享得显式走它；
 - 新增静态导出 `plugin_free_handle` / `fuyubot_abi_version` / `plugin_manifest`。
 
+**版本 5 的改动**：尾部追加 `simplify_invoke` / `simplify_invoke_result`（第 21 / 22 项），
+把 `fuyubot-simplify` 的语义下沉到宿主——**所有语言**的插件都能用「发消息等结局 / 超时撤回 /
+bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地块树」，不再只有 Rust 有。
+详见[「simplify 操作表」](#simplify-操作表)。
+
+**v5 的尾部追加**：`current_plugin`（第 23 项）。服务方法终于能问出「现在是谁在调我」，
+拿到宿主判定的**权威**插件名——`/help` 的命令归属不再需要入参自报。当时是**纯追加、不改语义**，
+靠 `size` 协商，所以没跳版本号。
+
+**版本 6 的改动**：尾部追加 `call_service`（第 24 项），**服务调用改成经过宿主**。
+宿主因此在调用期间知道调用方是谁，`current_plugin` 拿到的就是它——于是
+「插件在自己起的线程上调服务」也认得出调用方，嵌套调用报的是直接调用者而不是最初的调用方。
+同时 `call_service` 的返回值约定收紧：`NULL` = 失败，**空串** = 成功但无输出。
+
+> ⚠️ 这次**跳了版本号**（`5` → `6`）：字段是纯追加，但 `current_plugin` 的**取值来源变了**，
+> 属于静默的行为差异，不能只靠 `size` 协商。v5 插件在 v6 宿主上、v6 插件在 v5 宿主上
+> 都会 `AbiMismatch`（拒绝加载），**重编一次即可**（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
+> 完整清单见 [ABI v5 → v6 迁移](./abi-v6)。
+
 追加字段本身不破坏老插件（它们先比 `size`），但按契约「改 ABI 就加版本号」，
-`ABI_VERSION` 一起跳到 4——**用旧版本编出来的插件会被宿主拒绝加载**，重新编一次即可
-（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
+v4 / v5 / v6 各跳过一次——**用旧版本编出来的插件会被宿主拒绝加载**，重新编一次即可。
 
 ## simplify 操作表
 
@@ -266,7 +304,7 @@ bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地�
 {"op": "send_message", "args": {"chat_id": 123, "input_message_content": {…}}}
 ```
 
-**为什么不是 22 个函数指针**：那样以后每加一个方法都要升一次 ABI 版本、三个仓库一起动。
+**为什么不是每个操作一个函数指针**：那样以后每加一个方法都要升一次 ABI 版本、三个仓库一起动。
 一张表之后，**加操作不动 ABI**。
 
 ### 结果怎么回来
@@ -326,7 +364,7 @@ JS/TS 的 `invokeAsync`、Python 的 `invoke_async`、Go 的 channel、Rust 的 
 ## 为什么本 ABI 一个可变参数函数指针都没有
 
 Rust 的 `extern "C" fn(.., ...)` 确实稳定（能写、cbindgen 也能生成），但**本 ABI 一个都没用**，
-理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 22 个函数的参数都是固定的，
+理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 24 个函数的参数都是固定的，
 用 `...` 只会让 C 侧传错参数从编译错误降级成运行期 UB。
 
 将来真要加，正确的声明形状是（C 侧）：
@@ -349,10 +387,10 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
 
 | 语言 | 声明在哪 | 值 | 怎么生效 |
 | --- | --- | --- | --- |
-| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 5` | 5 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
-| C++ | 同一份 `fuyubot_plugin.h` | 5 | 同上（导出符号放 `extern "C"`） |
-| Rust | `fuyubot_abi::ABI_VERSION` | 5 | `define_plugin!` 把它填进 `PluginHandle::abi_version`，并导出一份 `fuyubot_abi_version` |
-| Python | **脚本不接触 ABI** | — | 由 `fuyubot.script` 承载（标准 ABI v5 cdylib），`abi_version` 它填 |
+| C | 头文件 `fuyubot_plugin.h` 里的 `#define ABI_VERSION 6` | 6 | 模板里写 `if (host == NULL \|\| host->version != ABI_VERSION) return failed;` |
+| C++ | 同一份 `fuyubot_plugin.h` | 6 | 同上（导出符号放 `extern "C"`） |
+| Rust | `fuyubot_abi::ABI_VERSION` | 6 | `define_plugin!` 把它填进 `PluginHandle::abi_version`，并导出一份 `fuyubot_abi_version` |
+| Python | **脚本不接触 ABI** | — | 由 `fuyubot.script` 承载（标准 ABI 的 cdylib，v6，尾部带 `current_plugin` + `call_service`），`abi_version` 它填 |
 | JS / TS | **脚本不接触 ABI** | — | 同上，同一个 `fuyubot.script` 插件 |
 
 脚本插件走的是薄 SDK（PyPI / npm 的 `fuyubot`）→ 原生桥 → `fuyubot.script` 这条路，
@@ -373,4 +411,4 @@ typedef void (*FuyubotLogFn)(uint32_t level, const char *format, ...);
   新增一律追加在尾部；改动必须同时抬 `ABI_VERSION`。
 </Callout>
 
-宿主 ABI 版本是 `fuyubot_abi::ABI_VERSION`（当前 **5**）；插件编译时用它做校验，不用手抄。
+宿主 ABI 版本是 `fuyubot_abi::ABI_VERSION`（当前 **6**）；插件编译时用它做校验，不用手抄。
