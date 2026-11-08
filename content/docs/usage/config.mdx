@@ -12,10 +12,11 @@ description: fuyubot.toml 的字段与默认值
 
 ```text
 demo/
-  fuyubot.toml        ← 配置
+  fuyubot.toml        ← 配置（你写的；运行时不会被插件改写）
   plugins/            ← [plugins].dir，run 从这里加载插件
   plugins/scripts/    ← 脚本插件住这里（fuyubot plugin install 的落点）
   data/               ← [telegram].data_dir，TDLib 的 database 与 files 都指它
+  plugin-config/      ← 插件自己记的配置（set_config 写的，删掉 = 让插件忘掉）
   logs/fuyubot.log    ← --background 的日志
   .fuyubot/           ← 实例状态（lock / status / stop），别手工编辑
 ```
@@ -47,21 +48,46 @@ reply_prefix = "已安装插件："
 
 [plugin.my.weather]
 city = "上海"
-api_key = "……"      # 密钥这类东西别写进全局配置——它会被 `set_config` 回写、也会随仓库走
 ```
+
+### 三层：包默认 / 运行时落盘 / 你写的
+
+插件读到的配置是三层叠出来的，**后面的只填前面的缺失键**：
+
+| 层 | 在哪 | 谁写 |
+| --- | --- | --- |
+| 包默认 | 插件包里的 `config.default.toml`（`plugin.json` 的 `config` 指向它） | 插件作者，随包升级 |
+| 运行时落盘 | `<项目根>/plugin-config/<插件名>.toml` | 插件 `set_config` |
+| 用户配置 | `fuyubot.toml` 的 `[plugin.<名>]` | **你** |
+
+也就是说：**你在 `fuyubot.toml` 里写了的键，优先级最高**，插件改不动它（`set_config`
+会直接返回错误，而不是「这次改成功、下次启动又被你盖回去」）。想让插件自己管某个键，
+就别在 `fuyubot.toml` 里写它。
+
+### 读写
 
 插件在**运行时**读它、写它，走的是 ABI 接口（不是 `plugin_start` 的那个 `config_json`）：
 
 - **读**：`get_config(section, key)` —— 读任意段（自己的 + 别人的）。`section` 空串读顶层
   （`[bot]` / `[telegram]` 等），`key` 空串读整段，`key` 是点路径（`nested.k`）。
-- **写**：`set_config(key, value_json)` —— **只能写自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。成功会写内存并回写 `fuyubot.toml`。
+- **写**：`set_config(key, value_json)` —— **只能写自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。成功 = 写内存 + 落盘到 `plugin-config/<插件名>.toml`；宿主这次启动没有配置文件、或这个键被用户配置钉住时**直接报错**。
+
+`fuyubot.toml` **运行时永远不会被插件改写**：你手写的注释、顺序、`api_hash` 都不会被卷走。
 
 各语言的写法：[Rust 插件](../plugin/rust.mdx)、[C / C++ 插件](../plugin/native.mdx)，
 函数签名在[插件 ABI](../plugin/abi.mdx)。**脚本插件的薄 SDK 目前还没有读写配置的接口**——
 脚本要参数只能写在脚本目录里（跟着目录一起装），配置段暂时读不到。
 
+<Callout type="info">
+  `plugin-config/<插件名>.toml` 是**插件自己的记忆**：文件内容就是那一段配置本身（不带
+  `[plugin.x]` 头），插件名里的特殊字符按 `%XX` 编码。删掉这个文件 = 让插件忘掉它自己存过的东西
+  （包默认和 `fuyubot.toml` 不受影响）。写入是先写 `.toml.tmp` 再 `rename`，掉电不会留半截文件。
+</Callout>
+
 <Callout type="warn">
-  **`set_config` 回写是「全量重写」**：`fuyubot.toml` 里你手写的注释、空白会被 `toml` 序列化丢掉。插件写配置属于程序化修改，这是简单且可预期的一步；要保注释就把插件要写的值也手工维护进文件、别让插件运行时去改。唯一会被保住的是 `[telegram].api_hash`——它不在插件能读到的配置树里，回写时会从磁盘补回来。
+  **从旧版本升级**：以前插件把状态直接写进 `fuyubot.toml` 的 `[plugin.<名>]`。升级后那些键算
+  「用户配置」，优先级最高——插件再写它们会被拒绝。把想交还给插件管的键从 `fuyubot.toml`
+  删掉即可（值会转到 `plugin-config/` 那一层继续用）。
 </Callout>
 
 模板（`fuyubot init` 生成的就是它）：

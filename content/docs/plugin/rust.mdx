@@ -167,7 +167,7 @@ fn start(&mut self, _config_json: &str) -> Result<(), String> {
         self.host.log(LogLevel::Info, &format!("天气插件的 city = {city}"));
     }
 
-    // 写自己的段（会回写 fuyubot.toml）。
+    // 写自己的段（落盘到 plugin-config/<插件名>.toml，不碰 fuyubot.toml）。
     self.host
         .set_config("last_started", "\"2026-01-01\"")
         .map_err(|e| format!("写自己的配置失败: {e}"))?;
@@ -175,9 +175,10 @@ fn start(&mut self, _config_json: &str) -> Result<(), String> {
 }
 ```
 
-<Callout type="warn">
-  `set_config` 回写是**全量重写** `fuyubot.toml`——手写的注释、空行会被 `toml`
-  序列化丢掉。要保注释就别让插件运行时去改，把值手工维护进文件。
+<Callout type="info">
+  `set_config` **只写你自己那一个文件**（`<项目根>/plugin-config/<插件名>.toml`，原子替换），
+  不碰 `fuyubot.toml`——用户写在里面的注释、顺序、凭据都安全。三层优先级，以及「用户在
+  `fuyubot.toml` 里钉住的键会拒绝写」，见[配置文件 · 插件自己的配置段](../usage/config.mdx#插件自己的配置段)。
 </Callout>
 
 ## 常用 ABI 速查

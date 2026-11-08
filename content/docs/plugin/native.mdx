@@ -136,7 +136,7 @@ g_host->emit(g_host->host_ctx, "ping.seen", "{\"chat_id\":123}");
 /* ⑤ 打日志：Error=1 Warn=2 Info=3 Debug=4 Trace=5（非法值按 Info） */
 g_host->log(g_host->host_ctx, 3, "回了 pong");
 
-/* ⑥ 读任意配置段 / 写自己那段（写成功会回写 fuyubot.toml） */
+/* ⑥ 读任意配置段 / 写自己那段（落盘到 plugin-config/<插件名>.toml，不改 fuyubot.toml） */
 const char *city = g_host->get_config(g_host->host_ctx, "my.weather", "city");
 int ok = g_host->set_config(g_host->host_ctx, "last_seen", "123");
 
@@ -210,9 +210,9 @@ if (greeting != NULL) {
 /* 读别人的段（只读）：section 是那个插件的名字。 */
 const char *city = g_host->get_config(g_host, "my.weather", "city");
 
-/* 写自己的段：只能写自己（没有 section 参数），成功返回 0，并回写 fuyubot.toml。 */
+/* 写自己的段：只能写自己（没有 section 参数），成功返回 0（落盘到 plugin-config/）。 */
 int32_t code = g_host->set_config(g_host, "last_started", "\"2026-01-01\"");
-if (code != 0) { /* 越权 / 解析失败 / 写盘失败 */ }
+if (code != 0) { /* 越权 / 解析失败 / 写盘失败 / 键被用户配置钉住 */ }
 ```
 
 两点与其它函数一致：**返回值是宿主线程局部缓冲**（读完即弃，别 free）；`set_config`
@@ -284,5 +284,6 @@ static void send_text(long long chat_id, const char *text) {
 
 - 模板里的 JSON 取值是**朴素查找**（`strstr`），不处理转义、不处理同名嵌套键；认真写就引一个 JSON 库。
 - 宿主返回的字符串是**线程局部缓冲**，只在下一次宿主调用之前有效——当场拷走，并且**不要试图释放它**。
-- `set_config` 回写是**全量重写** `fuyubot.toml`，手写注释会丢（见上面「读 / 写配置」）。
+- `set_config` 只写 `<项目根>/plugin-config/<插件名>.toml`（原子替换），**不改** `fuyubot.toml`；
+  用户在 `fuyubot.toml` 里写过的键会拒绝写（见 [配置文件](../usage/config.mdx#插件自己的配置段)）。
 - 想少拼 JSON，可以只发 `td_invoke_simplified` 需要的参数对象（`@type` 由宿主补），见 [调用 TDLib](./tdlib.mdx)。
