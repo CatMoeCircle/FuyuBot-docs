@@ -81,7 +81,7 @@ weather-plugin-1.2.0-android-x86_64.zip
         {
           "version": "1.2.0",
           "api": ">=0.1, <1.0",
-          "abi": 5,
+          "abi": 6,
           "depends": [],
           "yanked": false,
           "assets": {

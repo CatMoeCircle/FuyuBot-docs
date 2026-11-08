@@ -30,7 +30,7 @@ Linux 是 `.so`，macOS 是 `.dylib`。
   "version": "1.2.0",
   "kind": "native",
   "entry": "bin/weather.dll",
-  "abi": 5,
+  "abi": 6,
   "platforms": ["windows-x86_64", "linux-x86_64", "macos-aarch64", "android-aarch64"]
 }
 ```
@@ -48,12 +48,24 @@ Linux 是 `.so`，macOS 是 `.dylib`。
 | `depends` | 否 | 硬依赖的服务名，例如 `["help.commands"]` |
 | `optional_depends` | 否 | 软依赖的服务名 |
 | `provides` | 否 | 本插件提供的服务名，供展示与依赖检查 |
-| `config` | 否 | 默认配置文件的相对路径 |
+| `config` | 否 | 默认配置文件的**相对包根路径**（如 `config.default.toml`）。加载时并进 `[plugin.<id>]`，**优先级最低**：用户配置与插件运行时落盘已有的键不会被覆盖 |
 | `description` | 否 | 一句话说明，显示在插件列表 / 商店 |
 | `license` | 否 | 许可证标识 |
 | `homepage` | 否 | 项目主页 |
 
-`id` 也决定配置段：`[plugin.com.example.weather]`。
+`id` 也决定配置段：`[plugin.com.example.weather]`。三层优先级（包默认 < 运行时落盘 <
+用户配置）与 `set_config` 的写规则见[配置文件 · 插件自己的配置段](../usage/config.mdx#插件自己的配置段)。
+
+默认配置文件的例子（它的顶层就是一段配置，不要写 `[plugin.x]` 头）：
+
+```toml
+# config.default.toml
+city = "上海"
+timeout = 30
+
+[ui]
+theme = "dark"
+```
 
 脚本插件的 `plugin.json` 可以只写身份，`entry` 指向脚本：
 

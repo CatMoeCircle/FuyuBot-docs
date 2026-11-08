@@ -1,0 +1,80 @@
+# 插件配置规范 (/docs/dev/plugin-config)
+
+插件配置只有一套模型，改 `fuyubot-loader` / `fuyubot-app` / `fuyubot-android` 里任何一处都要守住它。
+面向插件作者的用法在[配置文件 · 插件自己的配置段](../usage/config.mdx#插件自己的配置段)，
+这一页写给**改框架的人**。
+
+## 三层，后者只填前者的缺失键 [#三层后者只填前者的缺失键]
+
+```text
+包默认      plugins/<id>/config.default.toml      （plugin.json 的 config 指向它）
+   ↓ 只补缺失键
+运行时落盘  <项目根>/plugin-config/<插件名>.toml   （插件 set_config 写的）
+   ↓ 只补缺失键
+用户配置    fuyubot.toml 的 [plugin.<名>]          （人写的，最高优先级）
+```
+
+合并点只有两处，不要在别处再造第三套：
+
+| 层 | 在哪合并 | 时机 |
+| --- | --- | --- |
+| 包默认 | `DylibPlugin::new` → `HostRuntime::apply_plugin_defaults` | 插件进内核**之前**（`inject` / `soft_inject` 兜底也要能看到默认值） |
+| 运行时落盘 | `HostRuntime::install_config` → `merge_store_into` | 装配置时（必须在用户层快照之后） |
+
+`merge_missing` 的语义是「**src 只补 dst 缺席的键**」：已有值一律不动，对象逐层递归。
+所以 `install_config` 必须在插件加载前调，`apply_plugin_defaults` 必须在落盘合并之后跑——
+顺序错了，优先级就反了。
+
+## 写：只写自己那一个文件 [#写只写自己那一个文件]
+
+`set_config(key, value_json)` 的落盘路径是 `<项目根>/plugin-config/<插件名>.toml`：
+
+- **段级**：文件内容就是那一段配置本身（不带 `[plugin.<名>]` 头）。
+- **只落 delta**：`key` 空 = 整段替换；否则只改那个键。**不要**把合成后的整段写回去——
+  否则包默认与用户配置会被「冻结」进插件自己的记忆，插件升级带来的新默认值再也进不来。
+- **原子**：先写同目录的 `<名>.toml.tmp`，再 `rename`。掉电 / 写一半不会留下半截文件。
+- **文件名是插件名的百分号编码**：只保留 `[A-Za-z0-9._-]`，其余字节 `%XX`，Windows 保留名
+  （`CON` / `NUL` / `COM1` …）把首字节编码掉。插件名来自不受控的 `plugin_init`，直接拼路径
+  就是目录穿越。改编码规则必须同步 `decode_plugin_file_name`（读写两侧不对称 = 配置丢失）。
+- **不写 `fuyubot.toml`**。用户配置只读：注释、段顺序、`api_hash` 都靠这条保住。
+  以前那套「全量重写 + 从磁盘补回 api_hash」（`persist_toml` / `saved_api_hash`）已经删了，
+  别再引回来。
+
+## 拒绝，而不是静默失败 [#拒绝而不是静默失败]
+
+两种写不进去的情况都必须**返回错误**（`set_config` 非 0），并且**还原内存**：
+
+1. 这次启动没有配置文件（`config_path = None`）——没有落盘位置，写了也会丢。
+2. 这个键被用户配置钉住（`fuyubot.toml` 的 `[plugin.<名>]` 里有它）——写了下次启动照样会被
+   用户配置盖回去，那正是「返回成功、值却没留住」这类最难查的 bug。
+
+错误文案要告诉调用方**改哪里**（哪个文件、哪个键），不要只说「写配置失败」。
+
+## 默认配置文件（`plugin.json` 的 `config`） [#默认配置文件pluginjson-的-config]
+
+- 必须是**包内相对路径**，语法校验与 `entry` 同一套（绝对路径、`..`、盘符、开头分隔符一律拒绝），
+  落点还要 `canonicalize` 后仍在包内。
+- 顶层就是一段配置（TOML 文档顶层必然是表）。
+- 读失败（不存在 / 不是 TOML / 转不成 JSON）**只告警、不拦加载**：默认配置坏了不该让整个插件装不上。
+- `config` 是可选字段；没写就是没有默认值。
+
+## 不要做的事 [#不要做的事]
+
+- **不要给 `set_config` 加 `section` 参数**。现在的安全模型是「没有 section + `owner_names`
+  判定调用者」，加了就等于把越权写别人的段重新打开。
+- **不要在 ABI 上加字段**来实现配置（当前 ABI 不动）：这些都是宿主内部行为，`get_config` /
+  `set_config` 的签名已经够用。
+- **不要让插件直接写 `fuyubot.toml`**，也不要让 CLI 面板的配置编辑器去写插件运行时文件：
+  两边各写各的，优先级就说不清了。
+
+## 改动清单 [#改动清单]
+
+动配置系统时，这四类测试缺一不可（`crates/fuyubot-loader/src/runtime.rs` 与 `bundle.rs` 里都有现成的）：
+
+1. 三层优先级（用户 > 落盘 > 默认），包括「重复合并不覆盖已有值」。
+2. 写盘只动自己那段、`fuyubot.toml` 字节不变、临时文件已 rename。
+3. 两种拒绝（无 `config_path`、用户钉住的键）都要还原内存。
+4. 文件名编码往返（含 `../`、`/`、非 ASCII、Windows 保留名）。
+
+另外同步：[`AGENTS.md`](https://github.com/CatMoeCircle/Fuyu-Bot/blob/main/AGENTS.md) 的约束 41 / 52、
+[配置文件](../usage/config.mdx)、[插件 ABI](../plugin/abi.mdx) 的 `set_config` 行、各语言插件页的写入说明。

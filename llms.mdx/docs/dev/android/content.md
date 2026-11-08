@@ -97,10 +97,50 @@ if (n.nativeStart(options) != 0) { /* 看日志或 onState */ }
 | `data_dir` | | 相对 `root`，默认 `data`（TDLib 数据库与文件都在这儿） |
 | `log_level` | | `error` / `warn` / `info` / `debug` / `trace`，默认 `info` |
 | `tdlib_log_verbosity` | | TDLib 自己的日志详细度，默认 1 |
+| `plugin_config` | | 插件自己的配置段：`{"fuyubot.manage": {"reply_prefix": "…"}}`。点分插件名会展开成 `[plugin.fuyubot.manage]`；缺省 = 不给 |
 | `lib_dir` | | 显式指定 `libtdjson.so` 所在的目录（一般不用给） |
 
 目录会在启动时自动建好：`<root>/{data,logs,plugins}`。日志写在 `<root>/logs/fuyubot.log`——
 Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**能看到日志的地方。
+
+### 插件配置 [#插件配置]
+
+安卓上没有给人编辑的 `fuyubot.toml`，但**插件仍然能读能写自己的配置段**。读到的配置是三层叠出来的：
+
+| 层 | 在哪 | 谁写 |
+| --- | --- | --- |
+| 包默认 | 插件包里的 `config.default.toml` | 插件作者 |
+| 运行时落盘 | `<root>/plugin-config/<插件名>.toml` | 插件 `set_config` |
+| 用户配置 | `plugin_config`（这次 options 传的）⊕ `<root>/fuyubot.toml` 的 `[plugin.*]` | 壳 / 用户 |
+
+- **写**：`set_config` 只落盘到 `<root>/plugin-config/<插件名>.toml`（段级、原子替换），
+  下次启动自动读回来。`fuyubot.toml` **运行时不会被写**——它只在这份文件存在时当作用户配置层。
+- **优先级**：`plugin_config` 里的同名键 > `<root>/fuyubot.toml` > 运行时落盘 > 包默认。
+  用户在 `plugin_config` / `fuyubot.toml` 里钉住的键，插件写会**报错**（而不是写完下次启动被盖回去）。
+- `<root>/fuyubot.toml` 只读 `[plugin.*]`：`telegram` / `plugins` 等段仍以 options JSON 为准，
+  避免出现「第二份 schema」。
+- 文件不存在是正常的；坏了只在日志里留一条 warn，启动不失败。
+- `set_config` 在「没有 `config_path`」时会报错——安卓现在总是给 `<root>/fuyubot.toml`，
+  所以这条只影响自己接 JNI 的宿主。
+
+### 日志与运行期调级别 [#日志与运行期调级别]
+
+日志只落 `<root>/logs/fuyubot.log`（安卓应用进程的 stdout/stderr 是 `/dev/null`）。
+
+`options.log_level` 决定启动时的**插件日志门槛**（默认 `info`）。运行期要调，写一个文件即可：
+
+```text
+/data/data/<包名>/files/fuyubot/.fuyubot/log-level
+```
+
+- 内容：`error` / `warn` / `info` / `debug` / `trace`，大小写不敏感，首尾空白忽略。
+- 库内每 **500ms** 看一次，内容变了立刻生效；**这是唯一的运行期入口，不需要新增 JNI 方法**。
+- 文件不存在 = 不改；内容写错 = 保持当前级别 + 留一条 warn。
+- 删掉文件**不会**回退——要回退就写回 `info`，或下次 `start` 用 `options.log_level`。
+- 级别只管插件日志（插件 VTable `log` 的门槛）；宿主与 TDLib 的日志不受它控制，
+  TDLib 自己的详细度是 `tdlib_log_verbosity`（启动时定）。
+- `log_level = "debug" / "trace"` 现在**真的会落进文件**：订阅者的默认上限是 `INFO`，
+  已放开到 `TRACE`（否则事件会在格式化前被丢掉）。
 
 ## 回调 [#回调]
 

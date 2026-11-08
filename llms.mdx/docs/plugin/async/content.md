@@ -24,6 +24,10 @@ let router = ResponseRouter::new(self.host)?;
 let (_id, fut) = router.invoke_simplified("getMe", "{}")?;
 let me = tokio::time::timeout(Duration::from_secs(5), fut).await??;
 
+// 发一条 ABI v5 的 simplify op（发消息 / 发相册 / 富消息…），等它的 simplifyResult
+let (_id, fut) = router.invoke_op(r#"{"op":"send_message","args":{"chat_id":1,"input_message_content":{…}}}"#)?;
+let result = tokio::time::timeout(Duration::from_secs(120), fut).await??;
+
 // 等一条任意更新（async 版 wait_for_update）
 let fut = router.wait_for_update(json!({"@type": "updateNewMessage"}))?;
 let update = tokio::time::timeout(Duration::from_secs(30), fut).await??;
@@ -34,6 +38,9 @@ let update = tokio::time::timeout(Duration::from_secs(30), fut).await??;
 - **必须在插件自己的 executor 上 await**，别在宿主事件回调里 await（那是接收线程）。
 - `router.invoke*` 从插件自己的线程发请求时会用 scope service 把归属切回插件，
   响应不会丢；不需要手动 `scope_enter`。
+- **simplify op 必须走 `invoke_op`**：宿主侧 op 工作线程不压作用域栈，请求归属在
+  `simplify_invoke` 被调用的那一刻就登记了。直接调 `host.simplify_invoke` 会把归属记成
+  宿主（owner 0），`simplifyResult` 只投给全局订阅者，本插件永远等不到。
 - 取消 = `drop(fut)`；关闭 = drop router（所有 pending 立刻 `RouterClosed`）。
 - 超时不内建，用 `tokio::time::timeout` 或你运行时的等价物。
 

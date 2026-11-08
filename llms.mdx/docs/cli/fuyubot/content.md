@@ -298,7 +298,7 @@ $ fuyubot plugin install ./weather
 
 $ fuyubot plugin list
 原生插件包（1 个）：
-  fuyubot.script	0.1.2	ABI 5	native	plugins\fuyubot.script
+  fuyubot.script	0.1.2	ABI 6	native	plugins\fuyubot.script
 旧形态动态库（0 个，建议 `fuyubot plugin migrate` 迁成插件包）：
   （无）
 脚本插件（1 个，由 fuyubot.script 托管）：
