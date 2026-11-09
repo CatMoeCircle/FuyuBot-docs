@@ -1,9 +1,10 @@
 # Android：JNI 运行时 (/docs/dev/android)
 
-Android 上**交付的是一个 JNI 库**，不是 APK、不是可执行文件：
+Android 的**内核**是一个 JNI 库（不是可执行文件）。它从 2026-11 起**不再单独作为 Release
+资产发布**：CI 里只作为 Actions artifact 喂给 APK job，最终用户直接下 `.apk`。
 
 ```text
-fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
+fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64   # Actions artifact，不挂 Release
 ├─ libfuyubotjni.so      ← System.loadLibrary("fuyubotjni")
 ├─ libtdjson.so          ← 同 ABI，必须一起装
 ├─ plugins/*.so          ← 可选内置插件（/start、/help、/plugins）
@@ -11,14 +12,14 @@ fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
 └─ README.txt
 ```
 
-APK 由应用作者自己出；这个包只提供**运行时本体**。宿主内部与桌面版是同一套东西
-（`fuyubot-app` 编排 + `fuyubot-loader` 宿主 + `fuyubot-tdlib`），只有「谁来回答登录提问」
-不同：Android 上是 Java 回调。
+APK 由本仓 `release-bot.yml` 的 `build-apk` job 出；这个包只提供**运行时本体**。宿主内部与
+桌面版是同一套东西（`fuyubot-app` 编排 + `fuyubot-loader` 宿主 + `fuyubot-tdlib`），只有
+「谁来回答登录提问」不同：Android 上是 Java 回调。
 
 > 想直接装一个能用的、不用自己出 APK：每次 `v*` 发布都会附
 > `fuyubot-<版本>-<abi>.apk`（例 `fuyubot-v0.1.3-arm64-v8a.apk`）。壳来自
 > [FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android)，
-> 里面的内核就是本页这个 JNI 包。说明见 [发布 · Android：APK](./release.mdx)。
+> 里面的内核由本仓同一 tag 编出。说明见 [发布 · Android：APK](./release.mdx)。
 
 ## 装法 [#装法]
 
