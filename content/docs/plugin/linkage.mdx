@@ -29,7 +29,7 @@ description: 用共享服务互相调用、用软依赖排好启动顺序——�
 | 方法 | 入参 | 返回 |
 | --- | --- | --- |
 | `register` | `{"name":"start","description":"开始使用"}` | `{"ok":true}`；坏入参回 `{"ok":false,"error":"…"}` |
-| `list` | 忽略 | `[{"name":"start","description":"…"}, …]`，即 `/help` 实际渲染的内容 |
+| `list` | 忽略 | `[{"name":"start","description":"…"}, …]`，**扁平数组**（程序协议）；`/help` 正文再按 `plugin` 分组渲染 |
 
 服务名建议用反向域名（`fuyubot.help.commands`），方法名用动词；协议字段**只增不改**，
 破坏性改动时把 `ServiceVTable.version` 加一（宿主不校验，但调用方可以据此判断）。
@@ -238,7 +238,8 @@ impl Plugin for HelpPlugin {
 `/help` 的静态基线 `BUILTIN_COMMANDS` 始终包含 `start` / `help` / `plugins` 三个命令；
 动态注册表**优先**（它带宿主判定的归属），静态基线只补缺。所以：
 
-- 没有消费方登记命令，`/help` 仍然列得出内置三件套（只是不标归属）；
+- 没有消费方登记命令，`/help` 仍然列得出内置三件套（收在最后的「其它」段，
+  不会编造归属）；
 - 消费方没起来，只是少几条带归属的动态条目，不会让 `/help` 整个失效。
 
 这是可选联动的通用做法：**提供方给自己留一份能独立工作的兜底**，别把「有人来调我」
