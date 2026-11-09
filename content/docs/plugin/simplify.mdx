@@ -330,6 +330,8 @@ Media::video("/tmp/a.mp4")
 
 `command_of(update)` 从一条 `updateNewMessage` 里认出命令（只认文本消息，**跳过自己发的**）；
 `on_command(host, handler)` 一次性订阅，`CommandSubscription` **drop 即退订**——把它存进插件状态。
+user 账户自己触发的 `.cmd` 由宿主**先归一化成 `/cmd`、把 `is_outgoing` 抹平**再交给插件，
+所以插件看到的仍然是普通的 `/cmd` 更新。
 
 **点名给别人的命令不会送到 `handler`。** Telegram 的约定是：裸命令（`/start`）所有 bot 都响应，
 带 `@` 的只有被点名的那一方响应。`on_command` 按这条规则过滤，所以插件里不用自己再判断 `@`：
@@ -341,6 +343,14 @@ Media::video("/tmp/a.mp4")
   type={{
     chat_id: { description: '命令所在的会话。', type: 'i64' },
     message_id: { description: '这条消息本身（回复 / 编辑直接用它）。', type: 'i64' },
+    ephemeral_message_id: {
+      description: 'ephemeral 消息 id（i32）；普通消息是 None。只有 bot 账户在非私聊里才用它走 sendEphemeralMessage。',
+      type: 'Option<i32>',
+    },
+    sender_user_id: {
+      description: '发送这条命令的用户 id；ephemeral 回复的 receiver_user_id 用它。',
+      type: 'Option<i64>',
+    },
     name: {
       description: '命令名：去掉 / 与 @BotName 后缀，已转小写。/help@SomeBot 会得到 help。',
       type: 'String',
@@ -370,6 +380,55 @@ let _guard = on_command(host, |command| {
 
   **没登录 / `--no-tdlib` / `--replay` 时身份未知**，这时 `on_command` 不过滤——分不清
   「点名的是别人」还是「我还不知道自己是谁」，宁可多回一句也不吞命令。
+</Callout>
+
+### 回复命令：交给宿主决定发消息还是编辑
+
+命令回复**不要自己拼 `sendMessage`**。用 `Command::reply`（阻塞）或
+`Command::reply_then`（回调）：入参与 [`send_message`](#8-等待与订阅) 一样，是一个
+`SendMessageParams`（文本 / 媒体、`reply_markup`、`link_preview`、`topic_id`、`timeout_ms`），
+`reply_to_message_id` 会被宿主覆盖成这条命令。
+
+```rust
+let _guard = on_command(host, move |command| {
+    if !command.is("help") {
+        return;
+    }
+    let params = SendMessageParams {
+        text: Some(Text::markdown("*可用命令* …")),
+        ..SendMessageParams::default()
+    };
+    // 回调跑在接收循环线程上：必须用 then，reply 会阻塞等 TDLib。
+    let handle = command.reply_then(host, &params, move |result| {
+        if let Err(error) = result {
+            host.log(LogLevel::Error, &format!("help 回复失败: {error}"));
+        }
+    });
+    // ⚠️ handle 要存进插件状态，`stop()` 里 join；这里为了短省略。
+});
+```
+
+宿主按账号类型和触发者决定怎么回：
+
+| 场景 | 宿主实际发的方法 |
+| --- | --- |
+| bot 账户 + **非私聊** + 命令带 `ephemeral_message_id > 0` | `sendEphemeralMessage` + `inputMessageReplyToEphemeralMessage`；`receiver_user_id` = 命令发送者 |
+| bot 账户（其余情况）；或 user 账户里**白名单用户**触发 | `sendMessage` + `reply_to` 原命令（和以前一样发新消息） |
+| user 账户**自己**触发 | 编辑原命令消息：文本 `editMessageText`，富媒体 `editMessageMedia` |
+
+`sendEphemeralMessage` 的三个条件必须同时满足：命令消息的 `ephemeral_message_id > 0`、
+当前登录账号是 **bot**（`getMe` 的 `userTypeBot`，不用配置兜底）、**不是私聊**
+（私聊 id 为正，群/频道为负）。任一不满足就退回普通消息 / 编辑，**不会尝试 ephemeral**；
+退回普通消息时也**不会 `reply_to` 那条 ephemeral 命令**（TDLib 不允许普通消息回复 ephemeral 消息）。
+
+成功时 `reply` / `reply_then` 拿到的是 TDLib 的**最终 `Message`**（与 `send_message` 一致），
+不再有 `method` / `edited` 之类的包装字段。失败是 `SimplifyError`（服务侧对应
+`{"@type":"error",…}`）。
+
+<Callout type="warn">
+  `fuyubot.host.command` 的 `reply` 是**同步阻塞**的：插件在命令回调（接收循环线程）里
+  必须用 `Command::reply_then`，否则会卡死自己。`reply_then` 返回的句柄要在 `stop()` 里
+  join 掉——插件是动态库，卸载后线程不能再跑库里的代码。
 </Callout>
 
 ## 8. 等待与订阅
@@ -643,7 +702,7 @@ if self.connection.as_ref().is_some_and(|c| c.is_ready()) { /* … */ }
 | `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
 | `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(..)` | 响应 → `formattedText`；拿不到退回纯文本 |
 | `plain_text(&Text)` | 纯文本 → `formattedText`（不花往返），也是默认渲染器 |
-| `command_of(&Value)` / `on_command(host, handler)` / `my_usernames(&host)` | 见[第 7 节](#7-命令与输入) |
+| `command_of(&Value)` / `on_command(host, handler)` / `Command::reply` / `Command::reply_then` / `my_usernames(&host)` | 见[第 7 节](#7-命令与输入) |
 
 ## 16. 参数名为什么是这几个
 

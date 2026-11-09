@@ -208,7 +208,7 @@ let catalog = host.list_services();   // JSON 数组文本
 //   "methods":["register","list"],"plugin":"fuyubot.help"}, …]
 ```
 
-`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity`）。
+`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity` / `.command`）。
 清单从**调用方**的作用域链算，所以自己的私有服务也在里面；只给元数据，不给 vtable 指针。
 
 C / Go 侧**同样走这一步**：`host->call_service(host_ctx, name, method, input_json)`。
@@ -236,13 +236,14 @@ v5 只有第二级，所以「插件在自己起的线程上调服务」时归�
 
 ### 宿主预置的服务
 
-宿主在根上预置了三个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
+宿主在根上预置了四个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
 
 | 服务名 | 方法 | 协议 |
 | --- | --- | --- |
 | `fuyubot.host.plugins` | `report` | 无参 → `{"plugins":[{name, state, …}]}`，进程内插件快照；`state` ∈ `active` / `pending` / `failed` / `activating`，`pending` 带 `missing`、`failed` 带 `reason` |
 | `fuyubot.host.identity` | `usernames` | 无参 → `["FuyuBot"]`，自身全部活跃用户名（`usernames.active_usernames`）；没登录 / 没接 TDLib 时是 `[]` |
 | | `me` | 无参 → `getMe` 的原始 `user` JSON；没登录时 `null` |
+| `fuyubot.host.command` | `reply` | `{"chat_id":…,"message_id":…,"timeout_ms":…,"payload":<sendMessage 参数>}` → TDLib 的最终 `Message`；失败 `{"@type":"error",…}`。宿主决定发新消息还是编辑原命令消息 |
 | `fuyubot.host.scope` | `scope_create` | `{}` → `{"handle":N}`，开一个子作用域 |
 | | `scope_enter` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 | | `scope_leave` | 忽略入参；离开当前作用域 |
@@ -255,6 +256,15 @@ v5 只有第二级，所以「插件在自己起的线程上调服务」时归�
 靠它把「点名给别人的命令」挡在插件外面——纯内存读取，不是 TDLib 请求，
 **在命令回调里调它不会卡接收循环**。面板与 `fuyubot status` 显示的账户行也来自同一份数据
 （经 `.fuyubot/status` 跨进程过去）。
+`fuyubot.host.command` 是**命令回复**的唯一入口：插件把 `SendMessageParams` 拼好的
+`sendMessage` 参数交给它，宿主按账号类型与触发者决定 `sendMessage` + `reply_to`
+（bot / user 账户白名单用户）还是编辑原命令消息（user 账户自己触发），返回最终 `Message`。
+命令消息带 `ephemeral_message_id > 0`、当前账号是 bot、且不是私聊时，宿主改发
+`sendEphemeralMessage` + `inputMessageReplyToEphemeralMessage`（`receiver_user_id` = 命令发送者）；
+任一条件不满足就退回普通消息/编辑，不尝试 ephemeral。
+它**同步阻塞**等 TDLib；插件在命令回调里应走 `Command::reply_then`（其它语言自己起工作线程），
+别在接收循环线程上直接调。被拦下的命令只会从 `updateNewMessage` 通道消失，`update` 通用通道照发。
+
 `fuyubot.host.scope` 是中间插件批量托管脚本时开子作用域用的，见[架构](../dev/architecture.mdx)。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）

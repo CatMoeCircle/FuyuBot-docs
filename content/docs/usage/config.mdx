@@ -30,11 +30,47 @@ demo/
 | `[telegram].account_type` | `bot` | 登录走哪条路：`bot` → Bot Token；`user` → 手机号 / 扫码。**写错报错**，不会静默当 bot |
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
+| `[command].prefix` | bot `["/"]`<br/>user `["."]` | 命令头**数组**，可配多个（每项单个字符，不能是字母 / 数字 / 空白）。不写按账号默认：bot 认 `/`、user 认 `.`。写了就**整套替换**（bot 不再自动保留 `/`）。user 账户下 `/` 即使写进数组也始终不生效 |
+| `[command].whitelist` | `[]` | 额外允许触发命令的用户 id（数字）。user 账户自己发的始终触发；bot 账户非空时只响应表里的用户 |
+| `[command].whitelist_only` | `true` | user 账户的**白名单模式**：只响应自己与 `whitelist` 里的用户。改成 `false` 可关，但 **⚠️ 不建议**——关掉后任何人都能触发插件；bot 不受它影响 |
 | `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
 | `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错**。运行中也可以在 `run --tui` 的日志页按 `Tab` 聚焦工作区后按 `l` 临时调整（只对本次运行生效） |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
 | `[plugin.<插件名>]` | 无 | 插件自己的配置段（见下） |
+
+## 命令头与白名单
+
+`[command].prefix` 是**数组**，可以配多个命令头：
+
+```toml
+[command]
+prefix = [".", "!", "。"]   # 每项必须是单个字符（不能是字母 / 数字 / 空白）
+```
+
+不写时按账号类型取默认值：**bot 认 `/`**（`/start`、`/help`…），**user 认 `.`**（`.help`）。
+配了就是**整套替换**——bot 不会额外保留 `/`，要用就把它写进数组；
+而 user 账户下 `/xxx` **始终**不交给插件（Telegram 客户端占用 `/`），即使写进数组。
+放行的非 `/` 命令头会被宿主归一化成 `/xxx`，插件拿到的仍然是 `/cmd`。
+写错的那一项会告警并跳过；一个能用的都没有时回退到账号默认值。
+
+**user 账户默认白名单模式**：只有账号自己发出的消息，或在 `[command].whitelist` 里的
+用户 id，才能触发它的命令；别人发的命令一律不触发。
+
+这个模式可以在配置里关掉：
+
+```toml
+[command]
+whitelist_only = false   # ⚠️ 不建议：关掉后任何人都能触发插件
+```
+
+`whitelist_only = false` 之后，user 账户不再按 `whitelist` 过滤（自己发的仍然按“自己触发”
+处理，回复走编辑）。**不建议关闭**：任何人发来的命令都会进插件，user 账户尤其容易被滥用。
+bot 账户不受这个开关影响；`whitelist` 非空时 bot 仍只响应表里的用户。
+
+插件回复命令统一走 `Command::reply` / `Command::reply_then`（其它语言走
+`fuyubot.host.command` service）：宿主决定发新消息还是编辑原命令消息——bot 账户 / user 账户里
+白名单用户触发 → `sendMessage` + `reply_to`；user 账户**自己**触发 → 编辑原命令消息。
 
 ## 插件自己的配置段
 
@@ -106,6 +142,11 @@ account_type = "bot"
 api_id = 12345
 data_dir = "data"
 api_hash = ""      # run 首次问过之后会把明文写回这里（见下）
+
+[command]
+# prefix = ["/", "."]  # 命令头数组；不写按账号默认（bot "/"、user "."），写了整套替换
+whitelist = []     # 额外允许触发命令的用户 id；自己发的始终触发
+whitelist_only = true   # user 账户白名单模式；⚠️ 不建议关闭（false = 任何人都能触发）
 
 [plugins]
 dir = "plugins"

@@ -53,7 +53,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
   （`cargo build` / `cl /LD` / `gcc -shared`）。`fuyubot plugin install` 只**复制**已编好的产物。
 </Callout>
 
-## 写原生插件要知道的六件事
+## 写原生插件要知道的七件事
 
 | 事 | 说明 |
 | --- | --- |
@@ -63,6 +63,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | 订阅句柄要自己管 | `HostApi::on` 返回 `SubscriptionHandle`（`u64`），drop 不会退订；要退订就 `host.off(handle)` |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
+| 命令回复走宿主 | 用 `Command::reply` / `reply_then`（其它语言走 `fuyubot.host.command` service），不要自己拼 `sendMessage`；宿主决定发新消息还是编辑原命令消息，返回最终 `Message`。`reply` 阻塞，回调里必须用 `reply_then`。命令带 `ephemeral_message_id` 且是 bot、非私聊时自动走 `sendEphemeralMessage` |
 
 ## 声明依赖：`inject` 与 `soft_inject`
 
