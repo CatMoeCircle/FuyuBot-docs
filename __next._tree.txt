@@ -2,4 +2,4 @@
 :HL["/FuyuBot-docs/icon.png","image"]
 2:[["children",{"s":"__PAGE__","h":160}]]
 1:[["children",{"s":"(home)","h":96,"c":"$Q2"}]]
-0:{"b":"myD5LtzrjiwZTzpdR2m9U","t":{"t":{"s":"","h":80,"c":"$Q1"}}}
+0:{"b":"pBFt8IeIcoI2arA6XBVl1","t":{"t":{"s":"","h":80,"c":"$Q1"}}}

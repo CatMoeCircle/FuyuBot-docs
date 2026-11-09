@@ -157,7 +157,8 @@ TDLib Update 行在 TUI 里**只显示 `@type`**（例如 `TDLib Update  updateN
 
 配置页是**可编辑的表格**（段 / 键 / 生效值 / 来源），`↑↓` 选中、`Enter` 或 `e` 编辑。
 文本、整数（带上下界）和枚举（`account_type` / `log_level`）会先校验再写回；写回是
-**单行文本替换**，保留文件里的注释、顺序和 CRLF，键/段不存在就补。运行中保存的配置
+**文本级替换**：单行值只改那一行，跨行值（多行数组 / 内联表）整段折叠成一行、值里的
+注释原样搬到新值下面——注释、顺序和 CRLF 都保留，键/段不存在就补。运行中保存的配置
 **重启后生效**；`api_hash`、Bot Token / 手机号 / 密码和 `[plugin.*]` 段只读（插件段请用
 插件自己的命令或直接编辑文件）。配置文件读不出来时配置页会显示错误原文，改好按 `r` 重读。
 
@@ -2284,7 +2285,7 @@ let catalog = host.list_services();   // JSON 数组文本
 //   "methods":["register","list"],"plugin":"fuyubot.help"}, …]
 ```
 
-`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity`）。
+`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity` / `.command`）。
 清单从**调用方**的作用域链算，所以自己的私有服务也在里面；只给元数据，不给 vtable 指针。
 
 C / Go 侧**同样走这一步**：`host->call_service(host_ctx, name, method, input_json)`。
@@ -2312,13 +2313,14 @@ v5 只有第二级，所以「插件在自己起的线程上调服务」时归�
 
 ### 宿主预置的服务 [#宿主预置的服务]
 
-宿主在根上预置了三个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
+宿主在根上预置了四个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
 
 | 服务名 | 方法 | 协议 |
 | --- | --- | --- |
 | `fuyubot.host.plugins` | `report` | 无参 → `{"plugins":[{name, state, …}]}`，进程内插件快照；`state` ∈ `active` / `pending` / `failed` / `activating`，`pending` 带 `missing`、`failed` 带 `reason` |
 | `fuyubot.host.identity` | `usernames` | 无参 → `["FuyuBot"]`，自身全部活跃用户名（`usernames.active_usernames`）；没登录 / 没接 TDLib 时是 `[]` |
 | | `me` | 无参 → `getMe` 的原始 `user` JSON；没登录时 `null` |
+| `fuyubot.host.command` | `reply` | `{"chat_id":…,"message_id":…,"timeout_ms":…,"payload":<sendMessage 参数>}` → TDLib 的最终 `Message`；失败 `{"@type":"error",…}`。宿主决定发新消息还是编辑原命令消息 |
 | `fuyubot.host.scope` | `scope_create` | `{}` → `{"handle":N}`，开一个子作用域 |
 | | `scope_enter` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 | | `scope_leave` | 忽略入参；离开当前作用域 |
@@ -2331,6 +2333,15 @@ v5 只有第二级，所以「插件在自己起的线程上调服务」时归�
 靠它把「点名给别人的命令」挡在插件外面——纯内存读取，不是 TDLib 请求，
 **在命令回调里调它不会卡接收循环**。面板与 `fuyubot status` 显示的账户行也来自同一份数据
 （经 `.fuyubot/status` 跨进程过去）。
+`fuyubot.host.command` 是**命令回复**的唯一入口：插件把 `SendMessageParams` 拼好的
+`sendMessage` 参数交给它，宿主按账号类型与触发者决定 `sendMessage` + `reply_to`
+（bot / user 账户白名单用户）还是编辑原命令消息（user 账户自己触发），返回最终 `Message`。
+命令消息带 `ephemeral_message_id > 0`、当前账号是 bot、且不是私聊时，宿主改发
+`sendEphemeralMessage` + `inputMessageReplyToEphemeralMessage`（`receiver_user_id` = 命令发送者）；
+任一条件不满足就退回普通消息/编辑，不尝试 ephemeral。
+它**同步阻塞**等 TDLib；插件在命令回调里应走 `Command::reply_then`（其它语言自己起工作线程），
+别在接收循环线程上直接调。被拦下的命令只会从 `updateNewMessage` 通道消失，`update` 通用通道照发。
+
 `fuyubot.host.scope` 是中间插件批量托管脚本时开子作用域用的，见[架构](../dev/architecture.mdx)。
 
 句柄类型（`SubscriptionHandle` / `ToolHandle` / `ServiceHandle` / `MiddlewareHandle` / `RequestId`）
@@ -2822,6 +2833,13 @@ fuyubot plugin uninstall weather-bot   # 脚本插件（按目录名）
 **两条通道是「同时」，不是「二选一」**：一条 `updateNewMessage` 既会敲精确订阅它的监听器，也会敲所有
 订阅了 `"update"` 的监听器。过滤器在两个通道上各判一次，所以订阅兜底又写了过滤器的那一侧不会因为
 「没命中精确通道」而漏掉。
+
+<Callout type="warn">
+  例外：**命令被闸门拦下**时，宿主只发 `"update"` 兜底通道，不发 `updateNewMessage`。
+  这样 `on_command` 不会响应，但自己订阅 `"update"` 的原始更新监听器照样能看见。
+  典型场景：user 账户的 `/xxx`（改用 `[command].prefix` 里的命令头，默认 `.`）
+  与非白名单用户发来的命令。
+</Callout>
 
 ## 过滤器 [#过滤器]
 
@@ -3326,7 +3344,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
   （`cargo build` / `cl /LD` / `gcc -shared`）。`fuyubot plugin install` 只**复制**已编好的产物。
 </Callout>
 
-## 写原生插件要知道的六件事 [#写原生插件要知道的六件事]
+## 写原生插件要知道的七件事 [#写原生插件要知道的七件事]
 
 | 事 | 说明 |
 | --- | --- |
@@ -3336,6 +3354,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | 订阅句柄要自己管 | `HostApi::on` 返回 `SubscriptionHandle`（`u64`），drop 不会退订；要退订就 `host.off(handle)` |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
+| 命令回复走宿主 | 用 `Command::reply` / `reply_then`（其它语言走 `fuyubot.host.command` service），不要自己拼 `sendMessage`；宿主决定发新消息还是编辑原命令消息，返回最终 `Message`。`reply` 阻塞，回调里必须用 `reply_then`。命令带 `ephemeral_message_id` 且是 bot、非私聊时自动走 `sendEphemeralMessage` |
 
 ## 声明依赖：`inject` 与 `soft_inject` [#声明依赖inject-与-soft_inject]
 
@@ -4985,6 +5004,8 @@ Media::video("/tmp/a.mp4")
 
 `command_of(update)` 从一条 `updateNewMessage` 里认出命令（只认文本消息，**跳过自己发的**）；
 `on_command(host, handler)` 一次性订阅，`CommandSubscription` **drop 即退订**——把它存进插件状态。
+user 账户自己触发的 `.cmd` 由宿主**先归一化成 `/cmd`、把 `is_outgoing` 抹平**再交给插件，
+所以插件看到的仍然是普通的 `/cmd` 更新。
 
 **点名给别人的命令不会送到 `handler`。** Telegram 的约定是：裸命令（`/start`）所有 bot 都响应，
 带 `@` 的只有被点名的那一方响应。`on_command` 按这条规则过滤，所以插件里不用自己再判断 `@`：
@@ -4996,6 +5017,14 @@ Media::video("/tmp/a.mp4")
   type={{
     chat_id: { description: '命令所在的会话。', type: 'i64' },
     message_id: { description: '这条消息本身（回复 / 编辑直接用它）。', type: 'i64' },
+    ephemeral_message_id: {
+      description: 'ephemeral 消息 id（i32）；普通消息是 None。只有 bot 账户在非私聊里才用它走 sendEphemeralMessage。',
+      type: 'Option<i32>',
+    },
+    sender_user_id: {
+      description: '发送这条命令的用户 id；ephemeral 回复的 receiver_user_id 用它。',
+      type: 'Option<i64>',
+    },
     name: {
       description: '命令名：去掉 / 与 @BotName 后缀，已转小写。/help@SomeBot 会得到 help。',
       type: 'String',
@@ -5025,6 +5054,55 @@ let _guard = on_command(host, |command| {
 
   **没登录 / `--no-tdlib` / `--replay` 时身份未知**，这时 `on_command` 不过滤——分不清
   「点名的是别人」还是「我还不知道自己是谁」，宁可多回一句也不吞命令。
+</Callout>
+
+### 回复命令：交给宿主决定发消息还是编辑 [#回复命令交给宿主决定发消息还是编辑]
+
+命令回复**不要自己拼 `sendMessage`**。用 `Command::reply`（阻塞）或
+`Command::reply_then`（回调）：入参与 [`send_message`](#8-等待与订阅) 一样，是一个
+`SendMessageParams`（文本 / 媒体、`reply_markup`、`link_preview`、`topic_id`、`timeout_ms`），
+`reply_to_message_id` 会被宿主覆盖成这条命令。
+
+```rust
+let _guard = on_command(host, move |command| {
+    if !command.is("help") {
+        return;
+    }
+    let params = SendMessageParams {
+        text: Some(Text::markdown("*可用命令* …")),
+        ..SendMessageParams::default()
+    };
+    // 回调跑在接收循环线程上：必须用 then，reply 会阻塞等 TDLib。
+    let handle = command.reply_then(host, &params, move |result| {
+        if let Err(error) = result {
+            host.log(LogLevel::Error, &format!("help 回复失败: {error}"));
+        }
+    });
+    // ⚠️ handle 要存进插件状态，`stop()` 里 join；这里为了短省略。
+});
+```
+
+宿主按账号类型和触发者决定怎么回：
+
+| 场景 | 宿主实际发的方法 |
+| --- | --- |
+| bot 账户 + **非私聊** + 命令带 `ephemeral_message_id > 0` | `sendEphemeralMessage` + `inputMessageReplyToEphemeralMessage`；`receiver_user_id` = 命令发送者 |
+| bot 账户（其余情况）；或 user 账户里**白名单用户**触发 | `sendMessage` + `reply_to` 原命令（和以前一样发新消息） |
+| user 账户**自己**触发 | 编辑原命令消息：文本 `editMessageText`，富媒体 `editMessageMedia` |
+
+`sendEphemeralMessage` 的三个条件必须同时满足：命令消息的 `ephemeral_message_id > 0`、
+当前登录账号是 **bot**（`getMe` 的 `userTypeBot`，不用配置兜底）、**不是私聊**
+（私聊 id 为正，群/频道为负）。任一不满足就退回普通消息 / 编辑，**不会尝试 ephemeral**；
+退回普通消息时也**不会 `reply_to` 那条 ephemeral 命令**（TDLib 不允许普通消息回复 ephemeral 消息）。
+
+成功时 `reply` / `reply_then` 拿到的是 TDLib 的**最终 `Message`**（与 `send_message` 一致），
+不再有 `method` / `edited` 之类的包装字段。失败是 `SimplifyError`（服务侧对应
+`{"@type":"error",…}`）。
+
+<Callout type="warn">
+  `fuyubot.host.command` 的 `reply` 是**同步阻塞**的：插件在命令回调（接收循环线程）里
+  必须用 `Command::reply_then`，否则会卡死自己。`reply_then` 返回的句柄要在 `stop()` 里
+  join 掉——插件是动态库，卸载后线程不能再跑库里的代码。
 </Callout>
 
 ## 8. 等待与订阅 [#8-等待与订阅]
@@ -5298,7 +5376,7 @@ if self.connection.as_ref().is_some_and(|c| c.is_ready()) { /* … */ }
 | `parse_text_request(&Text)` | `parseTextEntities` 的请求；`Plain` 返回 `None` |
 | `formatted_from(&Text, Option<&Value>)` / `is_formatted_text(..)` | 响应 → `formattedText`；拿不到退回纯文本 |
 | `plain_text(&Text)` | 纯文本 → `formattedText`（不花往返），也是默认渲染器 |
-| `command_of(&Value)` / `on_command(host, handler)` / `my_usernames(&host)` | 见[第 7 节](#7-命令与输入) |
+| `command_of(&Value)` / `on_command(host, handler)` / `Command::reply` / `Command::reply_then` / `my_usernames(&host)` | 见[第 7 节](#7-命令与输入) |
 
 ## 16. 参数名为什么是这几个 [#16-参数名为什么是这几个]
 
@@ -6822,11 +6900,47 @@ demo/
 | `[telegram].account_type` | `bot` | 登录走哪条路：`bot` → Bot Token；`user` → 手机号 / 扫码。**写错报错**，不会静默当 bot |
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
+| `[command].prefix` | bot `["/"]`<br/>user `["."]` | 命令头**数组**，可配多个（每项单个字符，不能是字母 / 数字 / 空白）。不写按账号默认：bot 认 `/`、user 认 `.`。写了就**整套替换**（bot 不再自动保留 `/`）。user 账户下 `/` 即使写进数组也始终不生效 |
+| `[command].whitelist` | `[]` | 额外允许触发命令的用户 id（数字）。user 账户自己发的始终触发；bot 账户非空时只响应表里的用户 |
+| `[command].whitelist_only` | `true` | user 账户的**白名单模式**：只响应自己与 `whitelist` 里的用户。改成 `false` 可关，但 **⚠️ 不建议**——关掉后任何人都能触发插件；bot 不受它影响 |
 | `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
 | `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错**。运行中也可以在 `run --tui` 的日志页按 `Tab` 聚焦工作区后按 `l` 临时调整（只对本次运行生效） |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
 | `[tdlib].log_verbosity` | `1` | TDLib 日志详细度。TDLib 自己的默认更啰嗦（每轮 `td_receive` 的超时都打到 stderr）；负数按 0 处理 |
 | `[plugin.<插件名>]` | 无 | 插件自己的配置段（见下） |
+
+## 命令头与白名单 [#命令头与白名单]
+
+`[command].prefix` 是**数组**，可以配多个命令头：
+
+```toml
+[command]
+prefix = [".", "!", "。"]   # 每项必须是单个字符（不能是字母 / 数字 / 空白）
+```
+
+不写时按账号类型取默认值：**bot 认 `/`**（`/start`、`/help`…），**user 认 `.`**（`.help`）。
+配了就是**整套替换**——bot 不会额外保留 `/`，要用就把它写进数组；
+而 user 账户下 `/xxx` **始终**不交给插件（Telegram 客户端占用 `/`），即使写进数组。
+放行的非 `/` 命令头会被宿主归一化成 `/xxx`，插件拿到的仍然是 `/cmd`。
+写错的那一项会告警并跳过；一个能用的都没有时回退到账号默认值。
+
+**user 账户默认白名单模式**：只有账号自己发出的消息，或在 `[command].whitelist` 里的
+用户 id，才能触发它的命令；别人发的命令一律不触发。
+
+这个模式可以在配置里关掉：
+
+```toml
+[command]
+whitelist_only = false   # ⚠️ 不建议：关掉后任何人都能触发插件
+```
+
+`whitelist_only = false` 之后，user 账户不再按 `whitelist` 过滤（自己发的仍然按“自己触发”
+处理，回复走编辑）。**不建议关闭**：任何人发来的命令都会进插件，user 账户尤其容易被滥用。
+bot 账户不受这个开关影响；`whitelist` 非空时 bot 仍只响应表里的用户。
+
+插件回复命令统一走 `Command::reply` / `Command::reply_then`（其它语言走
+`fuyubot.host.command` service）：宿主决定发新消息还是编辑原命令消息——bot 账户 / user 账户里
+白名单用户触发 → `sendMessage` + `reply_to`；user 账户**自己**触发 → 编辑原命令消息。
 
 ## 插件自己的配置段 [#插件自己的配置段]
 
@@ -6898,6 +7012,11 @@ account_type = "bot"
 api_id = 12345
 data_dir = "data"
 api_hash = ""      # run 首次问过之后会把明文写回这里（见下）
+
+[command]
+# prefix = ["/", "."]  # 命令头数组；不写按账号默认（bot "/"、user "."），写了整套替换
+whitelist = []     # 额外允许触发命令的用户 id；自己发的始终触发
+whitelist_only = true   # user 账户白名单模式；⚠️ 不建议关闭（false = 任何人都能触发）
 
 [plugins]
 dir = "plugins"
@@ -7339,9 +7458,11 @@ TDLib Update 行只显示 `@type`（如 `updateNewMessage`），不铺整段 JSO
 否则 OSC 52。
 
 配置页是**可编辑表格**：段 / 键 / 生效值 / 来源，`↑↓` 选中、`Enter` / `e` 编辑。
-文本、整数和枚举（`account_type` / `log_level`）先校验再写回；写回只替换那一行，
-保留注释、顺序和 CRLF。运行中保存的配置**重启后生效**；`api_hash`、Bot Token / 手机号 /
-密码和 `[plugin.*]` 段只读。配置读不出来时页面显示错误原文，改好按 `r` 重读。
+文本、整数和枚举（`account_type` / `log_level`）先校验再写回；写回只替换那一段值，
+保留注释、顺序和 CRLF。值跨行写（多行数组 / 内联表）也能改：整段折叠成一行，值里的
+注释原样搬到新值下面，不会把后面的段弄坏。运行中保存的配置**重启后生效**；`api_hash`、
+Bot Token / 手机号 / 密码和 `[plugin.*]` 段只读。配置读不出来时页面显示错误原文，
+改好按 `r` 重读。
 
 ## 看状态 [#看状态]
 
