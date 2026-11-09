@@ -61,6 +61,14 @@ description: 三层优先级、段级落盘、原子替换——改配置系统�
 - 读失败（不存在 / 不是 TOML / 转不成 JSON）**只告警、不拦加载**：默认配置坏了不该让整个插件装不上。
 - `config` 是可选字段；没写就是没有默认值。
 
+## 读：默认也是自己
+
+`get_config(section, key)` 的 `section` 空串表示**读自己那段**——与 `set_config` 的默认同一套判定
+（`HostRuntime::executor_name`，执行者栈顶）。要读别人的段必须把插件名写出来。
+
+顶层（`[bot]` / `[telegram]`）**不通过插件 API 暴露**：`read_config("")` 只留给宿主自己
+（CLI / `plugin_config_value`）。插件读宿主凭据既不必要也不安全，这条边界要守住。
+
 ## 写别人的段（`set_config_section`）
 
 0.1.4 起多了一个入口：`set_config_section(section, key, value_json)`——写**指定插件**的段，

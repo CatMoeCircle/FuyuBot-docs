@@ -129,7 +129,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 15 | `wait_for_update` | `(filter_json, timeout_ms: u64) -> WaitHandle` | `api_wait_for_update` | **阻塞**当前线程；`timeout_ms == 0` 表示只检查当前状态。Rust 插件优先用 `ResponseRouter` 的 await 版 |
 | 16 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
 | 17 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
-| 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
+| 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读配置：**`section` 空串 = 读自己那段**（与 `set_config` 同一个默认），写了插件名才读别人的段（点路径：`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。顶层 `[bot]` / `[telegram]` **不对插件暴露**。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
 | 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写执行者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + **段级落盘**到 `<root>/plugin-config/<名>.toml`，原子替换，`fuyubot.toml` 永不改写）；非 0 = 越权 / 解析失败 / 写盘失败 / **这个键被用户配置钉住**（`fuyubot.toml` 的 `[plugin.<名>]` 里写了它）/ 这次启动没有可回写的配置文件（宿主不给 `config_path`，写入会丢，所以直接失败而不是静默只改内存） |
 | 20 | `provide_service_shared` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service_shared` | 注册到**进程级**（所有插件可见，这也是宿主那四个机制所在的层级）。同名会撞，只在真要共享时用。v4 起追加在 VTable **尾部** |
 | 21 | `simplify_invoke` | `(op_json) -> RequestId` | `api_simplify_invoke` | **跨语言跑一个 simplify 操作**（v5）。宿主起工作线程执行，结果照 `@request_id` 回投到 `"response"` 通道。见[「simplify 操作表」](#simplify-操作表) |
