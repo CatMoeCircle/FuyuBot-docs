@@ -1445,12 +1445,31 @@ cargo fmt --all --check             # 0 diff
 - 读失败（不存在 / 不是 TOML / 转不成 JSON）**只告警、不拦加载**：默认配置坏了不该让整个插件装不上。
 - `config` 是可选字段；没写就是没有默认值。
 
+## 读：默认也是自己 [#读默认也是自己]
+
+`get_config(section, key)` 的 `section` 空串表示**读自己那段**——与 `set_config` 的默认同一套判定
+（`HostRuntime::executor_name`，执行者栈顶）。要读别人的段必须把插件名写出来。
+
+顶层（`[bot]` / `[telegram]`）**不通过插件 API 暴露**：`read_config("")` 只留给宿主自己
+（CLI / `plugin_config_value`）。插件读宿主凭据既不必要也不安全，这条边界要守住。
+
+## 写别人的段（`set_config_section`） [#写别人的段set_config_section]
+
+0.1.4 起多了一个入口：`set_config_section(section, key, value_json)`——写**指定插件**的段，
+给协作插件同步设置用（比如播放器把「当前音源」写进宿主自己的段、让别的插件读）。
+
+- 它是**新函数**，`set_config` 仍然没有 `section` 参数：默认那条永远写自己，
+  越权由 `owner_names` 判定，插件伪造不了。
+- 跨插件写是**显式**的：调用方必须自己写出目标插件名，所以谈不上冒充；
+  宿主会记一行 `X 改写插件 Y 的配置`，出问题查得到是谁。
+- 两条路共用同一套规则：用户钉住的键照样拒绝、只落
+  `plugin-config/<目标插件>.toml`、`fuyubot.toml` 永不重写。
+
 ## 不要做的事 [#不要做的事]
 
-- **不要给 `set_config` 加 `section` 参数**。现在的安全模型是「没有 section + `owner_names`
-  判定调用者」，加了就等于把越权写别人的段重新打开。
-- **不要在 ABI 上加字段**来实现配置（当前 ABI 不动）：这些都是宿主内部行为，`get_config` /
-  `set_config` 的签名已经够用。
+- **不要给 `set_config` 加 `section` 参数**。默认那条的安全模型是「没有 section + `owner_names`
+  判定执行者」，给它加参数就等于把越权写别人的段重新打开；要跨插件写请用
+  `set_config_section`（显式目标 + 审计日志）。
 - **不要让插件直接写 `fuyubot.toml`**，也不要让 CLI 面板的配置编辑器去写插件运行时文件：
   两边各写各的，优先级就说不清了。
 
@@ -2031,10 +2050,26 @@ if (reply == NULL) { /* 失败 */ }
 | 服务的归属字段是空的 | 有一条调用路径绕过了宿主（自己取表直调） | 改用 `host.call_service` |
 | 服务调用从「成功、无内容」变成了失败 | 提供方返回了 `NULL` | 提供方改成返回 `""` |
 
-## 一个仍然存在的限制 [#一个仍然存在的限制]
+## 顺手补齐的三件事 [#顺手补齐的三件事]
 
-在服务方法里调用 `set_config` 时，配置会写到**调用方**的段，而不是提供服务那一方的段。
-这是 0.1.3 就有的行为，0.1.4 没有改。需要写自己的配置，请在 `start()` 或自己的回调里做。
+0.1.4 在 v6 内还追加了三个入口，都是**尾部追加、不跳版本号**：
+
+| 入口 | 用途 |
+| --- | --- |
+| `host.last_error()` | `call_service` 失败时**为什么**失败。`HostApi::call_service` 已经自动拼进错误文本，不用自己调 |
+| `host.list_services()` | 当前插件看得见的服务清单（名字 / 版本 / 方法名 / 提供方）。按能力找服务，别硬编码别人的名字 |
+| `host.set_config_for(section, key, value)` | 写**指定插件**的配置段（跨插件同步设置）。规则与 `set_config` 一致：用户钉住的键照样拒绝、只落目标那个文件，宿主会记一行「谁改了谁」 |
+
+另外两处行为跟着修正：
+
+- **服务方法里 `set_config` 现在写提供方自己的段**（以前会错写进调用方那段）。
+- `get_config` 不变，仍然能读任意段。
+
+## 服务的调用方与执行者 [#服务的调用方与执行者]
+
+`current_plugin()` 回答的是「谁在调我」；`set_config` 关心的是「这段代码算谁的」。
+一个插件在自己线程上调服务时，两者**不是同一个插件**（前者是调用方，后者是提供方）。
+0.1.4 起宿主分开记这两件事，所以你不需要在服务方法里手动绕开 `set_config` 了。
 
 
 # ABI 契约 (/docs/plugin/abi)
@@ -2135,10 +2170,10 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 版本不匹配时**只能**用 `plugin_free_handle` 收尾，那一刻 `plugin_stop` 不会被调；
 卸载顺序是 `plugin_stop` → 回滚注册 → 最后才 drop 那个 `Library`。
 
-## HostApiVTable：`host_ctx` + 24 个函数指针 [#hostapivtablehost_ctx--24-个函数指针]
+## HostApiVTable：`host_ctx` + 27 个函数指针 [#hostapivtablehost_ctx--27-个函数指针]
 
 `version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **24 个是函数指针**，全是 `Option<...>`；
-总大小 = `2 * size_of::<u32>() + 25 * size_of::<*const c_void>()`（`host_ctx` + 24 个函数），
+总大小 = `2 * size_of::<u32>() + 28 * size_of::<*const c_void>()`（`host_ctx` + 27 个函数），
 由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
 下表签名省略第一个参数 `host`：
@@ -2165,13 +2200,16 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 15 | `wait_for_update` | `(filter_json, timeout_ms: u64) -> WaitHandle` | `api_wait_for_update` | **阻塞**当前线程；`timeout_ms == 0` 表示只检查当前状态。Rust 插件优先用 `ResponseRouter` 的 await 版 |
 | 16 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
 | 17 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
-| 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读全局配置：`section` 空串读顶层（`[bot]` / `[telegram]` 等），否则把 `section` 当点路径在 `plugin` 表里下钻（`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
-| 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写调用者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + **段级落盘**到 `<root>/plugin-config/<名>.toml`，原子替换，`fuyubot.toml` 永不改写）；非 0 = 越权 / 解析失败 / 写盘失败 / **这个键被用户配置钉住**（`fuyubot.toml` 的 `[plugin.<名>]` 里写了它）/ 这次启动没有可回写的配置文件（宿主不给 `config_path`，写入会丢，所以直接失败而不是静默只改内存） |
+| 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读配置：**`section` 空串 = 读自己那段**（与 `set_config` 同一个默认），写了插件名才读别人的段（点路径：`fuyubot.manage` → `plugin.fuyubot.manage`）；`key` 空串读整段、否则按点路径取键。顶层 `[bot]` / `[telegram]` **不对插件暴露**。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
+| 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写执行者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + **段级落盘**到 `<root>/plugin-config/<名>.toml`，原子替换，`fuyubot.toml` 永不改写）；非 0 = 越权 / 解析失败 / 写盘失败 / **这个键被用户配置钉住**（`fuyubot.toml` 的 `[plugin.<名>]` 里写了它）/ 这次启动没有可回写的配置文件（宿主不给 `config_path`，写入会丢，所以直接失败而不是静默只改内存） |
 | 20 | `provide_service_shared` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service_shared` | 注册到**进程级**（所有插件可见，这也是宿主那四个机制所在的层级）。同名会撞，只在真要共享时用。v4 起追加在 VTable **尾部** |
 | 21 | `simplify_invoke` | `(op_json) -> RequestId` | `api_simplify_invoke` | **跨语言跑一个 simplify 操作**（v5）。宿主起工作线程执行，结果照 `@request_id` 回投到 `"response"` 通道。见[「simplify 操作表」](#simplify-操作表) |
 | 22 | `simplify_invoke_result` | `(op_json) -> *const c_char` | `api_simplify_invoke_result` | **同步**跑一个不碰网络的 simplify 操作，当场返回结果 JSON（线程局部缓冲）。回调里安全；传异步 op 返回 `ok:false` / `code:"async_op"` |
 | 23 | `current_plugin` | `() -> *const c_char` | `api_current_plugin` | **当前调用者是谁**：宿主自己回 `NULL`，插件回它的名字（线程局部缓冲，读完即弃）。被别的插件调用时返回那个调用方（v6 起跨线程也成立），其余时候返回宿主最后交给的那个插件。两个来源都查同一份 `owner_names` 映射（与 `set_config` 的越权判定同一份），插件伪造不了 |
 | 24 | `call_service` | `(service, method, input_json) -> *const c_char` | `api_call_service` | **经过宿主调服务**（v6 尾部追加，Rust 侧即 `HostApi::call_service`）：宿主把调用转给提供方，并记下调用方，于是对方问得出「谁在调我」。返回 `NULL` = 失败（原因进宿主日志）；**空串 = 成功但对方没输出**；其余是对方给的 JSON 文本（线程局部缓冲，读完即弃） |
+| 25 | `last_error` | `() -> *const c_char` | `api_last_error` | 上一次被拒绝的调用**为什么**失败（本线程；没失败过是 `NULL`）。目前只有 `call_service` 会填，`HostApi::call_service` 已经自动把它转成错误文本 |
+| 26 | `list_services` | `() -> *const c_char` | `api_list_services` | 当前插件**看得见**的服务清单（JSON 数组）：`{name, version, methods[], plugin}`；`plugin` 为 `null` = 宿主预置。按能力找服务用它，别再硬编码别人的名字 |
+| 27 | `set_config_section` | `(section, key, value_json) -> i32` | `api_set_config_section` | 写**指定插件**的配置段（跨插件写）：`section` 是目标插件名，点路径与拒绝规则与第 19 项完全一致（用户钉住的键照样拒绝、只落目标那个文件）。宿主会记一行「谁改了谁」 |
 
 ## 服务作用域 [#服务作用域]
 
@@ -2191,7 +2229,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 - **第一个参数总是 `host: *mut c_void`**：裸函数指针没有捕获环境，VTable 里放不了闭包；
   不给显式上下文就只能靠进程级全局，那样一个进程只能有一个宿主、测试也没法并行。
 - **每个函数指针字段都是 `Option<...>`**：C 侧传 `NULL` 合法，非 `Option` 字段收到 `NULL` 就是 UB。
-  Rust 侧 `HostApi::from_raw` 一次解包校验全部 24 个，之后调用路径上没有 `Option`、也没有 panic 分支。
+  Rust 侧 `HostApi::from_raw` 一次解包校验全部 27 个，之后调用路径上没有 `Option`、也没有 panic 分支。
 
 ### 服务的形状：`ServiceVTable` [#服务的形状servicevtable]
 
@@ -2216,13 +2254,33 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 - 宿主替你把这个调用转给提供方，并在调用期间记下调用方是谁；
 - 被调方因此能在方法里问出**真实调用方**（下一节），插件在自己的线程上调进来也成立；
-- 返回 `NULL` = **失败**（服务不存在 / 没这个方法 / 入参含 NUL），原因由宿主记日志；
+- 返回 `NULL` = **失败**（服务不存在 / 没这个方法 / 入参含 NUL）；
 - 返回**空串** = 成功但没有输出（对方方法返回了 `NULL`）；
 - 其余 = **提供方持有的** NUL 字符串，立刻拷走——它只在本次调用返回后、
   下一次宿主函数调用之前有效（与 `list_tools` / `get_config` 同一套线程局部缓冲）。
 
+失败时別只说「调用失败」：第 25 项 `last_error` 带着原因（哪个服务、哪个方法、为什么）。
+`HostApi::call_service` 已经自动把它拼进错误里，Rust 侧直接 `?` 就能看到：
+
+```text
+服务调用失败：fuyubot.help.commands.register: 没有名为 fuyubot.help.commands 的 service
+```
+
 > `NULL` 与空串的分工是 v6 才明确的（v5 时两者都当「成功但没有输出」）。
 > 提供方想说「成功、无返回值」请 `return ""`，不要 `return NULL`。
+
+### 怎么找到服务：`list_services` [#怎么找到服务list_services]
+
+不想硬编码别人的服务名，就先问一句：
+
+```rust
+let catalog = host.list_services();   // JSON 数组文本
+// [{"name":"fuyubot.help.commands","version":1,
+//   "methods":["register","list"],"plugin":"fuyubot.help"}, …]
+```
+
+`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity`）。
+清单从**调用方**的作用域链算，所以自己的私有服务也在里面；只给元数据，不给 vtable 指针。
 
 C / Go 侧**同样走这一步**：`host->call_service(host_ctx, name, method, input_json)`。
 自己 `get_service` 拿表再直调仍然能跑，但宿主不在场，被调方就拿不到调用方。
@@ -2324,6 +2382,13 @@ bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地�
 「插件在自己起的线程上调服务」也认得出调用方，嵌套调用报的是直接调用者而不是最初的调用方。
 同时 `call_service` 的返回值约定收紧：`NULL` = 失败，**空串** = 成功但无输出。
 
+同一次 v6 里还追加了三项（25 / 26 / 27）：`last_error`（失败原因）、`list_services`
+（服务发现）、`set_config_section`（跨插件写配置）。这三项是**纯尾部追加**，靠 `size`
+协商、不再跳版本号——老宿主（没有这三项）会明确拒绝新插件，而不是读到错位的指针。
+
+另外 `set_config` 的判定对象从「调用者」改成了「执行者」：服务方法里写配置现在落
+**提供方**自己的段（以前会错写进调用方那段），`get_config` 不受影响。
+
 > ⚠️ 这次**跳了版本号**（`5` → `6`）：字段是纯追加，但 `current_plugin` 的**取值来源变了**，
 > 属于静默的行为差异，不能只靠 `size` 协商。v5 插件在 v6 宿主上、v6 插件在 v5 宿主上
 > 都会 `AbiMismatch`（拒绝加载），**重编一次即可**（仓库里所有插件与模板都从 `ABI_VERSION` 取值）。
@@ -2400,7 +2465,7 @@ JS/TS 的 `invokeAsync`、Python 的 `invoke_async`、Go 的 channel、Rust 的 
 ## 为什么本 ABI 一个可变参数函数指针都没有 [#为什么本-abi-一个可变参数函数指针都没有]
 
 Rust 的 `extern "C" fn(.., ...)` 确实稳定（能写、cbindgen 也能生成），但**本 ABI 一个都没用**，
-理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 24 个函数的参数都是固定的，
+理由只有一条：`...` 会把**参数类型和个数校验全部丢掉**。VTable 里 27 个函数的参数都是固定的，
 用 `...` 只会让 C 侧传错参数从编译错误降级成运行期 UB。
 
 将来真要加，正确的声明形状是（C 侧）：
@@ -6780,9 +6845,13 @@ city = "上海"
 
 插件在**运行时**读它、写它，走的是 ABI 接口（不是 `plugin_start` 的那个 `config_json`）：
 
-- **读**：`get_config(section, key)` —— 读任意段（自己的 + 别人的）。`section` 空串读顶层
-  （`[bot]` / `[telegram]` 等），`key` 空串读整段，`key` 是点路径（`nested.k`）。
-- **写**：`set_config(key, value_json)` —— **只能写自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。成功 = 写内存 + 落盘到 `plugin-config/<插件名>.toml`；宿主这次启动没有配置文件、或这个键被用户配置钉住时**直接报错**。
+- **读**：`get_config(section, key)` —— **`section` 空串 = 读自己那段**（与写同一个默认），
+  写了插件名才读别人的段；`key` 空串读整段，`key` 是点路径（`nested.k`）。
+  顶层的 `[bot]` / `[telegram]`（含 `api_id` 这类）**不对插件暴露**——插件要的永远是插件段。
+- **写**：`set_config(key, value_json)` —— **只能写自己名下的段**（没有 section 参数，宿主按执行者身份判定，插件无法伪造）。成功 = 写内存 + 落盘到 `plugin-config/<插件名>.toml`；宿主这次启动没有配置文件、或这个键被用户配置钉住时**直接报错**。
+- **写别人的段**：`set_config_section(section, key, value_json)` —— 显式点名目标插件，
+  给协作插件同步设置用。规则完全一样（用户钉住的键照样拒绝、只落目标那个文件），
+  宿主会记一行「谁改了谁的配置」。
 
 `fuyubot.toml` **运行时永远不会被插件改写**：你手写的注释、顺序、`api_hash` 都不会被卷走。
 

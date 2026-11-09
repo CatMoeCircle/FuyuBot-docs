@@ -58,12 +58,31 @@
 - 读失败（不存在 / 不是 TOML / 转不成 JSON）**只告警、不拦加载**：默认配置坏了不该让整个插件装不上。
 - `config` 是可选字段；没写就是没有默认值。
 
+## 读：默认也是自己 [#读默认也是自己]
+
+`get_config(section, key)` 的 `section` 空串表示**读自己那段**——与 `set_config` 的默认同一套判定
+（`HostRuntime::executor_name`，执行者栈顶）。要读别人的段必须把插件名写出来。
+
+顶层（`[bot]` / `[telegram]`）**不通过插件 API 暴露**：`read_config("")` 只留给宿主自己
+（CLI / `plugin_config_value`）。插件读宿主凭据既不必要也不安全，这条边界要守住。
+
+## 写别人的段（`set_config_section`） [#写别人的段set_config_section]
+
+0.1.4 起多了一个入口：`set_config_section(section, key, value_json)`——写**指定插件**的段，
+给协作插件同步设置用（比如播放器把「当前音源」写进宿主自己的段、让别的插件读）。
+
+- 它是**新函数**，`set_config` 仍然没有 `section` 参数：默认那条永远写自己，
+  越权由 `owner_names` 判定，插件伪造不了。
+- 跨插件写是**显式**的：调用方必须自己写出目标插件名，所以谈不上冒充；
+  宿主会记一行 `X 改写插件 Y 的配置`，出问题查得到是谁。
+- 两条路共用同一套规则：用户钉住的键照样拒绝、只落
+  `plugin-config/<目标插件>.toml`、`fuyubot.toml` 永不重写。
+
 ## 不要做的事 [#不要做的事]
 
-- **不要给 `set_config` 加 `section` 参数**。现在的安全模型是「没有 section + `owner_names`
-  判定调用者」，加了就等于把越权写别人的段重新打开。
-- **不要在 ABI 上加字段**来实现配置（当前 ABI 不动）：这些都是宿主内部行为，`get_config` /
-  `set_config` 的签名已经够用。
+- **不要给 `set_config` 加 `section` 参数**。默认那条的安全模型是「没有 section + `owner_names`
+  判定执行者」，给它加参数就等于把越权写别人的段重新打开；要跨插件写请用
+  `set_config_section`（显式目标 + 审计日志）。
 - **不要让插件直接写 `fuyubot.toml`**，也不要让 CLI 面板的配置编辑器去写插件运行时文件：
   两边各写各的，优先级就说不清了。
 
