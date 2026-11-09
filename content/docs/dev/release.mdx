@@ -3,13 +3,12 @@ title: 发布
 description: 两套发布资产（TDLib 库 / fuyubot 本体）与文档站的静态部署
 ---
 
-仓库有两套**互不替代**的发布资产，tag 前缀不同，别混：
+仓库有三类**互不替代**的发布资产，tag 前缀不同，别混：
 
 | 资产 | tag | 生产方 | 谁消费 |
 | --- | --- | --- | --- |
 | TDLib 动态库 `TDLib-<os>-<arch>` | `TDLib-v<版本>` | `build-tdlib.yml` + `.github/scripts/*.sh` | 构建期（`fuyubot-tdlib` 的 loader 表） |
 | fuyubot 本体 `fuyubot-<版本>-<OS>-<平台>.zip` | `v<版本>` | `release-bot.yml` | 终端用户下载、解压即跑 |
-| Android JNI 包 `fuyubot-<版本>-android-jni-<abi>.zip` | `v<版本>` | `release-bot.yml`（同一个 `build-android` job） | 应用作者拷进 `jniLibs/` |
 | Android APK `fuyubot-<版本>-<abi>.apk` | `v<版本>` | `release-bot.yml` 的 `build-apk` job | 终端用户直接安装 |
 
 ## TDLib 资产（构建期契约）
@@ -62,9 +61,9 @@ README.txt
 **`tdjson` 与可执行文件同级**（靠 loader 优先级 2「可执行文件所在目录」命中）。
 zip 只在 `publish`（Linux runner）里生成，Windows runner 的 bash 没有 `zip` 命令。
 
-### Android：JNI 包
+### Android：JNI 包（Actions artifact，不进 Release）
 
-同一个 `build-android` job 里还会出一份**只有 `.so`** 的包（不是可执行文件、也不是 APK）：
+`build-android` job 里还会出一份**只有 `.so`** 的包（不是可执行文件、也不是 APK）：
 
 ```text
 fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
@@ -75,19 +74,21 @@ fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
 └─ README.txt
 ```
 
-`abi` 用的是 **AGP 口径**（`arm64-v8a`），因为这两个 `.so` 要直接进 `jniLibs/<abi>/`；
-可执行文件那份包仍用 cargo 口径（`aarch64` / `x86_64`），两种包在 Release 页并排出现，
-下载说明里会写明哪个是「可执行文件」、哪个是「JNI 库」。组包与校验在
-`.github/scripts/package-fuyubot-jni.sh`：ELF 类型必须是共享库（`ET_DYN`）、ABI 机器码对得上、
-`PT_LOAD` 按 16 KB 页对齐、7 个导出符号齐全、`RegisterNatives` 的绑定类名在（方法名/签名由单测钉住）、
-`DT_NEEDED` 只允许 bionic 的那几个。
+> ⚠️ 从 2026-11 起这个 zip **不再作为 Release 资产发布**：它只留在 Actions artifacts 里，
+> 由同一个 workflow 的 `build-apk` job 取用。Release 页只挂 `.apk`，用户不需要自己拼内核。
+
+`abi` 用的是 **AGP 口径**（`arm64-v8a`），因为这两个 `.so` 要直接进 APK 的
+`assets/fuyubot-kernel/`；可执行文件那份包仍用 cargo 口径（`aarch64` / `x86_64`）。
+组包与校验在 `.github/scripts/package-fuyubot-jni.sh`：ELF 类型必须是共享库（`ET_DYN`）、
+ABI 机器码对得上、`PT_LOAD` 按 16 KB 页对齐、7 个导出符号齐全、`RegisterNatives` 的绑定类名在
+（方法名/签名由单测钉住）、`DT_NEEDED` 只允许 bionic 的那几个。
 用法见 [Android：JNI 运行时](./android.mdx)。
 
 ### Android：APK（可安装的图形客户端）
 
 同一页 Release 里还有 `.apk`：`fuyubot-<版本>-<abi>.apk`（`<abi>` = `arm64-v8a` / `x86_64`，
 例 `fuyubot-v0.1.3-arm64-v8a.apk`）。
-它是把上面那个 JNI 包塞进壳仓库
+它是把上面那个 JNI 包（本次运行的 Actions artifact）塞进壳仓库
 [FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android)（Kotlin + Compose）再编一次
 得到的，内核与本仓**同版本**——`build-apk` job 取的就是本次运行产出的
 `fuyubot-<版本>-android-jni-<abi>.zip`，不是上游壳仓库自带的旧内核。
