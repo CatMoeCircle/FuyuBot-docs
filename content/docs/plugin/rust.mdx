@@ -144,13 +144,14 @@ fn stop(&mut self) {
 
 <Callout type="info">
   `plugin_start` 收到的 `config_json` **不是**这一段。那是宿主给的运行环境信息
-  （`plugins_dir` / `scripts_dir` / `spawn` 等）；你自己的配置要用 `get_config("你的插件名", key)` 读。
+  （`plugins_dir` / `scripts_dir` / `spawn` 等）；你自己的配置用 `get_config("", key)` 读（空 section = 自己那段）。
 </Callout>
 
 | 方法 | 作用 |
 | --- | --- |
-| `get_config(section, key) -> Option<String>` | 读**任意**段。`section` 空串读顶层（`[bot]` 等），`key` 空串读整段、否则按点路径取键。返回 JSON 文本，找不到就是 `None` |
-| `set_config(key, value_json) -> Result<(), AbiError>` | 写**自己**的段。**没有 section 参数**——宿主按调用者身份判定，写不到别人那段。`key` 空串覆盖整段 |
+| `get_config(section, key) -> Option<String>` | 读配置。`section` 用**配置文件里的段名**（`plugin.my.weather` / `[bot]` / 裸插件名都认），**空串 = 自己那段**；`key` 空串读整段、否则按点路径取键。返回 JSON 文本，找不到就是 `None` |
+| `set_config(key, value_json) -> Result<(), AbiError>` | 写**自己**的段。**没有 section 参数**——宿主按执行者身份判定，写不到别人那段。`key` 空串覆盖整段 |
+| `set_config_for(section, key, value_json) -> Result<(), AbiError>` | 写**指定插件**的段（跨插件同步设置）。`section` 同上；**只接受 `plugin.*`**，顶层归用户。规则与 `set_config` 一致 |
 
 ```rust
 fn start(&mut self, _config_json: &str) -> Result<(), String> {

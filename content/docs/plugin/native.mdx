@@ -197,26 +197,31 @@ fuyubot plugin install <工程目录>
 ## 读 / 写配置
 
 每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段配置（见[配置文件](../usage/config.mdx)）。
-C 侧直接调 VTable 上那两个函数：
+C 侧直接调 VTable 上的函数。`section` 用配置文件里的段名（`plugin.ping`），**空串 = 自己那段**：
 
 ```c
 /* 读自己的段 `[plugin.ping]` 里的 greeting；返回 JSON 文本，没有就是 NULL。 */
-const char *greeting = g_host->get_config(g_host, "ping", "greeting");
+const char *greeting = g_host->get_config(g_host, "", "greeting");
 if (greeting != NULL) {
     /* greeting 指向 "…"（带引号的 JSON 字符串）；要用就当场拷走。 */
     printf("greeting = %s\n", greeting);
 }
 
-/* 读别人的段（只读）：section 是那个插件的名字。 */
-const char *city = g_host->get_config(g_host, "my.weather", "city");
+/* 读别人的段：section 写那个插件的段名。 */
+const char *city = g_host->get_config(g_host, "plugin.my.weather", "city");
 
-/* 写自己的段：只能写自己（没有 section 参数），成功返回 0（落盘到 plugin-config/）。 */
+/* 写自己的段：set_config 没有 section 参数，成功返回 0（落盘到 plugin-config/）。 */
 int32_t code = g_host->set_config(g_host, "last_started", "\"2026-01-01\"");
 if (code != 0) { /* 越权 / 解析失败 / 写盘失败 / 键被用户配置钉住 */ }
+
+/* 写别人的段：set_config_section 显式点名（只接受 plugin.*，顶层归用户）。 */
+int32_t code2 = g_host->set_config_section(g_host, "plugin.my.weather", "refresh_secs", "30");
 ```
 
 两点与其它函数一致：**返回值是宿主线程局部缓冲**（读完即弃，别 free）；`set_config`
-**没有 section 参数**——宿主按调用者身份判定，所以插件无法伪造写别人的段。
+**没有 section 参数**——宿主按执行者身份判定，所以插件没法靠它写别人的段；
+要写别人得显式用 `set_config_section`（目标写在参数里，宿主会记一行「谁改了谁」，
+而 `[bot]` / `[telegram]` 这类顶层段归用户，写了会被拒）。
 
 ## 手写 `sendMessage`（或者用 `simplify_invoke`）
 
