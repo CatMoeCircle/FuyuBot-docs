@@ -45,7 +45,7 @@ graph TD
 | `fuyubot-app` → `core` / `loader` / `tdlib` | 允许（编排层；反过来禁止） |
 
 组合只发生在两处：`HostRuntime::new`（把四个机制 `install` 进 `Context`）与 `HostRuntime` 里的
-24 个 `unsafe extern "C"` 桥（VTable 的 24 个函数指针各对应一个）。四个机制 crate 绝不彼此调用。
+27 个 `unsafe extern "C"` 桥（VTable 的 27 个函数指针各对应一个）。四个机制 crate 绝不彼此调用。
 
 ## 编排层：`fuyubot-app` [#编排层fuyubot-app]
 
@@ -158,7 +158,7 @@ fuyubot-android ┘                        └ JNI 回调（onState / onAsk / on
 
   <rect x="130" y="92" width="420" height="52" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" strokeWidth="1" />
   <text x="150" y="111" fontSize="12.5" fontWeight="500" fill="currentColor">HostApiVTable</text>
-  <text x="150" y="129" fontSize="11" fill="currentColor" fillOpacity="0.6">24 个函数指针，首参一律是 host，全是 Option</text>
+  <text x="150" y="129" fontSize="11" fill="currentColor" fillOpacity="0.6">27 个函数指针，首参一律是 host，全是 Option</text>
 
   <path d="M340 144 L340 164" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeWidth="1.5" markerEnd="url(#flow-arrow)" />
 
@@ -532,8 +532,8 @@ root scope 再 `enter`，否则 owner 退化成宿主 0，卸载时回滚不到�
 
 | 类型 / 函数 | 位置 | 作用 |
 | --- | --- | --- |
-| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（3 个非函数字段 + 24 个函数指针） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
-| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 24 个桥的落点、请求留档、响应回投、`rollback_owner`、全局配置读写；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
+| `HostApiVTable` / `PluginHandle` / `HostApi` | `fuyubot-abi` | 函数表（3 个非函数字段 + 27 个函数指针） / `plugin_init` 的返回值（`abi_version == 0` = 失败） / 插件侧门面 |
+| `HostRuntime` / `UpdatePipeline` / `PluginLoader` / `LoadedPlugin` | `fuyubot-loader` | 27 个桥的落点、请求留档、响应回投、`rollback_owner`、全局配置读写；六阶段（实跑 4 个）+ 双通道路由；dlopen 与 drop 即卸载 |
 | `TdClient` / `Routed` / `ReceiveLoop` | `fuyubot-tdlib` | TDLib 客户端；`route()` 分出 `Update` / `Response`；停止把手（`stop()` / `join()`，drop **不会**停） |
 | `Simplify` / `RichMessage` | `fuyubot-simplify` | 发消息 / 相册 / 编辑 / 删除 / Markdown 转 entities / 等响应 / **富消息**（`rich` 模块，本地 Markdown → 块树）；参数是**每个方法一个结构体** |
 | `TdApiSchema::compiled()` | `fuyubot-tdlib-sys` | 编译期烘焙的元数据；`check_request` 做本地方法名/参数名校验 |

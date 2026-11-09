@@ -350,10 +350,14 @@ impl Plugin for StartPlugin {    fn start(&mut self, _config_json: &str) -> Resu
 
 | 语言 | 提供方 | 消费方 |
 | --- | --- | --- |
-| Rust | `provide_service` / `provide_service_shared` | `call_service`，或 `get_service` + 自己扫方法表 |
-| C / C++ | VTable 里第 9 / 20 项 | `get_service` + 按 `method_count` 扫 `methods[i]` |
+| Rust | `provide_service` / `provide_service_shared` | `call_service`（推荐），或 `get_service` + 自己扫方法表 |
+| C / C++ | VTable 里第 9 / 20 项 | `call_service`（第 24 项，v6 起）；`get_service` + 扫 `methods[i]` 仍能跑 |
 | Go | 同上（c-shared 不能卸载，见 ABI 页） | 同上 |
 | Python / JS / TS | 暂不支持 | 薄 SDK 还没暴露服务调用，见[脚本插件](../script/index.mdx) |
+
+> 自己 `get_service` 再直调**能跑，但宿主不在场**：这次调用不算「经过宿主」，所以
+> 提供方的 `current_plugin()` 拿不到调用方（返回 `None`）、失败也没有 `last_error` 细节。
+> 要身份和错误信息就用 `call_service`。
 
 C 侧的字段布局与调用示例见 [插件 ABI](./abi.mdx#服务的形状servicevtable) 和
 [原生插件](./native.mdx)。

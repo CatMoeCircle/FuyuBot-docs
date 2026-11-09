@@ -98,7 +98,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 ## HostApiVTable：`host_ctx` + 27 个函数指针 [#hostapivtablehost_ctx--27-个函数指针]
 
-`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **24 个是函数指针**，全是 `Option<...>`；
+`version` 在偏移 0、`size` 在 4、`host_ctx` 在 8，其余 **27 个是函数指针**，全是 `Option<...>`；
 总大小 = `2 * size_of::<u32>() + 28 * size_of::<*const c_void>()`（`host_ctx` + 27 个函数），
 由 `const _` 里的 `offset_of!` / `size_of` 断言钉死。每个函数第一个参数都是 `host: *mut c_void`。
 
@@ -127,7 +127,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 | 16 | `cancel_wait` | `(handle) -> ()` | `api_cancel_wait` | 从另一个线程取消等待 |
 | 17 | `log` | `(level: u32, message) -> ()` | `api_log` | 落进宿主环形缓冲（`LOG_CAPACITY = 256`）并打一行到 stderr；非法 level 按 `Info` 处理 |
 | 18 | `get_config` | `(section, key) -> *const c_char` | `api_get_config` | 读配置：`section` 用**配置文件里的段名**——`plugin.fuyubot.manage`、`[bot]`、或裸插件名 `fuyubot.manage` 都认；**空串 = 自己那段**（与 `set_config` 同一个默认）。`key` 空串读整段、否则按点路径取键。**宿主线程局部缓冲**，读完即弃；段 / 键不存在返回 `NULL` |
-| 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写执行者自己名下的段**（没有 section 参数，宿主按调用者身份判定，插件无法伪造）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + **段级落盘**到 `<root>/plugin-config/<名>.toml`，原子替换，`fuyubot.toml` 永不改写）；非 0 = 越权 / 解析失败 / 写盘失败 / **这个键被用户配置钉住**（`fuyubot.toml` 的 `[plugin.<名>]` 里写了它）/ 这次启动没有可回写的配置文件（宿主不给 `config_path`，写入会丢，所以直接失败而不是静默只改内存） |
+| 19 | `set_config` | `(key, value_json) -> i32` | `api_set_config` | 写配置：**只能写执行者自己名下的段**（没有 section 参数，宿主按执行者身份判定，插件无法伪造；要写别人用第 27 项）。`key` 空串覆盖整段、否则按点路径设键。返回 0 = 成功（写内存 + **段级落盘**到 `<root>/plugin-config/<名>.toml`，原子替换，`fuyubot.toml` 永不改写）；非 0 = 越权 / 解析失败 / 写盘失败 / **这个键被用户配置钉住**（`fuyubot.toml` 的 `[plugin.<名>]` 里写了它）/ 这次启动没有可回写的配置文件（宿主不给 `config_path`，写入会丢，所以直接失败而不是静默只改内存） |
 | 20 | `provide_service_shared` | `(name, *const ServiceVTable) -> ServiceHandle` | `api_provide_service_shared` | 注册到**进程级**（所有插件可见，这也是宿主那四个机制所在的层级）。同名会撞，只在真要共享时用。v4 起追加在 VTable **尾部** |
 | 21 | `simplify_invoke` | `(op_json) -> RequestId` | `api_simplify_invoke` | **跨语言跑一个 simplify 操作**（v5）。宿主起工作线程执行，结果照 `@request_id` 回投到 `"response"` 通道。见[「simplify 操作表」](#simplify-操作表) |
 | 22 | `simplify_invoke_result` | `(op_json) -> *const c_char` | `api_simplify_invoke_result` | **同步**跑一个不碰网络的 simplify 操作，当场返回结果 JSON（线程局部缓冲）。回调里安全；传异步 op 返回 `ok:false` / `code:"async_op"` |
