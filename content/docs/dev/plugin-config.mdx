@@ -63,11 +63,16 @@ description: 三层优先级、段级落盘、原子替换——改配置系统�
 
 ## 读：默认也是自己
 
-`get_config(section, key)` 的 `section` 空串表示**读自己那段**——与 `set_config` 的默认同一套判定
-（`HostRuntime::executor_name`，执行者栈顶）。要读别人的段必须把插件名写出来。
+`get_config(section, key)` 的 `section` 按**配置文件里的段名**寻址，与 `fuyubot.toml` 的 `[段]`
+一一对应：`plugin.fuyubot.music`、`[plugin.fuyubot.music]`、裸插件名 `fuyubot.music`、
+顶层 `[bot]` / `[telegram]` 都认。**空串 = 自己那段**，与 `set_config` 的默认同一套判定
+（`HostRuntime::executor_name`，执行者栈顶）。
 
-顶层（`[bot]` / `[telegram]`）**不通过插件 API 暴露**：`read_config("")` 只留给宿主自己
-（CLI / `plugin_config_value`）。插件读宿主凭据既不必要也不安全，这条边界要守住。
+解析在 `parse_section`：剥掉方括号与空白 → `plugin.*` 是插件段、五个已知顶层名（`bot` /
+`telegram` / `tdlib` / `plugins` / `plugin`）是顶层段、其余裸名字按插件段（兼容旧调用）。
+
+**写只允许 `plugin.*`**：顶层段归用户，`set_config_section("bot", …)` 会被拒绝——
+读得到不等于写得进。
 
 ## 写别人的段（`set_config_section`）
 

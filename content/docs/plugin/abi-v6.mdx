@@ -92,7 +92,7 @@ if (reply == NULL) { /* 失败 */ }
 | --- | --- |
 | `host.last_error()` | `call_service` 失败时**为什么**失败。`HostApi::call_service` 已经自动拼进错误文本，不用自己调 |
 | `host.list_services()` | 当前插件看得见的服务清单（名字 / 版本 / 方法名 / 提供方）。按能力找服务，别硬编码别人的名字 |
-| `host.set_config_for(section, key, value)` | 写**指定插件**的配置段（跨插件同步设置）。规则与 `set_config` 一致：用户钉住的键照样拒绝、只落目标那个文件，宿主会记一行「谁改了谁」 |
+| `host.set_config_for(section, key, value)` | 写**指定插件**的配置段（跨插件同步设置）。`section` 用配置文件里的段名（`plugin.fuyubot.music` 或 `[plugin.fuyubot.music]`，空串 = 自己）；只接受 `plugin.*`，顶层归用户。规则与 `set_config` 一致：用户钉住的键照样拒绝、只落目标那个文件，宿主会记一行「谁改了谁」 |
 
 另外两处行为跟着修正：
 
