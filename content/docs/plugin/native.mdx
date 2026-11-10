@@ -13,7 +13,20 @@ C 与 C++ 用**同一份头文件** `fuyubot_plugin.h`，差别只有两条：�
   脚本侧有自己的异步写法，见[脚本插件](../script/index.mdx)。
 </Callout>
 
-工程里加一个 `build.rs` 把头文件落出来（与 Rust 插件同一个来源）：
+用 AI Agent 写？本站导出了 `llms.txt` / `llms-full.txt` 和每页的 `content.md`，
+怎么喂见[插件总览 › 用 AI Agent 写插件](./index.mdx#用-ai-agent-写插件)。
+
+## 头文件
+
+`fuyubot_plugin.h` **不在任何仓库里**：`fuyubot-abi` 也不把生成物打进 crate，它是构建时产物，
+每台机器现生成一次。三条路拿到它，任选一条。
+
+### 一、用 `build.rs` 落盘（推荐，与 Rust 插件同一个来源）
+
+头文件的内容就是 `fuyubot_abi::PLUGIN_HEADER` 这个常量（cbindgen 生成的原文），所以只要有东西
+能编译 `fuyubot-abi`，就能把它落出来。`build.rs` 只是这一小步，**不是**把插件改成 Rust 写。
+
+**工程里已经有 `Cargo.toml`**（顺手用 Rust 写工具 / 测试很常见）——加两处：
 
 ```toml
 [build-dependencies]
@@ -23,11 +36,79 @@ fuyubot-abi = "0.1.3"
 ```rust
 // build.rs
 fn main() {
-    std::fs::write("fuyubot_plugin.h", fuyubot_abi::PLUGIN_HEADER).unwrap();
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuyubot_plugin.h");
+    std::fs::write(out, fuyubot_abi::PLUGIN_HEADER).unwrap();
 }
 ```
 
-`cargo build` 之后工程根上就有 `fuyubot_plugin.h`；C 与 C++ 共用这一份。
+```bash
+cargo build     # 之后工程根上就有 fuyubot_plugin.h，C 与 C++ 共用这一份
+```
+
+build 脚本的 cwd 就是包根，写相对路径 `"fuyubot_plugin.h"` 也对；用 `CARGO_MANIFEST_DIR` 拼只是把
+「落在包根」写明，搬目录或指向 `../` 时不靠这条约定。
+
+**纯 C/C++ 工程**（一个 Cargo 工程都没有）——在工程根造一个只为落头文件的小 crate 挂在旁边：
+
+```bash
+cargo new --lib header-gen      # 放在工程根下
+# 再往 header-gen/Cargo.toml 里补：
+#   [build-dependencies]
+#   fuyubot-abi = "0.1.3"
+```
+
+```rust
+// header-gen/build.rs —— 写到工程根，而不是 header-gen 自己那儿
+fn main() {
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fuyubot_plugin.h");
+    std::fs::write(out, fuyubot_abi::PLUGIN_HEADER).unwrap();
+}
+```
+
+```bash
+cargo build --manifest-path header-gen/Cargo.toml
+```
+
+`cargo new` 带的空 `src/lib.rs` 留着就行（只为让 manifest 有个 target）。`header-gen/target/` 与
+生成出来的 `fuyubot_plugin.h` 都进 `.gitignore`，别提交。[Go 插件](./go.mdx#头文件)用的是同一招。
+
+### 二、从本机已构建的 `fuyubot` 里取（手头有源码时最省事）
+
+`fuyubot-abi` 构建时把生成物写进 `$OUT_DIR`，落盘位置就是：
+
+```text
+target/<profile>/build/fuyubot-abi-<hash>/out/fuyubot_plugin.h
+```
+
+按修改时间取最新的一份，复制到你工程根：
+
+```bash
+# bash / zsh / Git Bash
+cp "$(ls -t target/*/build/fuyubot-abi-*/out/fuyubot_plugin.h | head -1)" <工程目录>/
+```
+
+```powershell
+# PowerShell
+$h = Get-ChildItem target\*\build\fuyubot-abi-*\out\fuyubot_plugin.h |
+     Sort-Object LastWriteTime | Select-Object -Last 1
+Copy-Item $h.FullName -Destination <工程目录>\
+```
+
+⚠️ `<hash>` 随构建参数变，同一份 `target/` 里会躺着几十份历史副本（有的是半年前旧 ABI），
+所以必须按时间取最新——**别把某个 hash 目录写进脚本或文档**，它明天就不存在了。
+
+### 三、没有 Rust 工具链
+
+头文件是纯文本，找一台已经构建过的机器、CI 产物或同事那里拷**同一份**即可，不用为此装 Rust。
+前提只有一条：**这份头文件的 ABI 版本必须与你机器上的 `fuyubot` 一致**。
+
+### 拿到之后
+
+- 校验版本：头文件里应是 `#define ABI_VERSION 6`（ABI v6）。对不上的旧头文件会缺 `HostApiVTable`
+  尾部字段，宿主加载时直接以 `VersionMismatch` / `VTableTooSmall` 拒绝——不会带病跑。
+- `#include "fuyubot_plugin.h"` 即可，C 与 C++ 共用；编译时用 `-I` 指向它所在目录（见下文「编译」）。
+- **不要手改**：改 ABI 要改 `fuyubot-abi` 的 Rust 定义，头文件由 cbindgen 重新生成。
+- **不要提交**：加进 `.gitignore`，升级 `fuyubot` / `fuyubot-abi` 后重新生成一次。
 
 ## 七个符号
 

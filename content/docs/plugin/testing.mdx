@@ -35,7 +35,7 @@ nm -D --defined-only target/debug/libfuyubot_plugin_demo.so | grep plugin_
 
 三个版本别混：
 
-- **宿主 ABI 世代** = `HostApiVTable::version`（当前 5），就在 VTable 首字段；
+- **宿主 ABI 世代** = `HostApiVTable::version`（当前 6），就在 VTable 首字段；
 - **插件声明的 ABI 版本** 在 `PluginHandle::abi_version`，是 `plugin_init` 的返回值——
   静态检查看不到，**装载时才判定**；
 - **插件自己的 crate 版本** 在 `plugin_manifest` 的 `version` 字段里。

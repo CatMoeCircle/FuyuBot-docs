@@ -7,6 +7,9 @@ Rust 插件只依赖一个 crate：[`fuyubot-abi`](https://crates.io/crates/fuyu
 它给出 `HostApi`（VTable 的 Rust 封装）、`Plugin` trait、`define_plugin!` 宏与
 `ResponseRouter`；**没有第二层 SDK**——写插件就是实现一个 trait，再把 C ABI 导出交给宏。
 
+用 AI Agent 写？本站导出了 `llms.txt` / `llms-full.txt` 和每页的 `content.md`，
+怎么喂见[插件总览 › 用 AI Agent 写插件](./index.mdx#用-ai-agent-写插件)。
+
 ## 依赖
 
 ```toml
