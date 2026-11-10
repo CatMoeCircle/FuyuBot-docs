@@ -1,7 +1,8 @@
 # ABI 契约 (/docs/plugin/abi)
 
 这是**唯一**的跨语言契约：形状只有 `fuyubot-abi/src/lib.rs` 一份实现，C 头文件
-`fuyubot_plugin.h` 由 cbindgen 从它生成（**产物，不是源码**，别手改）。宿主侧所有桥在
+`fuyubot_plugin.h` 由 cbindgen 从它生成（**产物，不是源码**，别手改；怎么拿到它见
+[C 与 C++ 插件 › 头文件](./native.mdx#头文件)）。宿主侧所有桥在
 `fuyubot-loader/src/runtime.rs`。**改 ABI = 改那个文件 + 加版本号。**
 
 ## 插件必须导出的符号 [#插件必须导出的符号]

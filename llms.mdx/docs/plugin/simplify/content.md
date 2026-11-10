@@ -8,7 +8,7 @@
 
   ```toml
   [dependencies]
-  fuyubot-abi      = "0.1.2"
+  fuyubot-abi      = "0.1.3"
   fuyubot-simplify = { path = "<你的 Fuyu-Bot 检出>/crates/fuyubot-simplify" }
   ```
 

@@ -2,12 +2,87 @@
 
 Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态库，宿主只要看到七个导出符号
 就认它。Go 这条路线没有脚手架——照本页的结构自己搭，ABI 头文件从 `fuyubot-abi` 落盘
-（见 [C 与 C++ 插件](./native.mdx)）。
+（见 [C 与 C++ 插件 › 头文件](./native.mdx#头文件)）。
 
 <Callout type="info">
   Go 没有脚手架模板，也没有官方的 `go-ping` 示例——照下面这几段自己搭工程。
   C 头文件仍然由 `fuyubot-abi` 生成，两门语言共用同一份，不要手抄。
 </Callout>
+
+用 AI Agent 写？本站导出了 `llms.txt` / `llms-full.txt` 和每页的 `content.md`，
+怎么喂见[插件总览 › 用 AI Agent 写插件](./index.mdx#用-ai-agent-写插件)。
+
+## 头文件 [#头文件]
+
+Go 这条路线同样要先落地 `fuyubot_plugin.h`：它是 `fuyubot-abi` 构建时用 cbindgen 从 Rust 定义生成的产物，
+**仓库里没有、也不要提交**，C / C++ / Go 三份代码认的是同一份（来源与另两条拿法见
+[C 与 C++ 插件 › 头文件](./native.mdx#头文件)）。下面是 Go 工程的落地方式。
+
+### 落盘：一个只负责生成头文件的小 crate [#落盘一个只负责生成头文件的小-crate]
+
+Go 工程里没有 `Cargo.toml`，所以造一个只为落头文件的 crate（`header-gen` 这个名字随意）：
+
+```bash
+cargo new --lib header-gen        # 放在 Go 工程根下
+# 再往 header-gen/Cargo.toml 末尾补：
+#   [build-dependencies]
+#   fuyubot-abi = "0.1.3"
+```
+
+```rust
+// header-gen/build.rs —— 写到 Go 工程根，而不是 header-gen 自己那儿
+fn main() {
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fuyubot_plugin.h");
+    std::fs::write(out, fuyubot_abi::PLUGIN_HEADER).unwrap();
+}
+```
+
+```bash
+cargo build --manifest-path header-gen/Cargo.toml
+```
+
+`cargo new` 带的那个空 `src/lib.rs` 留着就行——它只是让 manifest 有个 target，
+这个 crate 永远不会被编进插件，Go 侧也不需要它。
+
+手头已经有 `fuyubot` 源码、或者别的 C/C++ 工程已经落过一份？直接从构建产物里拷更快
+（`<hash>` 每次构建都变，所以按时间取最新，别抄死路径）：
+
+```powershell
+$h = Get-ChildItem ..\FuyuBot\target\*\build\fuyubot-abi-*\out\fuyubot_plugin.h |
+     Sort-Object LastWriteTime | Select-Object -Last 1
+Copy-Item $h.FullName .
+```
+
+### 让 cgo 找到它 [#让-cgo-找到它]
+
+放在 Go 工程根、与 `plugin.c` 同级最省事：cgo 编 `.c` 时引号包含**先查源文件目录**，
+`#include "fuyubot_plugin.h"` 直接就生效，`CGO_CFLAGS` 一个字都不用加：
+
+```c
+/* plugin.c */
+#include "fuyubot_plugin.h"
+```
+
+放进 `include/` 之类的子目录才需要指路，而 `#cgo` 指令**只能写在 `.go` 文件的 preamble 里**
+（写在 `.c` 里 cgo 不认）：
+
+```go
+// main.go
+/*
+#cgo CFLAGS: -I${SRCDIR}/include
+#include "fuyubot_plugin.h"
+*/
+import "C"
+```
+
+`go build` 报 `fatal error: fuyubot_plugin.h: No such file or directory`，就是这一步没做。
+
+### 别提交、别手改 [#别提交别手改]
+
+- 生成物进 `.gitignore`：`echo "fuyubot_plugin.h" >> .gitignore`；
+- 头文件里的 `#define ABI_VERSION 6` 必须与你机器上的 `fuyubot` 一致，升级宿主后重跑一次生成；
+- 改 ABI 只能改 `fuyubot-abi` 的 Rust 定义——头文件是产物，手改会被下次生成覆盖，
+  而且版本号对不上时宿主会直接拒绝加载。
 
 ## 结构：Go 写逻辑，C 写壳 [#结构go-写逻辑c-写壳]
 
@@ -15,7 +90,7 @@ Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态�
 | --- | --- |
 | `main.go` | 逻辑：解析更新 JSON、拼 `sendMessage`、打日志 |
 | `plugin.c` | 四个 ABI 符号：`plugin_init` / `plugin_start` / `plugin_stop` / `plugin_free_string` |
-| `fuyubot_plugin.h` | 生成物（由 `fuyubot-abi` 的 `PLUGIN_HEADER` 落盘），**不提交** |
+| `fuyubot_plugin.h` | 生成物（由 `fuyubot-abi` 的 `PLUGIN_HEADER` 落盘），**不提交**；怎么拿到见[上文](#头文件) |
 
 为什么不直接 `//export plugin_init`：`PluginHandle` 是**按值返回**的结构体，由 C 侧构造最稳；
 也避免把宿主 VTable 的函数指针搬进 Go。C 侧只做转发：
@@ -218,7 +293,7 @@ func sendText(chatID int64, text string) int64 {
 cgo 需要 C 编译器：Linux / macOS 用 `cc`，Windows 用 mingw-w64（如
 [w64devkit](https://github.com/skeeto/w64devkit)）。
 
-先把 `fuyubot_plugin.h` 落到工程里（见 [C 与 C++ 插件 › 头文件](./native.mdx)），然后：
+头文件按[上文「头文件」](#头文件)落好之后，直接编：
 
 ```powershell
 $env:CGO_ENABLED = "1"

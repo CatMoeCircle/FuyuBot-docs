@@ -9,6 +9,62 @@
   不编译、不碰 ABI，装上就跑。
 </Callout>
 
+## 用 AI Agent 写插件 [#用-ai-agent-写插件]
+
+本站导出了机器可读版本，Agent 不用抓 HTML、也不会被导航和样式淹没。
+**推荐让 Agent 先读这几页再动手**，而不是凭印象拼 ABI 调用：
+
+| 要什么 | 地址 | 体量 |
+| --- | --- | --- |
+| 全站目录：每页标题 + 一句话 + 链接 | `https://catmoecircle.github.io/FuyuBot-docs/llms.txt` | 约 4.6 KB |
+| 全站正文：所有页面的 Markdown 拼在一起 | `https://catmoecircle.github.io/FuyuBot-docs/llms-full.txt` | 约 430 KB |
+| 单页原文（`Content-Type: text/markdown`） | `https://catmoecircle.github.io/FuyuBot-docs/llms.mdx/docs/plugin/abi/content.md` | 几 KB |
+| 本页原文 | `https://catmoecircle.github.io/FuyuBot-docs/llms.mdx/docs/plugin/content.md` | |
+
+单页地址就是把文档路径接在 `/llms.mdx/docs/` 后面再补 `content.md`（`/docs/plugin/go` →
+`/llms.mdx/docs/plugin/go/content.md`）。
+
+<Callout type="warn">
+  **两种 Markdown 里的链接都不是能直接请求的绝对地址**，提前跟 Agent 讲清楚，否则它会撞一堆 404：
+
+  - `llms.txt` / `llms-full.txt` 的页头是 `/docs/plugin/...`，站点**根路径**，要拼上
+    `https://catmoecircle.github.io/FuyuBot-docs` 才是真实 URL；
+  - 正文里保留着 `./native.mdx#头文件` 这种**相对源文件**的写法（单页 `content.md` 同理），
+    要按「同一目录」解析，别原样去请求。
+
+  正文里还会看到 `<Callout>` 这类 MDX 组件标签，当提示框读就行，不影响内容。
+</Callout>
+
+### 怎么喂 [#怎么喂]
+
+- **只写一个插件**：别整份塞。先给 `llms.txt` 让它知道有哪些页，再按语言喂几篇——
+  Rust 是 `rust` + `abi` + `testing`；C / C++ 是 `native` + `abi` + `testing`；
+  Go 是 `go` + `native` + `abi`。
+- **要它通读全站**：`llms-full.txt` 有 40 多万字节，先看模型的上下文窗口再决定。
+- **改到一半追问细节**：让它直接拉对应页的 `content.md`，比它复述你的摘要可靠。
+
+### 让它别编 [#让它别编]
+
+Agent 最容易在 ABI 上想当然。把这几条写进提示词：
+
+- ABI 是 **v6**：`HostApiVTable::version` 必须等于头文件里的 `#define ABI_VERSION 6`，不匹配宿主直接拒绝加载；
+- 七个导出符号里 `plugin_init` / `plugin_free_string` 是**必需**的，其余可选；
+- 回调是 `extern "C-unwind"`（Rust 侧）；C++ 里异常**不许**穿过这个边界；
+- 回命令不要自己拼 `sendMessage`：Rust 用 `Command::reply_then`，其它语言走 `simplify_invoke`
+  或 `fuyubot.host.command` 服务；
+- 字符串所有权：宿主返回的是**线程局部缓冲**，读完即弃、**不要 free**；插件自己分配的只能自己用
+  `plugin_free_string` 还。
+
+### 让它自证 [#让它自证]
+
+Agent 说「编过了」不等于能加载。收尾要求它跑一遍离线回放（不接账号、不连 TDLib）：
+
+```bash
+fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录>
+```
+
+输出里能看到插件打的日志和它发出去的请求，比「看起来对」可信——细节见[调试与安装](./testing.mdx)。
+
 ## 原生插件：七个导出符号 [#原生插件七个导出符号]
 
 一个原生插件 = 一个 cdylib。宿主 `dlopen` 它，只认这七个导出符号，
@@ -56,7 +112,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | --- | --- |
 | 回调是 `extern "C-unwind"` | 用 `extern "C"` 的话，逃出去的 panic 直接 abort 整个进程，宿主来不及 `catch_unwind` |
 | 一个 crate 只展开一次 `define_plugin!` | 七个符号名是 ABI 定死的，展开两次就是重复定义 |
-| ABI 版本目前是 `5` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
+| ABI 版本目前是 `6` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
 | 订阅句柄要自己管 | `HostApi::on` 返回 `SubscriptionHandle`（`u64`），drop 不会退订；要退订就 `host.off(handle)` |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |

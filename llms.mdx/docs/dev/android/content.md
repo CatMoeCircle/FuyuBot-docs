@@ -34,14 +34,17 @@ package com.catmoecircle.fuyubot.runtime
 class Native(private val callback: Any) {
     external fun nativeVersion(): Int
     external fun nativeRegister(callback: Any): Int
+    external fun nativeInitConfig(json: String): Int               // 建/改 <root>/fuyubot.toml
     external fun nativeStart(optionsJson: String): Int
     external fun nativeStop(): Int
     external fun nativeIsRunning(): Boolean
     external fun nativeAnswer(id: Int, text: String?): Int
 
-    // 运行时查询（ABI v1 一共十个方法）
+    // 运行时查询（ABI v1 一共十三个方法）
     external fun nativePlugins(): String                        // 插件清单 + 计数 JSON
     external fun nativePluginInfo(name: String): String?        // 单个插件；没有 = null
+    external fun nativeAuthState(): String                      // 授权状态 JSON
+    external fun nativeConnectionState(): String                // 连接状态 JSON
     external fun nativeTdRequest(requestJson: String, timeoutMs: Long): String?  // 阻塞
     external fun nativeLastError(): String                      // 本线程最后一次错误
 
@@ -56,8 +59,9 @@ class Native(private val callback: Any) {
 }
 ```
 
-> **绑定是运行期的**：`JNI_OnLoad` 用 `RegisterNatives` 把上面十个方法绑到
+> **绑定是运行期的**：`JNI_OnLoad` 用 `RegisterNatives` 把上面十三个方法绑到
 > `com.catmoecircle.fuyubot.runtime.Native`（默认值），导出符号里没有 `Java_...`。
+> 注册是**逐个**做的：旧 Java 类里没有 `nativeInitConfig` 只会让这一个绑不上，其余照常。
 > 类名 / 方法名 / 签名必须与上面一字不差；包名不是符号名的一部分——自己编译时可以用
 > `FUYUBOT_JNI_CLASS=com/你的/包/Native` 换掉，预编译包就按默认包名写。
 > `nativeRegister` 在 JNI 层收的是 `Object`，所以回调对象没有包名限制：库按方法名调
@@ -71,56 +75,70 @@ class Native(private val callback: Any) {
 
 ```kotlin
 val root = File(filesDir, "fuyubot").apply { mkdirs() }.absolutePath
-val options = """
+val n = Native(callback)   // init 里已经 loadLibrary + nativeRegister
+
+// 首启（或改配置）：生成 <root>/fuyubot.toml，与 CLI 的 `fuyubot init` 同一个模板。
+// 已存在时它是**文本级更新**：只改给了的键，注释与 [plugin.*] 段都保留。
+val init = """
 {
   "root": "$root",
   "api_id": 12345,
   "api_hash": "…",
+  "account_type": "bot"
+}
+"""
+if (n.nativeInitConfig(init) != 0) { /* 看 nativeLastError() */ }
+
+val options = """
+{
+  "root": "$root",
   "bot_token": "123456:ABC…"
 }
 """
-val n = Native(callback)   // init 里已经 loadLibrary + nativeRegister
 if (n.nativeStart(options) != 0) { /* 看日志或 onState */ }
 ```
 
 `nativeStart` **立即返回**：真正干活在库内的工作线程上。成功只代表「线程起来了」，
 不代表已登录——进度看 `onState` 与 `<root>/logs/fuyubot.log`。
 
+### 配置在 `fuyubot.toml`，不在 options 里 [#配置在-fuyubottoml不在-options-里]
+
+配置**只从 `<root>/fuyubot.toml` 读**，与 CLI 用的是**同一份 schema、同一个模板、同一套解析**
+（`fuyubot-app` 的 `config` 模块）：`[telegram].api_id / api_hash / account_type`、
+`[command]`、`[tdlib]`、`[plugin.*]` 都在这个文件里。这样改配置不用重编 APK，
+CLI 的文档与工具也直接适用。
+
+`api_id` / `api_hash` 没填、或文件不存在，`nativeStart` 直接返回 `1`（`FUYUBOT_ARG`），
+`nativeLastError()` 里写明缺哪个——不会默默按默认值起。
+
 ### options JSON [#options-json]
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `root` | ✅ | 绝对路径，**必须是 app 私有目录**（`filesDir`）。`/sdcard` 是 `noexec`，TDLib 也写不进去 |
-| `api_id` | ✅ | int32，与 `setTdlibParameters` 一致 |
-| `api_hash` | ✅ | 只用于登录，**不会**进配置树（插件读不到） |
-| `bot_token` | | 有值就走 bot 登录，全程不弹任何 UI |
-| `plugin_dir` | | 相对 `root`，默认 `plugins` |
-| `data_dir` | | 相对 `root`，默认 `data`（TDLib 数据库与文件都在这儿） |
-| `log_level` | | `error` / `warn` / `info` / `debug` / `trace`，默认 `info` |
-| `tdlib_log_verbosity` | | TDLib 自己的日志详细度，默认 1 |
-| `plugin_config` | | 插件自己的配置段：`{"fuyubot.manage": {"reply_prefix": "…"}}`。点分插件名会展开成 `[plugin.fuyubot.manage]`；缺省 = 不给 |
-| `lib_dir` | | 显式指定 `libtdjson.so` 所在的目录（一般不用给） |
+| `bot_token` | | 凭据，**不落盘**；有它就按 bot 登录。账户类型仍以 `[telegram].account_type` 为准，`user` 账户下给了会被忽略 |
+| `data_dir` | | 覆盖 `[telegram].data_dir`（相对 `root`，默认 `data`）；只影响这次运行，不写回文件 |
+| `plugin_dir` | | 覆盖 `[plugins].dir`（相对 `root`，默认 `plugins`） |
+| `log_level` | | 覆盖 `[plugins].log_level`（`error` / `warn` / `info` / `debug` / `trace`） |
+| `lib_dir` | | 显式指定 `libtdjson.so` 所在的目录；缺省时退回 `[tdlib].path`，再缺省要求先 `loadLibrary("tdjson")` |
 
 目录会在启动时自动建好：`<root>/{data,logs,plugins}`。日志写在 `<root>/logs/fuyubot.log`——
 Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**能看到日志的地方。
 
 ### 插件配置 [#插件配置]
 
-安卓上没有给人编辑的 `fuyubot.toml`，但**插件仍然能读能写自己的配置段**。读到的配置是三层叠出来的：
+三层，与 CLI 完全一致：
 
 | 层 | 在哪 | 谁写 |
 | --- | --- | --- |
 | 包默认 | 插件包里的 `config.default.toml` | 插件作者 |
 | 运行时落盘 | `<root>/plugin-config/<插件名>.toml` | 插件 `set_config` |
-| 用户配置 | `plugin_config`（这次 options 传的）⊕ `<root>/fuyubot.toml` 的 `[plugin.*]` | 壳 / 用户 |
+| 用户配置 | `<root>/fuyubot.toml` 的 `[plugin.*]` | 用户 / 壳（`nativeInitConfig` 或直接写文件） |
 
 - **写**：`set_config` 只落盘到 `<root>/plugin-config/<插件名>.toml`（段级、原子替换），
-  下次启动自动读回来。`fuyubot.toml` **运行时不会被写**——它只在这份文件存在时当作用户配置层。
-- **优先级**：`plugin_config` 里的同名键 > `<root>/fuyubot.toml` > 运行时落盘 > 包默认。
-  用户在 `plugin_config` / `fuyubot.toml` 里钉住的键，插件写会**报错**（而不是写完下次启动被盖回去）。
-- `<root>/fuyubot.toml` 只读 `[plugin.*]`：`telegram` / `plugins` 等段仍以 options JSON 为准，
-  避免出现「第二份 schema」。
-- 文件不存在是正常的；坏了只在日志里留一条 warn，启动不失败。
+  下次启动自动读回来。`fuyubot.toml` **运行时不会被插件写**——注释与 `api_hash` 都安全。
+- 用户配置里钉住的键，插件写会**报错**（而不是写完下次启动被盖回去）。
+- 文件坏了只在日志里留一条 warn；但**文件不存在会拒绝启动**（要先 `nativeInitConfig`）。
 - `set_config` 在「没有 `config_path`」时会报错——安卓现在总是给 `<root>/fuyubot.toml`，
   所以这条只影响自己接 JNI 的宿主。
 
@@ -128,7 +146,8 @@ Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**�
 
 日志只落 `<root>/logs/fuyubot.log`（安卓应用进程的 stdout/stderr 是 `/dev/null`）。
 
-`options.log_level` 决定启动时的**插件日志门槛**（默认 `info`）。运行期要调，写一个文件即可：
+`[plugins].log_level`（或 options 里的 `log_level` 覆盖）决定启动时的**插件日志门槛**（默认 `info`）。
+运行期要调，写一个文件即可：
 
 ```text
 /data/data/<包名>/files/fuyubot/.fuyubot/log-level
@@ -139,7 +158,7 @@ Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**�
 - 文件不存在 = 不改；内容写错 = 保持当前级别 + 留一条 warn。
 - 删掉文件**不会**回退——要回退就写回 `info`，或下次 `start` 用 `options.log_level`。
 - 级别只管插件日志（插件 VTable `log` 的门槛）；宿主与 TDLib 的日志不受它控制，
-  TDLib 自己的详细度是 `tdlib_log_verbosity`（启动时定）。
+  TDLib 自己的详细度是 `fuyubot.toml` 的 `[tdlib].log_verbosity`（启动时定）。
 - `log_level = "debug" / "trace"` 现在**真的会落进文件**：订阅者的默认上限是 `INFO`，
   已放开到 `TRACE`（否则事件会在格式化前被丢掉）。
 

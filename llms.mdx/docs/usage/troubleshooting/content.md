@@ -17,13 +17,13 @@ TDLib 未就绪（不接更新）：找不到可用的 tdjson 动态库。已尝
 | --- | --- |
 | 1 | `TDLIB_TDJSON_PATH` 指向的**文件**或**目录** |
 | 2 | vendored（构建期烤进去的目录）→ **可执行文件所在目录** |
-| 3 | Linux 带版本号的系统库（`libtdjson.so.1.8.69` …） |
+| 3 | Linux 带版本号的系统库（`libtdjson.so.1.8.70` …） |
 | 4 | 裸库名（`tdjson.dll` / `libtdjson.so`，走 `PATH`） |
 
 报错里的 `[1]` … `[4]` 就是这四档的逐条结果，按顺序看就知道断在哪。嫌排查麻烦就直接指定：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.69\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.70\windows-x86_64"
 ```
 
 <Callout type="info">
@@ -60,7 +60,7 @@ $env:TEMP = "$PWD\target\linktmp"; $env:TMP = $env:TEMP; New-Item -ItemType Dire
 
 | 现象 | 原因 / 怎么查 |
 | --- | --- |
-| `ABI 版本是 N，宿主是 M` | 插件与宿主的 ABI 不匹配：用与宿主同版本的 `fuyubot-abi` 重新编译，别拿旧产物硬跑 |
+| `ABI 版本是 N，宿主是 M` | 插件与宿主的 ABI 不匹配：用与宿主 ABI 版本对应的 `fuyubot-abi`（当前 `0.1.3` = ABI v6）重新编译，别拿旧产物硬跑 |
 | 缺 `plugin_init` / 根本不是动态库 | `dumpbin /exports`（Windows）或 `nm -D`（Linux/macOS）**静态**看导出符号 |
 | 脚本插件没被加载 | 目录不在 `plugins/scripts/` 下，或缺 `[tool.fuyubot]` / `"fuyubot"` 身份段；见[脚本插件 › 排查](../script/index.mdx#排查) |
 | `.dll` 加载报找不到依赖 | 插件把兄弟 DLL 放自己旁边是支持的（加载器先查库所在目录），别把它挪走，也别只拷主 dll |

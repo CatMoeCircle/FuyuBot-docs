@@ -4,6 +4,9 @@ Rust 插件只依赖一个 crate：[`fuyubot-abi`](https://crates.io/crates/fuyu
 它给出 `HostApi`（VTable 的 Rust 封装）、`Plugin` trait、`define_plugin!` 宏与
 `ResponseRouter`；**没有第二层 SDK**——写插件就是实现一个 trait，再把 C ABI 导出交给宏。
 
+用 AI Agent 写？本站导出了 `llms.txt` / `llms-full.txt` 和每页的 `content.md`，
+怎么喂见[插件总览 › 用 AI Agent 写插件](./index.mdx#用-ai-agent-写插件)。
+
 ## 依赖 [#依赖]
 
 ```toml
@@ -20,11 +23,12 @@ rust-version = "1.99"
 crate-type = ["cdylib"]          # 宿主 dlopen 的就是它
 
 [dependencies]
-fuyubot-abi = "0.1.2"
+fuyubot-abi = "0.1.3"
 ```
 
 那个空的 `[workspace]` 不是多余的：没有它，cargo 会一路往上找父目录的 workspace 声明然后报错。
-`fuyubot-abi` 的版本号跟着宿主走（当前 ABI 版本是 **5**）。
+`fuyubot-abi` 走**独立版本线**（不跟 bot 的版本号，当前 `0.1.3`）；ABI 契约版本是
+`fuyubot_abi::ABI_VERSION`（当前 **6**），编辑器里补全一下就有，别手抄。
 
 ## 最小可用插件 [#最小可用插件]
 

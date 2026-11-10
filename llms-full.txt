@@ -409,14 +409,17 @@ package com.catmoecircle.fuyubot.runtime
 class Native(private val callback: Any) {
     external fun nativeVersion(): Int
     external fun nativeRegister(callback: Any): Int
+    external fun nativeInitConfig(json: String): Int               // 建/改 <root>/fuyubot.toml
     external fun nativeStart(optionsJson: String): Int
     external fun nativeStop(): Int
     external fun nativeIsRunning(): Boolean
     external fun nativeAnswer(id: Int, text: String?): Int
 
-    // 运行时查询（ABI v1 一共十个方法）
+    // 运行时查询（ABI v1 一共十三个方法）
     external fun nativePlugins(): String                        // 插件清单 + 计数 JSON
     external fun nativePluginInfo(name: String): String?        // 单个插件；没有 = null
+    external fun nativeAuthState(): String                      // 授权状态 JSON
+    external fun nativeConnectionState(): String                // 连接状态 JSON
     external fun nativeTdRequest(requestJson: String, timeoutMs: Long): String?  // 阻塞
     external fun nativeLastError(): String                      // 本线程最后一次错误
 
@@ -431,8 +434,9 @@ class Native(private val callback: Any) {
 }
 ```
 
-> **绑定是运行期的**：`JNI_OnLoad` 用 `RegisterNatives` 把上面十个方法绑到
+> **绑定是运行期的**：`JNI_OnLoad` 用 `RegisterNatives` 把上面十三个方法绑到
 > `com.catmoecircle.fuyubot.runtime.Native`（默认值），导出符号里没有 `Java_...`。
+> 注册是**逐个**做的：旧 Java 类里没有 `nativeInitConfig` 只会让这一个绑不上，其余照常。
 > 类名 / 方法名 / 签名必须与上面一字不差；包名不是符号名的一部分——自己编译时可以用
 > `FUYUBOT_JNI_CLASS=com/你的/包/Native` 换掉，预编译包就按默认包名写。
 > `nativeRegister` 在 JNI 层收的是 `Object`，所以回调对象没有包名限制：库按方法名调
@@ -446,56 +450,70 @@ class Native(private val callback: Any) {
 
 ```kotlin
 val root = File(filesDir, "fuyubot").apply { mkdirs() }.absolutePath
-val options = """
+val n = Native(callback)   // init 里已经 loadLibrary + nativeRegister
+
+// 首启（或改配置）：生成 <root>/fuyubot.toml，与 CLI 的 `fuyubot init` 同一个模板。
+// 已存在时它是**文本级更新**：只改给了的键，注释与 [plugin.*] 段都保留。
+val init = """
 {
   "root": "$root",
   "api_id": 12345,
   "api_hash": "…",
+  "account_type": "bot"
+}
+"""
+if (n.nativeInitConfig(init) != 0) { /* 看 nativeLastError() */ }
+
+val options = """
+{
+  "root": "$root",
   "bot_token": "123456:ABC…"
 }
 """
-val n = Native(callback)   // init 里已经 loadLibrary + nativeRegister
 if (n.nativeStart(options) != 0) { /* 看日志或 onState */ }
 ```
 
 `nativeStart` **立即返回**：真正干活在库内的工作线程上。成功只代表「线程起来了」，
 不代表已登录——进度看 `onState` 与 `<root>/logs/fuyubot.log`。
 
+### 配置在 `fuyubot.toml`，不在 options 里 [#配置在-fuyubottoml不在-options-里]
+
+配置**只从 `<root>/fuyubot.toml` 读**，与 CLI 用的是**同一份 schema、同一个模板、同一套解析**
+（`fuyubot-app` 的 `config` 模块）：`[telegram].api_id / api_hash / account_type`、
+`[command]`、`[tdlib]`、`[plugin.*]` 都在这个文件里。这样改配置不用重编 APK，
+CLI 的文档与工具也直接适用。
+
+`api_id` / `api_hash` 没填、或文件不存在，`nativeStart` 直接返回 `1`（`FUYUBOT_ARG`），
+`nativeLastError()` 里写明缺哪个——不会默默按默认值起。
+
 ### options JSON [#options-json]
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `root` | ✅ | 绝对路径，**必须是 app 私有目录**（`filesDir`）。`/sdcard` 是 `noexec`，TDLib 也写不进去 |
-| `api_id` | ✅ | int32，与 `setTdlibParameters` 一致 |
-| `api_hash` | ✅ | 只用于登录，**不会**进配置树（插件读不到） |
-| `bot_token` | | 有值就走 bot 登录，全程不弹任何 UI |
-| `plugin_dir` | | 相对 `root`，默认 `plugins` |
-| `data_dir` | | 相对 `root`，默认 `data`（TDLib 数据库与文件都在这儿） |
-| `log_level` | | `error` / `warn` / `info` / `debug` / `trace`，默认 `info` |
-| `tdlib_log_verbosity` | | TDLib 自己的日志详细度，默认 1 |
-| `plugin_config` | | 插件自己的配置段：`{"fuyubot.manage": {"reply_prefix": "…"}}`。点分插件名会展开成 `[plugin.fuyubot.manage]`；缺省 = 不给 |
-| `lib_dir` | | 显式指定 `libtdjson.so` 所在的目录（一般不用给） |
+| `bot_token` | | 凭据，**不落盘**；有它就按 bot 登录。账户类型仍以 `[telegram].account_type` 为准，`user` 账户下给了会被忽略 |
+| `data_dir` | | 覆盖 `[telegram].data_dir`（相对 `root`，默认 `data`）；只影响这次运行，不写回文件 |
+| `plugin_dir` | | 覆盖 `[plugins].dir`（相对 `root`，默认 `plugins`） |
+| `log_level` | | 覆盖 `[plugins].log_level`（`error` / `warn` / `info` / `debug` / `trace`） |
+| `lib_dir` | | 显式指定 `libtdjson.so` 所在的目录；缺省时退回 `[tdlib].path`，再缺省要求先 `loadLibrary("tdjson")` |
 
 目录会在启动时自动建好：`<root>/{data,logs,plugins}`。日志写在 `<root>/logs/fuyubot.log`——
 Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**能看到日志的地方。
 
 ### 插件配置 [#插件配置]
 
-安卓上没有给人编辑的 `fuyubot.toml`，但**插件仍然能读能写自己的配置段**。读到的配置是三层叠出来的：
+三层，与 CLI 完全一致：
 
 | 层 | 在哪 | 谁写 |
 | --- | --- | --- |
 | 包默认 | 插件包里的 `config.default.toml` | 插件作者 |
 | 运行时落盘 | `<root>/plugin-config/<插件名>.toml` | 插件 `set_config` |
-| 用户配置 | `plugin_config`（这次 options 传的）⊕ `<root>/fuyubot.toml` 的 `[plugin.*]` | 壳 / 用户 |
+| 用户配置 | `<root>/fuyubot.toml` 的 `[plugin.*]` | 用户 / 壳（`nativeInitConfig` 或直接写文件） |
 
 - **写**：`set_config` 只落盘到 `<root>/plugin-config/<插件名>.toml`（段级、原子替换），
-  下次启动自动读回来。`fuyubot.toml` **运行时不会被写**——它只在这份文件存在时当作用户配置层。
-- **优先级**：`plugin_config` 里的同名键 > `<root>/fuyubot.toml` > 运行时落盘 > 包默认。
-  用户在 `plugin_config` / `fuyubot.toml` 里钉住的键，插件写会**报错**（而不是写完下次启动被盖回去）。
-- `<root>/fuyubot.toml` 只读 `[plugin.*]`：`telegram` / `plugins` 等段仍以 options JSON 为准，
-  避免出现「第二份 schema」。
-- 文件不存在是正常的；坏了只在日志里留一条 warn，启动不失败。
+  下次启动自动读回来。`fuyubot.toml` **运行时不会被插件写**——注释与 `api_hash` 都安全。
+- 用户配置里钉住的键，插件写会**报错**（而不是写完下次启动被盖回去）。
+- 文件坏了只在日志里留一条 warn；但**文件不存在会拒绝启动**（要先 `nativeInitConfig`）。
 - `set_config` 在「没有 `config_path`」时会报错——安卓现在总是给 `<root>/fuyubot.toml`，
   所以这条只影响自己接 JNI 的宿主。
 
@@ -503,7 +521,8 @@ Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**�
 
 日志只落 `<root>/logs/fuyubot.log`（安卓应用进程的 stdout/stderr 是 `/dev/null`）。
 
-`options.log_level` 决定启动时的**插件日志门槛**（默认 `info`）。运行期要调，写一个文件即可：
+`[plugins].log_level`（或 options 里的 `log_level` 覆盖）决定启动时的**插件日志门槛**（默认 `info`）。
+运行期要调，写一个文件即可：
 
 ```text
 /data/data/<包名>/files/fuyubot/.fuyubot/log-level
@@ -514,7 +533,7 @@ Android 应用进程的 stdout/stderr 是 `/dev/null`，所以这是**唯一**�
 - 文件不存在 = 不改；内容写错 = 保持当前级别 + 留一条 warn。
 - 删掉文件**不会**回退——要回退就写回 `info`，或下次 `start` 用 `options.log_level`。
 - 级别只管插件日志（插件 VTable `log` 的门槛）；宿主与 TDLib 的日志不受它控制，
-  TDLib 自己的详细度是 `tdlib_log_verbosity`（启动时定）。
+  TDLib 自己的详细度是 `fuyubot.toml` 的 `[tdlib].log_verbosity`（启动时定）。
 - `log_level = "debug" / "trace"` 现在**真的会落进文件**：订阅者的默认上限是 `INFO`，
   已放开到 `TRACE`（否则事件会在格式化前被丢掉）。
 
@@ -1250,7 +1269,7 @@ cargo fmt --all --check             # 0 diff
 TDLIB_TD_API_TL（显式指定，最高优先级） → 包内 vendor/<版本>/td_api.tl → 缓存 <缓存根>/<版本>/td_api.tl → 从 Releases 下载（拿不到 = 构建失败）
 ```
 
-包内那份随 crate 发布（1.8.69 已带），所以**从 crates.io 装下来的下游和 docs.rs 都不用联网**。
+包内那份随 crate 发布（1.8.70 已带），所以**从 crates.io 装下来的下游和 docs.rs 都不用联网**。
 它按 `[package.metadata.fuyubot] tdlib-version` 拼路径，换了版本却没补 `vendor/` 时会自动退到缓存/下载。
 
 缓存根按顺序找（`build_support::cache_roots()`，两个 build.rs 共用同一串）：
@@ -1275,7 +1294,7 @@ FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作�
 `--ignored` 能回答**：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.69\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.70\windows-x86_64"
 cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 
 # 「兄弟依赖定位」单独一个测试二进制，必须单独跑（进程里加载过那些 DLL 会污染它的负向对照）
@@ -2083,7 +2102,8 @@ if (reply == NULL) { /* 失败 */ }
 # ABI 契约 (/docs/plugin/abi)
 
 这是**唯一**的跨语言契约：形状只有 `fuyubot-abi/src/lib.rs` 一份实现，C 头文件
-`fuyubot_plugin.h` 由 cbindgen 从它生成（**产物，不是源码**，别手改）。宿主侧所有桥在
+`fuyubot_plugin.h` 由 cbindgen 从它生成（**产物，不是源码**，别手改；怎么拿到它见
+[C 与 C++ 插件 › 头文件](./native.mdx#头文件)）。宿主侧所有桥在
 `fuyubot-loader/src/runtime.rs`。**改 ABI = 改那个文件 + 加版本号。**
 
 ## 插件必须导出的符号 [#插件必须导出的符号]
@@ -3034,12 +3054,87 @@ path 依赖、靠 `plugins_dir` 读 cookie、回调里 spawn 工作线程。
 
 Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态库，宿主只要看到七个导出符号
 就认它。Go 这条路线没有脚手架——照本页的结构自己搭，ABI 头文件从 `fuyubot-abi` 落盘
-（见 [C 与 C++ 插件](./native.mdx)）。
+（见 [C 与 C++ 插件 › 头文件](./native.mdx#头文件)）。
 
 <Callout type="info">
   Go 没有脚手架模板，也没有官方的 `go-ping` 示例——照下面这几段自己搭工程。
   C 头文件仍然由 `fuyubot-abi` 生成，两门语言共用同一份，不要手抄。
 </Callout>
+
+用 AI Agent 写？本站导出了 `llms.txt` / `llms-full.txt` 和每页的 `content.md`，
+怎么喂见[插件总览 › 用 AI Agent 写插件](./index.mdx#用-ai-agent-写插件)。
+
+## 头文件 [#头文件]
+
+Go 这条路线同样要先落地 `fuyubot_plugin.h`：它是 `fuyubot-abi` 构建时用 cbindgen 从 Rust 定义生成的产物，
+**仓库里没有、也不要提交**，C / C++ / Go 三份代码认的是同一份（来源与另两条拿法见
+[C 与 C++ 插件 › 头文件](./native.mdx#头文件)）。下面是 Go 工程的落地方式。
+
+### 落盘：一个只负责生成头文件的小 crate [#落盘一个只负责生成头文件的小-crate]
+
+Go 工程里没有 `Cargo.toml`，所以造一个只为落头文件的 crate（`header-gen` 这个名字随意）：
+
+```bash
+cargo new --lib header-gen        # 放在 Go 工程根下
+# 再往 header-gen/Cargo.toml 末尾补：
+#   [build-dependencies]
+#   fuyubot-abi = "0.1.3"
+```
+
+```rust
+// header-gen/build.rs —— 写到 Go 工程根，而不是 header-gen 自己那儿
+fn main() {
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fuyubot_plugin.h");
+    std::fs::write(out, fuyubot_abi::PLUGIN_HEADER).unwrap();
+}
+```
+
+```bash
+cargo build --manifest-path header-gen/Cargo.toml
+```
+
+`cargo new` 带的那个空 `src/lib.rs` 留着就行——它只是让 manifest 有个 target，
+这个 crate 永远不会被编进插件，Go 侧也不需要它。
+
+手头已经有 `fuyubot` 源码、或者别的 C/C++ 工程已经落过一份？直接从构建产物里拷更快
+（`<hash>` 每次构建都变，所以按时间取最新，别抄死路径）：
+
+```powershell
+$h = Get-ChildItem ..\FuyuBot\target\*\build\fuyubot-abi-*\out\fuyubot_plugin.h |
+     Sort-Object LastWriteTime | Select-Object -Last 1
+Copy-Item $h.FullName .
+```
+
+### 让 cgo 找到它 [#让-cgo-找到它]
+
+放在 Go 工程根、与 `plugin.c` 同级最省事：cgo 编 `.c` 时引号包含**先查源文件目录**，
+`#include "fuyubot_plugin.h"` 直接就生效，`CGO_CFLAGS` 一个字都不用加：
+
+```c
+/* plugin.c */
+#include "fuyubot_plugin.h"
+```
+
+放进 `include/` 之类的子目录才需要指路，而 `#cgo` 指令**只能写在 `.go` 文件的 preamble 里**
+（写在 `.c` 里 cgo 不认）：
+
+```go
+// main.go
+/*
+#cgo CFLAGS: -I${SRCDIR}/include
+#include "fuyubot_plugin.h"
+*/
+import "C"
+```
+
+`go build` 报 `fatal error: fuyubot_plugin.h: No such file or directory`，就是这一步没做。
+
+### 别提交、别手改 [#别提交别手改]
+
+- 生成物进 `.gitignore`：`echo "fuyubot_plugin.h" >> .gitignore`；
+- 头文件里的 `#define ABI_VERSION 6` 必须与你机器上的 `fuyubot` 一致，升级宿主后重跑一次生成；
+- 改 ABI 只能改 `fuyubot-abi` 的 Rust 定义——头文件是产物，手改会被下次生成覆盖，
+  而且版本号对不上时宿主会直接拒绝加载。
 
 ## 结构：Go 写逻辑，C 写壳 [#结构go-写逻辑c-写壳]
 
@@ -3047,7 +3142,7 @@ Go 也能写插件：`go build -buildmode=c-shared` 出来的就是标准动态�
 | --- | --- |
 | `main.go` | 逻辑：解析更新 JSON、拼 `sendMessage`、打日志 |
 | `plugin.c` | 四个 ABI 符号：`plugin_init` / `plugin_start` / `plugin_stop` / `plugin_free_string` |
-| `fuyubot_plugin.h` | 生成物（由 `fuyubot-abi` 的 `PLUGIN_HEADER` 落盘），**不提交** |
+| `fuyubot_plugin.h` | 生成物（由 `fuyubot-abi` 的 `PLUGIN_HEADER` 落盘），**不提交**；怎么拿到见[上文](#头文件) |
 
 为什么不直接 `//export plugin_init`：`PluginHandle` 是**按值返回**的结构体，由 C 侧构造最稳；
 也避免把宿主 VTable 的函数指针搬进 Go。C 侧只做转发：
@@ -3250,7 +3345,7 @@ func sendText(chatID int64, text string) int64 {
 cgo 需要 C 编译器：Linux / macOS 用 `cc`，Windows 用 mingw-w64（如
 [w64devkit](https://github.com/skeeto/w64devkit)）。
 
-先把 `fuyubot_plugin.h` 落到工程里（见 [C 与 C++ 插件 › 头文件](./native.mdx)），然后：
+头文件按[上文「头文件」](#头文件)落好之后，直接编：
 
 ```powershell
 $env:CGO_ENABLED = "1"
@@ -3305,6 +3400,62 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录
   不编译、不碰 ABI，装上就跑。
 </Callout>
 
+## 用 AI Agent 写插件 [#用-ai-agent-写插件]
+
+本站导出了机器可读版本，Agent 不用抓 HTML、也不会被导航和样式淹没。
+**推荐让 Agent 先读这几页再动手**，而不是凭印象拼 ABI 调用：
+
+| 要什么 | 地址 | 体量 |
+| --- | --- | --- |
+| 全站目录：每页标题 + 一句话 + 链接 | `https://catmoecircle.github.io/FuyuBot-docs/llms.txt` | 约 4.6 KB |
+| 全站正文：所有页面的 Markdown 拼在一起 | `https://catmoecircle.github.io/FuyuBot-docs/llms-full.txt` | 约 430 KB |
+| 单页原文（`Content-Type: text/markdown`） | `https://catmoecircle.github.io/FuyuBot-docs/llms.mdx/docs/plugin/abi/content.md` | 几 KB |
+| 本页原文 | `https://catmoecircle.github.io/FuyuBot-docs/llms.mdx/docs/plugin/content.md` | |
+
+单页地址就是把文档路径接在 `/llms.mdx/docs/` 后面再补 `content.md`（`/docs/plugin/go` →
+`/llms.mdx/docs/plugin/go/content.md`）。
+
+<Callout type="warn">
+  **两种 Markdown 里的链接都不是能直接请求的绝对地址**，提前跟 Agent 讲清楚，否则它会撞一堆 404：
+
+  - `llms.txt` / `llms-full.txt` 的页头是 `/docs/plugin/...`，站点**根路径**，要拼上
+    `https://catmoecircle.github.io/FuyuBot-docs` 才是真实 URL；
+  - 正文里保留着 `./native.mdx#头文件` 这种**相对源文件**的写法（单页 `content.md` 同理），
+    要按「同一目录」解析，别原样去请求。
+
+  正文里还会看到 `<Callout>` 这类 MDX 组件标签，当提示框读就行，不影响内容。
+</Callout>
+
+### 怎么喂 [#怎么喂]
+
+- **只写一个插件**：别整份塞。先给 `llms.txt` 让它知道有哪些页，再按语言喂几篇——
+  Rust 是 `rust` + `abi` + `testing`；C / C++ 是 `native` + `abi` + `testing`；
+  Go 是 `go` + `native` + `abi`。
+- **要它通读全站**：`llms-full.txt` 有 40 多万字节，先看模型的上下文窗口再决定。
+- **改到一半追问细节**：让它直接拉对应页的 `content.md`，比它复述你的摘要可靠。
+
+### 让它别编 [#让它别编]
+
+Agent 最容易在 ABI 上想当然。把这几条写进提示词：
+
+- ABI 是 **v6**：`HostApiVTable::version` 必须等于头文件里的 `#define ABI_VERSION 6`，不匹配宿主直接拒绝加载；
+- 七个导出符号里 `plugin_init` / `plugin_free_string` 是**必需**的，其余可选；
+- 回调是 `extern "C-unwind"`（Rust 侧）；C++ 里异常**不许**穿过这个边界；
+- 回命令不要自己拼 `sendMessage`：Rust 用 `Command::reply_then`，其它语言走 `simplify_invoke`
+  或 `fuyubot.host.command` 服务；
+- 字符串所有权：宿主返回的是**线程局部缓冲**，读完即弃、**不要 free**；插件自己分配的只能自己用
+  `plugin_free_string` 还。
+
+### 让它自证 [#让它自证]
+
+Agent 说「编过了」不等于能加载。收尾要求它跑一遍离线回放（不接账号、不连 TDLib）：
+
+```bash
+fuyubot run --replay examples/replay/new_message.json --plugin-dir <插件目录>
+```
+
+输出里能看到插件打的日志和它发出去的请求，比「看起来对」可信——细节见[调试与安装](./testing.mdx)。
+
 ## 原生插件：七个导出符号 [#原生插件七个导出符号]
 
 一个原生插件 = 一个 cdylib。宿主 `dlopen` 它，只认这七个导出符号，
@@ -3352,7 +3503,7 @@ fuyubot run                                # 加载插件目录里的所有 cdyl
 | --- | --- |
 | 回调是 `extern "C-unwind"` | 用 `extern "C"` 的话，逃出去的 panic 直接 abort 整个进程，宿主来不及 `catch_unwind` |
 | 一个 crate 只展开一次 `define_plugin!` | 七个符号名是 ABI 定死的，展开两次就是重复定义 |
-| ABI 版本目前是 `5` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
+| ABI 版本目前是 `6` | 不匹配时宿主**拒绝加载**，不能调 `plugin_stop`，但会调 `plugin_free_handle` 把状态还回来 |
 | 订阅句柄要自己管 | `HostApi::on` 返回 `SubscriptionHandle`（`u64`），drop 不会退订；要退订就 `host.off(handle)` |
 | 插件 `emit` 不是广播 | 只送**自己 + 全局订阅者**（`emit_scoped`），影响别的插件要靠订阅 |
 | 谁分配谁释放 | 宿主绝不 free 插件的指针；宿主给的字符串是线程局部缓冲，下次宿主调用前有效 |
@@ -3486,7 +3637,7 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 | 方法 | 入参 | 返回 |
 | --- | --- | --- |
 | `register` | `{"name":"start","description":"开始使用"}` | `{"ok":true}`；坏入参回 `{"ok":false,"error":"…"}` |
-| `list` | 忽略 | `[{"name":"start","description":"…"}, …]`，即 `/help` 实际渲染的内容 |
+| `list` | 忽略 | `[{"name":"start","description":"…"}, …]`，**扁平数组**（程序协议）；`/help` 正文再按 `plugin` 分组渲染 |
 
 服务名建议用反向域名（`fuyubot.help.commands`），方法名用动词；协议字段**只增不改**，
 破坏性改动时把 `ServiceVTable.version` 加一（宿主不校验，但调用方可以据此判断）。
@@ -3695,7 +3846,8 @@ impl Plugin for HelpPlugin {
 `/help` 的静态基线 `BUILTIN_COMMANDS` 始终包含 `start` / `help` / `plugins` 三个命令；
 动态注册表**优先**（它带宿主判定的归属），静态基线只补缺。所以：
 
-- 没有消费方登记命令，`/help` 仍然列得出内置三件套（只是不标归属）；
+- 没有消费方登记命令，`/help` 仍然列得出内置三件套（收在最后的「其它」段，
+  不会编造归属）；
 - 消费方没起来，只是少几条带归属的动态条目，不会让 `/help` 整个失效。
 
 这是可选联动的通用做法：**提供方给自己留一份能独立工作的兜底**，别把「有人来调我」
@@ -4000,21 +4152,102 @@ C 与 C++ 用**同一份头文件** `fuyubot_plugin.h`，差别只有两条：�
   脚本侧有自己的异步写法，见[脚本插件](../script/index.mdx)。
 </Callout>
 
-工程里加一个 `build.rs` 把头文件落出来（与 Rust 插件同一个来源）：
+用 AI Agent 写？本站导出了 `llms.txt` / `llms-full.txt` 和每页的 `content.md`，
+怎么喂见[插件总览 › 用 AI Agent 写插件](./index.mdx#用-ai-agent-写插件)。
+
+## 头文件 [#头文件]
+
+`fuyubot_plugin.h` **不在任何仓库里**：`fuyubot-abi` 也不把生成物打进 crate，它是构建时产物，
+每台机器现生成一次。三条路拿到它，任选一条。
+
+### 一、用 `build.rs` 落盘（推荐，与 Rust 插件同一个来源） [#一用-buildrs-落盘推荐与-rust-插件同一个来源]
+
+头文件的内容就是 `fuyubot_abi::PLUGIN_HEADER` 这个常量（cbindgen 生成的原文），所以只要有东西
+能编译 `fuyubot-abi`，就能把它落出来。`build.rs` 只是这一小步，**不是**把插件改成 Rust 写。
+
+**工程里已经有 `Cargo.toml`**（顺手用 Rust 写工具 / 测试很常见）——加两处：
 
 ```toml
 [build-dependencies]
-fuyubot-abi = "0.1.2"
+fuyubot-abi = "0.1.3"
 ```
 
 ```rust
 // build.rs
 fn main() {
-    std::fs::write("fuyubot_plugin.h", fuyubot_abi::PLUGIN_HEADER).unwrap();
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuyubot_plugin.h");
+    std::fs::write(out, fuyubot_abi::PLUGIN_HEADER).unwrap();
 }
 ```
 
-`cargo build` 之后工程根上就有 `fuyubot_plugin.h`；C 与 C++ 共用这一份。
+```bash
+cargo build     # 之后工程根上就有 fuyubot_plugin.h，C 与 C++ 共用这一份
+```
+
+build 脚本的 cwd 就是包根，写相对路径 `"fuyubot_plugin.h"` 也对；用 `CARGO_MANIFEST_DIR` 拼只是把
+「落在包根」写明，搬目录或指向 `../` 时不靠这条约定。
+
+**纯 C/C++ 工程**（一个 Cargo 工程都没有）——在工程根造一个只为落头文件的小 crate 挂在旁边：
+
+```bash
+cargo new --lib header-gen      # 放在工程根下
+# 再往 header-gen/Cargo.toml 里补：
+#   [build-dependencies]
+#   fuyubot-abi = "0.1.3"
+```
+
+```rust
+// header-gen/build.rs —— 写到工程根，而不是 header-gen 自己那儿
+fn main() {
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fuyubot_plugin.h");
+    std::fs::write(out, fuyubot_abi::PLUGIN_HEADER).unwrap();
+}
+```
+
+```bash
+cargo build --manifest-path header-gen/Cargo.toml
+```
+
+`cargo new` 带的空 `src/lib.rs` 留着就行（只为让 manifest 有个 target）。`header-gen/target/` 与
+生成出来的 `fuyubot_plugin.h` 都进 `.gitignore`，别提交。[Go 插件](./go.mdx#头文件)用的是同一招。
+
+### 二、从本机已构建的 `fuyubot` 里取（手头有源码时最省事） [#二从本机已构建的-fuyubot-里取手头有源码时最省事]
+
+`fuyubot-abi` 构建时把生成物写进 `$OUT_DIR`，落盘位置就是：
+
+```text
+target/<profile>/build/fuyubot-abi-<hash>/out/fuyubot_plugin.h
+```
+
+按修改时间取最新的一份，复制到你工程根：
+
+```bash
+# bash / zsh / Git Bash
+cp "$(ls -t target/*/build/fuyubot-abi-*/out/fuyubot_plugin.h | head -1)" <工程目录>/
+```
+
+```powershell
+# PowerShell
+$h = Get-ChildItem target\*\build\fuyubot-abi-*\out\fuyubot_plugin.h |
+     Sort-Object LastWriteTime | Select-Object -Last 1
+Copy-Item $h.FullName -Destination <工程目录>\
+```
+
+⚠️ `<hash>` 随构建参数变，同一份 `target/` 里会躺着几十份历史副本（有的是半年前旧 ABI），
+所以必须按时间取最新——**别把某个 hash 目录写进脚本或文档**，它明天就不存在了。
+
+### 三、没有 Rust 工具链 [#三没有-rust-工具链]
+
+头文件是纯文本，找一台已经构建过的机器、CI 产物或同事那里拷**同一份**即可，不用为此装 Rust。
+前提只有一条：**这份头文件的 ABI 版本必须与你机器上的 `fuyubot` 一致**。
+
+### 拿到之后 [#拿到之后]
+
+- 校验版本：头文件里应是 `#define ABI_VERSION 6`（ABI v6）。对不上的旧头文件会缺 `HostApiVTable`
+  尾部字段，宿主加载时直接以 `VersionMismatch` / `VTableTooSmall` 拒绝——不会带病跑。
+- `#include "fuyubot_plugin.h"` 即可，C 与 C++ 共用；编译时用 `-I` 指向它所在目录（见下文「编译」）。
+- **不要手改**：改 ABI 要改 `fuyubot-abi` 的 Rust 定义，头文件由 cbindgen 重新生成。
+- **不要提交**：加进 `.gitignore`，升级 `fuyubot` / `fuyubot-abi` 后重新生成一次。
 
 ## 七个符号 [#七个符号]
 
@@ -4429,6 +4662,9 @@ Rust 插件只依赖一个 crate：[`fuyubot-abi`](https://crates.io/crates/fuyu
 它给出 `HostApi`（VTable 的 Rust 封装）、`Plugin` trait、`define_plugin!` 宏与
 `ResponseRouter`；**没有第二层 SDK**——写插件就是实现一个 trait，再把 C ABI 导出交给宏。
 
+用 AI Agent 写？本站导出了 `llms.txt` / `llms-full.txt` 和每页的 `content.md`，
+怎么喂见[插件总览 › 用 AI Agent 写插件](./index.mdx#用-ai-agent-写插件)。
+
 ## 依赖 [#依赖]
 
 ```toml
@@ -4445,11 +4681,12 @@ rust-version = "1.99"
 crate-type = ["cdylib"]          # 宿主 dlopen 的就是它
 
 [dependencies]
-fuyubot-abi = "0.1.2"
+fuyubot-abi = "0.1.3"
 ```
 
 那个空的 `[workspace]` 不是多余的：没有它，cargo 会一路往上找父目录的 workspace 声明然后报错。
-`fuyubot-abi` 的版本号跟着宿主走（当前 ABI 版本是 **5**）。
+`fuyubot-abi` 走**独立版本线**（不跟 bot 的版本号，当前 `0.1.3`）；ABI 契约版本是
+`fuyubot_abi::ABI_VERSION`（当前 **6**），编辑器里补全一下就有，别手抄。
 
 ## 最小可用插件 [#最小可用插件]
 
@@ -4687,7 +4924,7 @@ fuyubot plugin install target/release/fuyubot_demo.dll
 
   ```toml
   [dependencies]
-  fuyubot-abi      = "0.1.2"
+  fuyubot-abi      = "0.1.3"
   fuyubot-simplify = { path = "<你的 Fuyu-Bot 检出>/crates/fuyubot-simplify" }
   ```
 
@@ -5897,7 +6134,7 @@ nm -D --defined-only target/debug/libfuyubot_plugin_demo.so | grep plugin_
 
 三个版本别混：
 
-- **宿主 ABI 世代** = `HostApiVTable::version`（当前 5），就在 VTable 首字段；
+- **宿主 ABI 世代** = `HostApiVTable::version`（当前 6），就在 VTable 首字段；
 - **插件声明的 ABI 版本** 在 `PluginHandle::abi_version`，是 `plugin_init` 的返回值——
   静态检查看不到，**装载时才判定**；
 - **插件自己的 crate 版本** 在 `plugin_manifest` 的 `version` 字段里。
@@ -6827,7 +7064,7 @@ cargo build --workspace --offline
 ```
 
 <Callout type="info">
-  `td_api.tl` 是**构建的必需输入**：`fuyubot-tdlib-sys/build.rs` 无条件去拿它——`TDLIB_TD_API_TL`（显式指定，优先级最高）→ **包内 `vendor/<tdlib-version>/td_api.tl`** → 缓存 → 从 GitHub Releases 下载，拿不到就让**构建失败**。包内那份随 crate 一起发布（1.8.69 已带），所以从 crates.io 装下来的下游与 docs.rs **不用联网**；升 `tdlib-version` 时要记得补 `vendor/<新版本>/`。缓存根顺序：`FUYUBOT_TDLIB_VENDORED_CACHE` → `$CARGO_HOME/fuyubot-tdlib-vendored` → 项目本地 `<工作区>/.tdlib-cache`。仓里的 `.cargo/config.toml` 已把最后一档指好，在仓库里敲命令不用先 export。
+  `td_api.tl` 是**构建的必需输入**：`fuyubot-tdlib-sys/build.rs` 无条件去拿它——`TDLIB_TD_API_TL`（显式指定，优先级最高）→ **包内 `vendor/<tdlib-version>/td_api.tl`** → 缓存 → 从 GitHub Releases 下载，拿不到就让**构建失败**。包内那份随 crate 一起发布（1.8.70 已带），所以从 crates.io 装下来的下游与 docs.rs **不用联网**；升 `tdlib-version` 时要记得补 `vendor/<新版本>/`。缓存根顺序：`FUYUBOT_TDLIB_VENDORED_CACHE` → `$CARGO_HOME/fuyubot-tdlib-vendored` → 项目本地 `<工作区>/.tdlib-cache`。仓里的 `.cargo/config.toml` 已把最后一档指好，在仓库里敲命令不用先 export。
 
   转换在**编译期**完成，构建日志里只有一条 `已转换 …\td_api.tl：共 N 条`。条数取决于构建时用的那份文件（本机三千多条），**不是常量**，别当断言用。
 </Callout>
@@ -6868,7 +7105,7 @@ cargo fmt --all --check             # 0 diff
 真 TDLib 的端到端自检（要本机的 `tdjson`）：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.69\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.70\windows-x86_64"
 cargo test -p fuyubot-tdlib --test integration --offline -- --ignored
 ```
 
@@ -7168,7 +7405,7 @@ fuyubot 0.1.0
 ```
 
 `--version` 能打印版本号，说明这个可执行文件本身没坏；真正加载 TDLib 是在 `run` 的时候
-（日志里会有一行 `TDLib 1.8.69 命中「可执行文件所在目录」`——版本号是构建时声明的那个）。加载失败按
+（日志里会有一行 `TDLib 1.8.70 命中「可执行文件所在目录」`——版本号是构建时声明的那个）。加载失败按
 [常见问题](./troubleshooting.mdx) 排查。
 
 ## 起一个 bot 项目 [#起一个-bot-项目]
@@ -7541,13 +7778,13 @@ TDLib 未就绪（不接更新）：找不到可用的 tdjson 动态库。已尝
 | --- | --- |
 | 1 | `TDLIB_TDJSON_PATH` 指向的**文件**或**目录** |
 | 2 | vendored（构建期烤进去的目录）→ **可执行文件所在目录** |
-| 3 | Linux 带版本号的系统库（`libtdjson.so.1.8.69` …） |
+| 3 | Linux 带版本号的系统库（`libtdjson.so.1.8.70` …） |
 | 4 | 裸库名（`tdjson.dll` / `libtdjson.so`，走 `PATH`） |
 
 报错里的 `[1]` … `[4]` 就是这四档的逐条结果，按顺序看就知道断在哪。嫌排查麻烦就直接指定：
 
 ```powershell
-$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.69\windows-x86_64"
+$env:TDLIB_TDJSON_PATH = ".tdlib-cache\1.8.70\windows-x86_64"
 ```
 
 <Callout type="info">
@@ -7584,7 +7821,7 @@ $env:TEMP = "$PWD\target\linktmp"; $env:TMP = $env:TEMP; New-Item -ItemType Dire
 
 | 现象 | 原因 / 怎么查 |
 | --- | --- |
-| `ABI 版本是 N，宿主是 M` | 插件与宿主的 ABI 不匹配：用与宿主同版本的 `fuyubot-abi` 重新编译，别拿旧产物硬跑 |
+| `ABI 版本是 N，宿主是 M` | 插件与宿主的 ABI 不匹配：用与宿主 ABI 版本对应的 `fuyubot-abi`（当前 `0.1.3` = ABI v6）重新编译，别拿旧产物硬跑 |
 | 缺 `plugin_init` / 根本不是动态库 | `dumpbin /exports`（Windows）或 `nm -D`（Linux/macOS）**静态**看导出符号 |
 | 脚本插件没被加载 | 目录不在 `plugins/scripts/` 下，或缺 `[tool.fuyubot]` / `"fuyubot"` 身份段；见[脚本插件 › 排查](../script/index.mdx#排查) |
 | `.dll` 加载报找不到依赖 | 插件把兄弟 DLL 放自己旁边是支持的（加载器先查库所在目录），别把它挪走，也别只拷主 dll |
