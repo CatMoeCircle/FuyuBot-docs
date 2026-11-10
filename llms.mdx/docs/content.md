@@ -39,6 +39,11 @@
 | 脚本插件（[脚本插件](./script/index.mdx)） | Python / JS / TS，一个目录 | 不要 |
 
 脚本能力**不在运行时本体里**：它由独立仓库的 `fuyubot.script` 插件提供，装上才有。
+想要 Python / JS / TS 脚本支持，到
+[FuyuBot-Script Releases](https://github.com/CatMoeCircle/FuyuBot-Script/releases) 下载
+`fuyubot-script-<OS>-<平台>.zip`，把里面的 `plugins/fuyubot.script/` 放进插件目录；
+**同时要先装好 [uv](https://docs.astral.sh/uv/)（Python）和 [bun](https://bun.sh)（JS / TS）**——
+这两个运行时不在任何安装包里。
 `fuyubot` 自己**只跑不编译**——`fuyubot plugin install` 只负责把编好的产物**复制**进插件目录。
 
 ## 下一步 [#下一步]

@@ -299,7 +299,7 @@ $ fuyubot plugin install ./weather
 
 $ fuyubot plugin list
 原生插件包（1 个）：
-  fuyubot.script	0.1.2	ABI 6	native	plugins\fuyubot.script
+  fuyubot.script	0.1.3	ABI 6	native	plugins\fuyubot.script
 旧形态动态库（0 个，建议 `fuyubot plugin migrate` 迁成插件包）：
   （无）
 脚本插件（1 个，由 fuyubot.script 托管）：
@@ -615,7 +615,7 @@ daemon，不调会把进程吊在那儿。
 val list = nativePlugins()
 // {"count":2,"scanned":3,"active":1,"pending":0,"activating":0,"failed":1,"unknown":0,
 //  "skipped":1,
-//  "plugins":[{"name":"fuyubot.start","version":"0.1.2","abi_version":5,
+//  "plugins":[{"name":"fuyubot.start","version":"0.1.4","abi_version":6,
 //              "state":"active","inject":["fuyubot.host.td"],"soft_inject":[],
 //              "path":"/data/…/plugins/libfuyubot_start.so","file":"libfuyubot_start.so"}],
 //  "skipped_plugins":[{"path":"/data/…/plugins/libbroken.so","reason":"打开动态库失败 …"}]}
@@ -1982,6 +1982,11 @@ let user_data = (&raw mut *latest).cast::<c_void>();
 | 脚本插件（[脚本插件](./script/index.mdx)） | Python / JS / TS，一个目录 | 不要 |
 
 脚本能力**不在运行时本体里**：它由独立仓库的 `fuyubot.script` 插件提供，装上才有。
+想要 Python / JS / TS 脚本支持，到
+[FuyuBot-Script Releases](https://github.com/CatMoeCircle/FuyuBot-Script/releases) 下载
+`fuyubot-script-<OS>-<平台>.zip`，把里面的 `plugins/fuyubot.script/` 放进插件目录；
+**同时要先装好 [uv](https://docs.astral.sh/uv/)（Python）和 [bun](https://bun.sh)（JS / TS）**——
+这两个运行时不在任何安装包里。
 `fuyubot` 自己**只跑不编译**——`fuyubot plugin install` 只负责把编好的产物**复制**进插件目录。
 
 ## 下一步 [#下一步]
@@ -6478,6 +6483,12 @@ plugins/
 
 ## 前置条件 [#前置条件]
 
+<Callout type="warn">
+  **uv 和 bun 必须自己先装好**：它们不在运行时发行包里，也不会被自动下载。
+  只装了 `fuyubot.script` 却没装对应运行时，那门语言的脚本一律起不来
+  （日志里是「找不到 uv / bun」），机器人本体照常跑。
+</Callout>
+
 | 语言 | 要装 | 谁在用 |
 | --- | --- | --- |
 | Python | [uv](https://docs.astral.sh/uv/) | `uv sync` 装依赖，`uv run <entry>` 起脚本 |
@@ -7370,8 +7381,15 @@ $env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
 - **解压出来就是本体**：zip 里没有额外的一层目录，建议先建一个空目录再往里解压。
 - 归档一律 `.zip`（Windows 资源管理器双击就能解，Linux / macOS 用 `unzip`）。
 - **上面没有的平台**（Intel Mac 等）暂时没有包，自己编：见 [从源码构建](./build.mdx)。
-- 想让机器人支持 Python / JS / TS 脚本，再去下[脚本插件](https://github.com/CatMoeCircle/FuyuBot-Script/releases)
-  的 `fuyubot-script-<OS>-<平台>.zip`，解压后把 `plugins/fuyubot.script/` 放进插件目录。
+- 想让机器人支持 Python / JS / TS 脚本，要**另装脚本插件**：到
+  [FuyuBot-Script Releases](https://github.com/CatMoeCircle/FuyuBot-Script/releases) 下
+  `fuyubot-script-<OS>-<平台>.zip`，解压后把 `plugins/fuyubot.script/` 放进插件目录。
+
+<Callout type="warn">
+  脚本插件**只装它本身还不够**：Python 脚本要 [uv](https://docs.astral.sh/uv/)，
+  JS / TS 脚本要 [bun](https://bun.sh)（≥ 1.3.1）。这两个运行时不在发行包里、
+  也不会被自动下载——缺了哪门，那门语言的脚本就起不来（机器人本体照常跑）。
+</Callout>
 
 ## 解压、验证 [#解压验证]
 

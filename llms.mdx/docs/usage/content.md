@@ -21,8 +21,15 @@
 - **解压出来就是本体**：zip 里没有额外的一层目录，建议先建一个空目录再往里解压。
 - 归档一律 `.zip`（Windows 资源管理器双击就能解，Linux / macOS 用 `unzip`）。
 - **上面没有的平台**（Intel Mac 等）暂时没有包，自己编：见 [从源码构建](./build.mdx)。
-- 想让机器人支持 Python / JS / TS 脚本，再去下[脚本插件](https://github.com/CatMoeCircle/FuyuBot-Script/releases)
-  的 `fuyubot-script-<OS>-<平台>.zip`，解压后把 `plugins/fuyubot.script/` 放进插件目录。
+- 想让机器人支持 Python / JS / TS 脚本，要**另装脚本插件**：到
+  [FuyuBot-Script Releases](https://github.com/CatMoeCircle/FuyuBot-Script/releases) 下
+  `fuyubot-script-<OS>-<平台>.zip`，解压后把 `plugins/fuyubot.script/` 放进插件目录。
+
+<Callout type="warn">
+  脚本插件**只装它本身还不够**：Python 脚本要 [uv](https://docs.astral.sh/uv/)，
+  JS / TS 脚本要 [bun](https://bun.sh)（≥ 1.3.1）。这两个运行时不在发行包里、
+  也不会被自动下载——缺了哪门，那门语言的脚本就起不来（机器人本体照常跑）。
+</Callout>
 
 ## 解压、验证 [#解压验证]
 

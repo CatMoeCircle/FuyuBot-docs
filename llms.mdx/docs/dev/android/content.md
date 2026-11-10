@@ -240,7 +240,7 @@ daemon，不调会把进程吊在那儿。
 val list = nativePlugins()
 // {"count":2,"scanned":3,"active":1,"pending":0,"activating":0,"failed":1,"unknown":0,
 //  "skipped":1,
-//  "plugins":[{"name":"fuyubot.start","version":"0.1.2","abi_version":5,
+//  "plugins":[{"name":"fuyubot.start","version":"0.1.4","abi_version":6,
 //              "state":"active","inject":["fuyubot.host.td"],"soft_inject":[],
 //              "path":"/data/…/plugins/libfuyubot_start.so","file":"libfuyubot_start.so"}],
 //  "skipped_plugins":[{"path":"/data/…/plugins/libbroken.so","reason":"打开动态库失败 …"}]}
