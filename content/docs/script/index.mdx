@@ -60,6 +60,12 @@ plugins/
 
 ## 前置条件
 
+<Callout type="warn">
+  **uv 和 bun 必须自己先装好**：它们不在运行时发行包里，也不会被自动下载。
+  只装了 `fuyubot.script` 却没装对应运行时，那门语言的脚本一律起不来
+  （日志里是「找不到 uv / bun」），机器人本体照常跑。
+</Callout>
+
 | 语言 | 要装 | 谁在用 |
 | --- | --- | --- |
 | Python | [uv](https://docs.astral.sh/uv/) | `uv sync` 装依赖，`uv run <entry>` 起脚本 |
