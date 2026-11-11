@@ -6,7 +6,9 @@ description: 运行时 CLI：init / run / status / stop / config / plugin
 跑框架的那个 CLI。它就是运行时包里的 `fuyubot(.exe)`（从源码跑时是 `target/{debug,release}/fuyubot`）。
 
 ```text
-fuyubot <COMMAND>
+fuyubot [COMMAND]
+
+不带 COMMAND = 直接开终端操作面板（与 `run --tui` 同一个入口）
 
 Commands:
   init    初始化一个 fuyubot 项目（生成 fuyubot.toml 与插件目录）
@@ -18,6 +20,10 @@ Commands:
   config  看配置：打印**生效值**（默认值 + 向上找到的那份文件）
   plugin  插件管理
 ```
+
+**不带子命令**（`./fuyubot`、双击 exe）开的是[终端操作面板](../usage/run.mdx#操作面板)，
+参数全走默认值，等价于 `fuyubot run --tui`；它需要真终端。`run` 及其全部开关
+（`--background` / `--replay` / `--no-tdlib` …）行为不变。
 
 ## `init`
 
@@ -106,8 +112,8 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `1`–`5` | 直接跳到概览 / 插件 / 日志 / 配置 / 帮助 |
 | `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同） |
 | `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
-| `s` | 启动 bot（等价于 `fuyubot run --background`） |
-| `L`（大写） | **登录**（等价于 `fuyubot login`）：按授权状态弹输入框（bot token / 手机号 / 验证码 / 两步验证密码），`Enter` 提交、`Esc` 取消。只在**实例停着**时可用 |
+| `s` | 启动 bot：先自动检查登录状态，缺登录会弹登录框，成功后自动继续启动（等价于 `fuyubot run --background`）。`--no-login` / `--no-tdlib` 跳过检查 |
+| `L`（大写） | **显式登录**：按授权状态弹输入框（bot token / 手机号 / 验证码 / 两步验证密码），`Enter` 提交、`Esc` 取消。通常直接按 `s` 即可，`L` 用于只想登录、不想启动时。只在**实例停着**时可用 |
 | `x` → `y` | 停止 bot（`y` 是确认框里的确认；走 `.fuyubot/stop` 的优雅停止） |
 | `r` | 刷新状态 / 插件 / 日志 / 配置 |
 | `l` | 日志页 + 工作区焦点：调整日志级别（error / warn / info / debug / trace） |
@@ -121,15 +127,17 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 所以它只读 `.fuyubot/status`、配置、插件目录和 `logs/fuyubot.log`。启停都派生子进程，
 和手敲命令走同一条路——面板里看到的就是真正在跑的那个实例。
 
-唯一的例外是**登录**（`L`）：它在面板进程里跑一次和 `fuyubot login` 完全相同的流程
+唯一的例外是**登录探测**：`s` 启动前会自动跑一次，缺登录时弹框；`L` 是手动触发。
+两者都在面板进程里跑一次和 `fuyubot login` 完全相同的流程
 （同一份 `fuyubot-app` 的 `App::boot` + `login`），把授权状态机的提问弹成输入框，结束后
 立刻关掉 TDLib 交还目录。因此：
 
-- **只在实例停着时可用**——跑着的时候按 `L` 只会提示你先停止；
+- **只在实例停着时可用**——跑着的时候按 `s` / `L` 只会提示你先停止；
 - `api_id` / `api_hash` 要事先在环境变量（`TG_API_ID` / `TG_API_HASH`）或 `fuyubot.toml` 里准备好，
   面板不会再问这两项（那是 `fuyubot login` 的事）；
 - 密码框会打码，验证码不打码；`Esc` 取消等同于这一步没给输入，登录会失败并退回待命状态；
-- 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`。
+- 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`；
+- 已有有效 session 时，`s` 的登录探测会直接走完，不会弹框。
 
 日志页按 `l` 打开级别选择框：写入 `.fuyubot/log-level`，运行中的实例每 500ms 读一次并切换，
 `status` 随后显示新的 `log_level`。这是**运行期**开关：只对本次运行生效，重启回到
