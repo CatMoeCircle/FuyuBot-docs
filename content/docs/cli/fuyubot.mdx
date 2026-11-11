@@ -28,7 +28,7 @@ Commands:
 ## `init`
 
 ```text
-fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
+fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>] [--api-hash <HASH>]
 ```
 
 | 参数 | 默认 | 说明 |
@@ -36,12 +36,13 @@ fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
 | `--dir` | `.` | 项目目录，生成 `<dir>/fuyubot.toml` 与 `<dir>/plugins/` |
 | `--name` | `fuyubot` | 只影响配置里的 `name` |
 | `--api-id` | `0` | TDLib api_id（不是秘密，可以写进配置）；`0` = 没配，`run` 会问 |
+| `--api-hash` | 空 | TDLib api_hash；给了就明文写进 `[telegram].api_hash`，不给等首次 `run` / 面板问 |
 
-`init` **只写 `api_id`**：`api_hash` 这个命令连参数都不收（init 阶段手上不该有它）——`run` 首次会问，问完写回配置。
+`init` 会把给了的 `api_id` / `api_hash` 写进配置；`api_hash` 是明文，和 `run` 首次问完写回是同一种存储。
 重复 `init` 会被挡住（不覆盖你改过的配置）。
 
 ```text
-$ fuyubot init --dir demo --name mybot --api-id 12345
+$ fuyubot init --dir demo --name mybot --api-id 12345 --api-hash 0123456789abcdef0123456789abcdef
 已生成 demo\fuyubot.toml
 插件目录：demo\plugins
 下一步：装 fuyubot-script 插件，或按文档站示例自己写插件（plugins/ 或 plugins/scripts/）
@@ -133,8 +134,8 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 立刻关掉 TDLib 交还目录。因此：
 
 - **只在实例停着时可用**——跑着的时候按 `s` / `L` 只会提示你先停止；
-- `api_id` / `api_hash` 要事先在环境变量（`TG_API_ID` / `TG_API_HASH`）或 `fuyubot.toml` 里准备好，
-  面板不会再问这两项（那是 `fuyubot login` 的事）；
+- 首次缺 `api_id` / `api_hash` 时，`s` / `L` 会先弹两步输入框（明文写回 `[telegram]`）；
+  已在环境变量或 `fuyubot.toml` 里就不用再填；
 - 密码框会打码，验证码不打码；`Esc` 取消等同于这一步没给输入，登录会失败并退回待命状态；
 - 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`；
 - 已有有效 session 时，`s` 的登录探测会直接走完，不会弹框。
