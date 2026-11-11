@@ -48,7 +48,7 @@ Linux 是 `.so`，macOS 是 `.dylib`。
 | `entry` | 是 | 相对包根的入口路径，必须真的存在 |
 | `abi` | 建议 | 编译时使用的宿主 ABI 版本；不写则加载后才知道 |
 | `platforms` | 否 | 为空或 `["any"]` 表示全平台；否则必须包含当前平台 |
-| `depends` | 否 | 硬依赖的服务名，例如 `["help.commands"]` |
+| `depends` | 否 | 硬依赖的服务名，例如 `["demo.notes"]` |
 | `optional_depends` | 否 | 软依赖的服务名 |
 | `provides` | 否 | 本插件提供的服务名，供展示与依赖检查 |
 | `config` | 否 | 默认配置文件的**相对包根路径**（如 `config.default.toml`）。加载时并进 `[plugin.<id>]`，**优先级最低**：用户配置与插件运行时落盘已有的键不会被覆盖 |

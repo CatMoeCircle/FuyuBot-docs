@@ -1,0 +1,162 @@
+---
+title: TDLib 对象缓存
+description: 宿主缓存 chat / user / 群 / 社区 / 成员，Simplify 默认缓存优先
+---
+
+宿主在内存里缓存 TDLib 的原始 JSON 对象，`Simplify` 的读取方法默认**缓存优先**：
+命中直接返回；未命中才发 `getChat` / `getUser` / `getChatMember` 等，成功后回填。
+
+这不是插件各自维护的缓存：表在 `HostRuntime` 里，插件经 `fuyubot.host.cache` 读写。
+所以 A 插件查过的 chat，B 插件随后就能命中；插件卸载也不会带走别人的条目。
+
+## 缓存了什么
+
+| 类型 | 来源 | 更新 |
+| --- | --- | --- |
+| `chat` | `getChat` / `updateNewChat` | `updateChat*` |
+| `user` | `getUser` / `updateUser` | `updateUser`、`updateUserStatus` |
+| `basic_group` | `getBasicGroup` | `updateBasicGroup` |
+| `supergroup` | `getSupergroup` | `updateSupergroup` |
+| `chat_member` | `getChatMember` | `updateChatMember` |
+| `community` | 仅 `updateCommunity` | `updateCommunity` |
+| `community_full_info` | `getCommunityFullInfo` | `updateCommunityFullInfo` |
+
+`community` 没有对应的 get 方法——TDLib 保证 `updateCommunity` 先于标识符返回，
+所以 `Simplify::community()` 只读缓存。
+
+## 更新从哪来
+
+管线在**中间件之前**把 TDLib 原始更新刷进缓存，所以下游中间件 / 插件看到更新时，
+缓存已经是新值：
+
+- `updateNewChat`、`updateChat*`；
+- `updateUser` / `updateUserStatus`；
+- `updateBasicGroup` / `updateSupergroup`；
+- `updateChatMember`（字段是 `new_chat_member`，兼容老 `member`）；
+- `updateCommunity` / `updateCommunityFullInfo`；
+- `updateChatFolders`。
+
+几个不能直接按字段合并的已单独处理：
+
+- `updateChatPosition`：`order == 0` 从对应 list 移除，否则替换 / 追加；
+- `updateChatReplyMarkup`：落成 `reply_markup_message_id`；
+- `updateChatAddedToList` / `RemovedFromList`：维护 `chat_lists` 与 `positions`；
+- `updateChatAction` / `WelcomeMessages` / `JoinResult` / `ActiveStories` / `RevenueAmount` /
+  `Boost` / `OnlineMemberCount`：不是 `Chat` 字段，忽略。
+
+## 配置
+
+```toml
+[cache]
+enabled = true
+capacity = 100   # 每种类型的上限，不是总数
+```
+
+- `capacity` 是**每种类型**的上限，按最近最少使用淘汰；
+- 默认 100 条；全量 `Value` 下大约几 MiB，媒体消息多的 chat 会更大；
+- 关掉 `enabled` 后 `Simplify` 不再读写缓存，但连接状态判断仍然保留。
+
+## 连接状态与 TTL
+
+- 只有 `connectionStateReady` / `connectionStateUpdating` 算在线；
+- 离线且缓存未命中时，`Simplify` 直接返回 `None`，不再等 TDLib 超时；
+- `chat_member` 带 **30 秒 TTL**：权限判断不能拿太旧的结果；
+- 其它对象不设 TTL，靠 `update*` 修正 + LRU 控量；
+- `authorizationStateLoggingOut` / `Closed` 时清空缓存并标记离线。
+
+不做逐资源的“还活着吗”探测：`getChat` 本身就是探测，命中后再发一次等于缓存失效。
+
+## Simplify 里的缓存优先方法
+
+| 方法 | 行为 |
+| --- | --- |
+| `chat(chat_id, timeout)` | 缓存优先；返回**完整 Chat**（含 `positions` / `chat_lists`） |
+| `user(user_id, timeout)` | 缓存优先 |
+| `basic_group(id, timeout)` | 缓存优先 |
+| `supergroup(id, timeout)` | 缓存优先 |
+| `community_full_info(id, timeout)` | 缓存优先 |
+| `community(id)` | 只读缓存（没有 get 方法） |
+| `chat_member(chat_id, user_id, timeout)` | 缓存 + 30 秒 TTL |
+| `is_chat_admin(chat_id, user_id, right, timeout)` | 走 `chat_member`，因此也吃缓存 |
+
+```rust
+let simplify = Simplify::new(host);
+if let Some(chat) = simplify.chat(chat_id, 2_000) {
+    // 命中缓存时通常立刻返回；未命中且离线时是 None
+}
+```
+
+## chat list 与分组
+
+列表是**独立索引**，不占 `chat` 的 100 条配额，也不夹带完整 Chat：
+
+```rust
+let groups = simplify.chat_list_groups();
+for group in groups {
+    let entries = simplify.chats_in_list(&group["list"], 100);
+    // entries 里是 chatListEntry：chat_id / order / is_pinned / title / type
+}
+
+let folder = simplify.chats_in_folder(folder_id, 100);
+```
+
+- chat 对象被 LRU 淘汰后，列表条目仍然在（只保留轻量字段）；
+- 需要完整 Chat 时再调 `simplify.chat(chat_id)`；
+- folder 标题取 `updateChatFolders` 的 `chatFolderInfo.name.text.text`；
+- folder 被删除时，旧 `folder:<id>` 索引会一起清掉。
+
+`chat_list_groups()` 返回：
+
+```json
+[
+  {
+    "@type": "chatListGroup",
+    "kind": "main",
+    "title": "全部",
+    "list": {"@type": "chatListMain"},
+    "count": 12,
+    "folder": null
+  },
+  {
+    "@type": "chatListGroup",
+    "kind": "folder",
+    "title": "工作",
+    "list": {"@type": "chatListFolder", "chat_folder_id": 1},
+    "count": 3,
+    "folder": { /* chatFolderInfo */ }
+  }
+]
+```
+
+## 权限表也用这份缓存
+
+命令能力表的 `chat_admin` 和 `scopes` 判定也读对象缓存：
+
+- `Chat.type` → 私聊 / 群 / 频道，精确判 `scopes`；
+- `ChatMember.status` → 本会话管理员，带 30 秒 TTL；
+- 缓存没有结论时，闸门放行给命令处理器 / `/help` 的回复线程再判，
+  **不会在接收循环上等 TDLib**。
+
+详见[命令表与 /help](./command-table.mdx)。
+
+## 服务接口
+
+其它语言 / 非 `Simplify` 调用方经 `fuyubot.host.cache`：
+
+| 方法 | 入参 | 返回 |
+| --- | --- | --- |
+| `get` | `{kind, id, user_id?, ttl_ms?}` | `{value, online}` |
+| `put` | `{kind, id, user_id?, value}` | `{ok:true}` |
+| `list_chats` | `{list, limit?}` | `{chats:[chatListEntry…]}` |
+| `list_groups` | 无 | `{groups:[chatListGroup…]}` |
+| `chat_folders` | 无 | `{value: updateChatFolders 快照}` |
+| `stats` / `clear` | 无 | 诊断 / 手动清空 |
+
+`kind`：`chat` / `user` / `basic_group` / `supergroup` / `chat_member` /
+`community` / `community_full_info`。
+
+## 相关
+
+- [命令表与 /help](./command-table.mdx)
+- [Simplify](./simplify.mdx)
+- [配置文件](../usage/config.mdx)

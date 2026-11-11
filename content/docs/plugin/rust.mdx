@@ -142,6 +142,21 @@ fn stop(&mut self) {
   但 `user_data` 指向的状态还是得自己释放。
 </Callout>
 
+## 登记命令
+
+命令表由宿主提供，在 `start()` 里登记即可，不需要等 `/help`、也不需要 `soft_inject`：
+
+```rust
+self.host.call_service(
+    "fuyubot.host.commands",
+    "register",
+    r#"{"name":"hello","description":"打个招呼","role":"user","scopes":["private","group"]}"#,
+)?;
+```
+
+`role` / `scopes` / `hidden` 的默认值与语义见[命令表与 /help](./command-table.mdx)。
+命令回调里回复用 `Command::reply_then`，不要自己拼 `sendMessage`（见[配置文件](../usage/config.mdx)）。
+
 ## 读 / 写配置
 
 每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段（见[配置文件](../usage/config.mdx)）。

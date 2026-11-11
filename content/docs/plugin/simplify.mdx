@@ -511,6 +511,47 @@ let _guard = on_command(host, move |command| {
 三条提醒：等待靠**更新投递**；`UpdateFilter::to_json()` 里的 `update_type` 是**通道选择**
 （`event_type` 键），不参与负载匹配——详见[订阅与事件](./events.mdx)。
 
+## 8.1 缓存优先的对象读取
+
+`Simplify` 的 chat / user / 群 / 社区 / 成员读取默认走宿主缓存
+（`[cache]`，见[TDLib 对象缓存](./cache.mdx)）：
+
+<TypeTable
+  type={{
+    'chat(chat_id, timeout_ms)': {
+      description: '缓存优先；返回完整 Chat（含 positions / chat_lists）。未命中且离线时直接 None。',
+      type: 'Option<Value>',
+    },
+    'user(user_id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'basic_group(id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'supergroup(id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'community_full_info(id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'community(id)': {
+      description: '只读缓存：TDLib 没有 getCommunity，updateCommunity 是唯一来源。',
+      type: 'Option<Value>',
+    },
+    'chat_member(chat_id, user_id, timeout_ms)': {
+      description: '缓存优先，带 30 秒 TTL。',
+      type: 'Option<Value>',
+    },
+    'chats_in_list(list, limit)': {
+      description: '读独立 chat list 索引，返回精简的 chatListEntry（不含完整 Chat）。',
+      type: 'Vec<Value>',
+    },
+    'chats_in_folder(folder_id, limit)': {
+      description: 'chats_in_list 的 chatListFolder 便捷入口。',
+      type: 'Vec<Value>',
+    },
+    'chat_list_groups()': {
+      description: 'main / archive / 各 folder 的分组索引（带 list / count / folder 元数据）。',
+      type: 'Vec<Value>',
+    },
+  }}
+/>
+
+列表条目只带 `chat_id / order / is_pinned / title / type`；需要完整对象时再调 `chat()`。
+完整 Chat 永远包含完整的 `positions` / `chat_lists`，不会拿列表条目顶替。
+
 ## 9. 实体与下载
 
 <TypeTable
@@ -559,7 +600,7 @@ TDLib 里 `user` **连 `is_bot` 都没有**（身份在 `user.type`），管理�
       type: 'bool',
     },
     'chat_member(chat_id, user_id, timeout_ms)': {
-      description: '原始 ChatMember；超时 / TDLib 报错都是 None。',
+      description: '原始 ChatMember；缓存优先，带 30 秒 TTL；超时 / TDLib 报错都是 None。',
       type: 'Option<Value>',
     },
     'is_admin_status(&status, right)': {

@@ -12,6 +12,8 @@
     "native",
     "go",
     "events",
+    "command-table",
+    "cache",
     "linkage",
     "tdlib",
     "simplify",
