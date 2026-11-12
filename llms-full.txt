@@ -1636,12 +1636,13 @@ ABI 机器码对得上、`PT_LOAD` 按 16 KB 页对齐、7 个导出符号齐全
 报「资产中缺少内核目录」——所以 CI 的判据是**APK 里真有 `assets/fuyubot-kernel/lib*.so`**，
 不是「`assembleRelease` 绿了」。
 
-脚本还会按本仓的 tag 改写上游两处常量，不改就会静默出错：
+脚本还会按本仓的 tag 与 ABI 改写上游三处常量，不改就会静默出错：
 
 | 上游位置 | 为什么要改 |
 | --- | --- |
 | `data/update/UpdateChannel.kt` 的 `CURRENT_KERNEL_VERSION` | `KernelManager` 拿它和已装内核比版本，**相等就跳过重装**。不改 = 用户装上新 APK 仍在跑旧内核 |
 | `app/build.gradle.kts` 的 `versionCode` / `versionName` | 不改的话每个 Release 都是 `1.0` / `1`，应用内的更新检查永远看不出新版本 |
+| `data/plugin/PluginPlatform.kt` 的 `CURRENT_PLUGIN_ABI` | 壳按它挑插件版本；内核换了 ABI 这行没跟上，会装到内核加载不了的插件（或错过能装的旧版本）。发布流程从本仓 `fuyubot_abi::ABI_VERSION` 读出并写入 |
 
 签名走 `apksigner`（`zipalign -P 16` 先对齐再签，minSdk 33 只要 v2 + v3），
 keystore 从 Actions Secrets 还原：`ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
