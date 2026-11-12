@@ -25,6 +25,15 @@
   [FuyuBot-Script Releases](https://github.com/CatMoeCircle/FuyuBot-Script/releases) 下
   `fuyubot-script-<OS>-<平台>.zip`，解压后把 `plugins/fuyubot.script/` 放进插件目录。
 
+## Android：用官方 App [#android用官方-app]
+
+Android 上**推荐直接用图形客户端** [FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android/releases)
+（fuyuTD，Kotlin + Compose，内核与本仓同源），到 Release 下对应 ABI 的
+`fuyubot-<版本>-arm64-v8a.apk` / `fuyubot-<版本>-x86_64.apk` 安装即可。
+
+它负责初始化目录、登录、启停和日志查看，不需要在 Termux 里手敲 CLI，也不用自己配 TDLib。
+桌面 / 服务器继续用下面的 zip 包。
+
 <Callout type="warn">
   脚本插件**只装它本身还不够**：Python 脚本要 [uv](https://docs.astral.sh/uv/)，
   JS / TS 脚本要 [bun](https://bun.sh)（≥ 1.3.1）。这两个运行时不在发行包里、
@@ -82,12 +91,28 @@ fuyubot 0.1.0
 但每次启动都要发给 TDLib，所以 `run` 首次问过之后会把明文写回 `fuyubot.toml`（也可以事先设环境变量 `TG_API_HASH`
 让它一次都不问）——那份文件要当密钥看待，别提交进版本库（见 [配置文件](./config.mdx)）。
 
-## 跑起来 [#跑起来]
+## 跑起来（推荐：TUI） [#跑起来推荐tui]
 
 ```powershell
-# 前台：会问 api_id / api_hash（或读 TG_API_ID / TG_API_HASH），然后走登录
-.\fuyubot.exe run --config demo\fuyubot.toml
+# 推荐：终端操作面板；首次 s 会自动检查登录
+.\fuyubot.exe run --tui --config demo\fuyubot.toml
 ```
+
+也可以先 `cd demo`，再直接运行 `..\\fuyubot.exe`（不带子命令 = 同一个面板，全默认参数）。
+
+- **首次登录**：按 `s` 会自动检查登录；缺 `api_id` / `api_hash` 先弹两步输入，
+  随后弹 bot token / 手机号 / 验证码输入框。不用先跑 `fuyubot login`。
+- **日常启停**：`s` 启动、`x` 再按 `y` 停止；`L` 只登录、不启动。
+- **日志 / 配置 / 商店**：左侧导航，商店在插件下面。
+- 面板本身不占实例锁；启动后可以退出面板，实例继续在后台跑。
+
+> **服务器 / CI / 无终端**再用手敲的 `run`（或 `run --background`）：
+>
+> ```powershell
+> .\\fuyubot.exe run --config demo\\fuyubot.toml
+> ```
+>
+> 无终端下没有 stdin，登录要提前用 `fuyubot login` 或环境变量准备好。
 
 <Callout type="warn">
   真账号的最后一环**没有端到端验过**：`run` 会问凭据、驱动授权状态机、`getMe` 打印账户，然后才开分发；

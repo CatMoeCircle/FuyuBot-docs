@@ -1,4 +1,4 @@
-# 迁移到目录包 (/docs/plugin/migration)
+# 迁移指南 (/docs/plugin/migration)
 
 旧版本把原生插件平铺在 `plugins/*.dll`，现在推荐一个插件一个目录：
 
@@ -92,6 +92,17 @@ fuyubot plugin migrate
 
 `kind` 写 `python` 或 `js`，`entry` 指向入口脚本。脚本自己的 `pyproject.toml` /
 `package.json` 保持原样。
+
+## 命令表迁移（0.1.4） [#命令表迁移014]
+
+目录包迁移只改文件结构；命令表在 0.1.4 还换了一次主人：
+
+- 旧：`/help` 插件提供 `fuyubot.help.commands`，插件软依赖它；
+- 新：宿主提供 `fuyubot.host.commands`，`/help` 只读；
+- 旧服务名保留为兼容别名，但新代码应直接用新名字；
+- 旧登记默认 `role=user` / `scopes=private+group`，不需要补字段也能跑。
+
+完整对照和检查清单见[命令表与 /help](./command-table.mdx#从旧版迁移)。
 
 ## 验证 [#验证]
 

@@ -220,6 +220,19 @@ fuyubot-android ┘                        └ JNI 回调（onState / onAsk / on
 - **过滤器里的 `event_type` 键只用来选通道**，不参与负载匹配；等响应写
   `{"event_type":"response","request_id":N}`。
 
+## 宿主预置的两张表 [#宿主预置的两张表]
+
+`HostRuntime` 除了四个机制，还内置两张跨插件表：
+
+- **命令能力表** `fuyubot.host.commands`：插件 `start()` 里登记，宿主按 owner 回滚；
+  `/help` 只读它，`role` / `scopes` / `hidden` 由闸门和 `/help` 共同消费。
+- **TDLib 对象缓存** `fuyubot.host.cache`：chat / user / 群 / 社区 / 成员的全量 JSON，
+  每种默认 100 条 LRU；管线在中间件之前把原始 `update*` 刷进去，`Simplify` 缓存优先。
+  chat list 是独立索引，不占 100 条配额。
+
+两者都走命名服务，不新增 ABI 函数指针。权限表的 `chat_admin` / 频道判定读缓存；
+缓存未命中且离线时直接返回，不会在接收循环上等 TDLib。
+
 ## 注册作用域与卸载 [#注册作用域与卸载]
 
 `HostRuntime::plugin_scope()` 给这次加载分配一个 owner id，之后所有跨 ABI 的注册

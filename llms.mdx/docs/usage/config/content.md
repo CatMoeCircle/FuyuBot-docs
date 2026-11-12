@@ -28,8 +28,12 @@ demo/
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
 | `[command].prefix` | bot `["/"]`<br/>user `["."]` | 命令头**数组**，可配多个（每项单个字符，不能是字母 / 数字 / 空白）。不写按账号默认：bot 认 `/`、user 认 `.`。写了就**整套替换**（bot 不再自动保留 `/`）。user 账户下 `/` 即使写进数组也始终不生效 |
-| `[command].whitelist` | `[]` | 额外允许触发命令的用户 id（数字）。user 账户自己发的始终触发；bot 账户非空时只响应表里的用户 |
+| `[command].whitelist` | `[]` | 额外允许触发命令的用户 id（数字）。user 账户自己发的始终触发；bot 账户非空时只响应表里的用户。**主人 / 全局管理员不受它影响** |
 | `[command].whitelist_only` | `true` | user 账户的**白名单模式**：只响应自己与 `whitelist` 里的用户。改成 `false` 可关，但 **⚠️ 不建议**——关掉后任何人都能触发插件；bot 不受它影响 |
+| `[roles].owners` | `[]` | 主人用户 id。最高权限；列表为空时 user 账户默认自己是主人，配置后按列表来（可换成别人）。bot 账户必须显式配置。主人绕过 `[command].whitelist` |
+| `[roles].admins` | `[]` | 全局管理员用户 id。能用 `admin` 级命令，但不能用 `owner` 级；群里的 Telegram 管理员**不**自动成为全局管理员 |
+| `[cache].enabled` | `true` | 是否启用宿主 TDLib 对象缓存；关掉后 `Simplify` 直连 TDLib，连接状态判断仍保留 |
+| `[cache].capacity` | `100` | **每种类型**（chat / user / basic_group / supergroup / chat_member / community / community_full_info）的条数上限，LRU 淘汰 |
 | `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
 | `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错**。运行中也可以在 `run --tui` 的日志页按 `Tab` 聚焦工作区后按 `l` 临时调整（只对本次运行生效） |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
@@ -65,9 +69,51 @@ whitelist_only = false   # ⚠️ 不建议：关掉后任何人都能触发插�
 处理，回复走编辑）。**不建议关闭**：任何人发来的命令都会进插件，user 账户尤其容易被滥用。
 bot 账户不受这个开关影响；`whitelist` 非空时 bot 仍只响应表里的用户。
 
+**主人 / 全局管理员始终放行**：在 `[roles].owners` / `.admins` 里的人不受
+`[command].whitelist` 或 `whitelist_only` 影响——即使不在白名单里、即使白名单模式开着，
+他们发命令也能进插件。bot 账户额外排除自己的出站消息，这一条对主人也成立。
+
 插件回复命令统一走 `Command::reply` / `Command::reply_then`（其它语言走
 `fuyubot.host.command` service）：宿主决定发新消息还是编辑原命令消息——bot 账户 / user 账户里
 白名单用户触发 → `sendMessage` + `reply_to`；user 账户**自己**触发 → 编辑原命令消息。
+
+## 角色：主人与管理员 [#角色主人与管理员]
+
+`[command].whitelist` 决定**能不能触发**；`[roles]` 决定**触发后能做什么**。两者分开：
+
+```toml
+[roles]
+owners = [123456789]   # 主人：最高权限
+admins = [987654321]   # 全局管理员
+```
+
+- 主人 / 管理员**绕过** `whitelist`，始终能触发；
+- bot 账户没有隐式主人，`owners` 为空就是没有主人；
+- user 账户在 `owners` 为空时默认自己是主人；一旦配置了 `owners`，就完全按列表来——
+  自己不在列表里就不再是主人，可以换成别人；
+- 群里的 Telegram 管理员是**会话角色**，由宿主现查，不会因为写进这里就变成全局管理员。
+
+> 改 `owners` 时先把自己 id 写进去：一旦列表非空，user 账户自己就不再自动是主人；
+> 忘记写自己会丢失 `owner` 级命令，普通命令不受影响。
+
+命令的 `role` / `scopes` 元数据见[命令表与 /help](../plugin/command-table.mdx)。
+
+## TDLib 对象缓存 [#tdlib-对象缓存]
+
+宿主会缓存 chat / user / 群 / 社区 / 成员，`Simplify` 默认缓存优先：
+
+```toml
+[cache]
+enabled = true
+capacity = 100   # 每种类型，不是总数
+```
+
+- LRU 淘汰；chat list 是独立索引，不占这 100 条配额；
+- `chat_member` 带 30 秒 TTL；
+- 离线且缓存未命中时直接返回，不再等 TDLib 超时；
+- 关掉 `enabled` 只是不读写缓存，不会改变命令 / 权限语义。
+
+详见 [TDLib 对象缓存](../plugin/cache.mdx)。
 
 ## 插件自己的配置段 [#插件自己的配置段]
 
@@ -138,24 +184,33 @@ name = "mybot"
 account_type = "bot"
 api_id = 12345
 data_dir = "data"
-api_hash = ""      # run 首次问过之后会把明文写回这里（见下）
+api_hash = ""       # 首次 run 后自动写入
+
+[roles]
+owners = []         # 主人 id；为空时 user 账户默认自己是主人
+admins = []         # 全局管理员 id
+
+[cache]
+enabled = true
+capacity = 100      # 每种类型，不是总数
 
 [command]
-# prefix = ["/", "."]  # 命令头数组；不写按账号默认（bot "/"、user "."），写了整套替换
-whitelist = []     # 额外允许触发命令的用户 id；自己发的始终触发
-whitelist_only = true   # user 账户白名单模式；⚠️ 不建议关闭（false = 任何人都能触发）
+# prefix = ["/"]    # 不写按账号默认；写了整套替换
+whitelist = []      # 额外允许触发命令的用户 id
+whitelist_only = true   # ⚠️ 不建议关闭；false = 任何人都能触发
 
 [plugins]
 dir = "plugins"
-log_level = "info"   # 排查插件时调成 "debug" / "trace"
+log_level = "info"
+registry_url = "https://catmoecircle.github.io/FuyuBot-plugins/index.json"
 
 [tdlib]
-path = ""          # 留空 = 按加载优先级自动找 tdjson
+path = ""           # 留空自动找 tdjson
 log_verbosity = 1
 ```
 
 <Callout type="warn">
-  **凭据的边界**：`api_id` 与 `api_hash` 是**例外**——它们**每次冷启动**都要随 `setTdlibParameters` 发给 TDLib（session 还有效也一样），不记住就得每次手输，所以 `fuyubot run` 交互式问过之后会把它们**明文写回** `[telegram]` 段。这意味着这份文件从此带着你的应用密钥：**别提交进版本库、别整份发给别人**。不想落盘就设 `TG_API_ID` / `TG_API_HASH`（环境变量优先，且不会被写回）。Bot Token、手机号、验证码、两步验证密码仍然**一律不落盘**，只认环境变量或交互输入（连日志也不许出现）。session 由 TDLib 自己落在 `data_dir`，配置里不记任何登录态。
+  **凭据**：`api_id` / `api_hash` 每次冷启动都要随 `setTdlibParameters` 发出；`fuyubot run` 问过之后会把 `api_hash` **明文写回** `[telegram]`。不想落盘就用 `TG_API_ID` / `TG_API_HASH`。Bot Token、手机号、验证码、两步验证密码仍然只走环境变量或交互输入。session 由 TDLib 落在 `data_dir`。
 </Callout>
 
 ## 几条约定 [#几条约定]

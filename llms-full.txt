@@ -2,8 +2,14 @@
 
 跑框架的那个 CLI。它就是运行时包里的 `fuyubot(.exe)`（从源码跑时是 `target/{debug,release}/fuyubot`）。
 
+> 桌面 / 本机**推荐直接开 TUI**（`fuyubot` 不带子命令，或 `run --tui`）：
+> 登录、启停、日志、配置、插件和商店都在面板里。`run` / `--background` 主要留给
+> 服务器、CI 和无终端场景。
+
 ```text
-fuyubot <COMMAND>
+fuyubot [COMMAND]
+
+不带 COMMAND = 直接开终端操作面板（与 `run --tui` 同一个入口）
 
 Commands:
   init    初始化一个 fuyubot 项目（生成 fuyubot.toml 与插件目录）
@@ -16,10 +22,14 @@ Commands:
   plugin  插件管理
 ```
 
+**不带子命令**（`./fuyubot`、双击 exe）开的是[终端操作面板](../usage/run.mdx#操作面板)，
+参数全走默认值，等价于 `fuyubot run --tui`；它需要真终端。`run` 及其全部开关
+（`--background` / `--replay` / `--no-tdlib` …）行为不变。
+
 ## `init` [#init]
 
 ```text
-fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
+fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>] [--api-hash <HASH>]
 ```
 
 | 参数 | 默认 | 说明 |
@@ -27,12 +37,13 @@ fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
 | `--dir` | `.` | 项目目录，生成 `<dir>/fuyubot.toml` 与 `<dir>/plugins/` |
 | `--name` | `fuyubot` | 只影响配置里的 `name` |
 | `--api-id` | `0` | TDLib api_id（不是秘密，可以写进配置）；`0` = 没配，`run` 会问 |
+| `--api-hash` | 空 | TDLib api_hash；给了就明文写进 `[telegram].api_hash`，不给等首次 `run` / 面板问 |
 
-`init` **只写 `api_id`**：`api_hash` 这个命令连参数都不收（init 阶段手上不该有它）——`run` 首次会问，问完写回配置。
+`init` 会把给了的 `api_id` / `api_hash` 写进配置；`api_hash` 是明文，和 `run` 首次问完写回是同一种存储。
 重复 `init` 会被挡住（不覆盖你改过的配置）。
 
 ```text
-$ fuyubot init --dir demo --name mybot --api-id 12345
+$ fuyubot init --dir demo --name mybot --api-id 12345 --api-hash 0123456789abcdef0123456789abcdef
 已生成 demo\fuyubot.toml
 插件目录：demo\plugins
 下一步：装 fuyubot-script 插件，或按文档站示例自己写插件（plugins/ 或 plugins/scripts/）
@@ -81,7 +92,7 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 ```
 
 布局固定为四段：**顶部版本栏**（`[fuyubot - v…]`；实例运行中才显示状态，没跑时只显示刷新时间）、
-**左侧导航**（概览 / 插件 / 日志 / 配置 / 帮助）、**中央工作区**、**底部两行**
+**左侧导航**（概览 / 日志 / 配置 / 插件 / 商店 / 帮助）、**中央工作区**、**底部两行**
 （第一行是当前可用操作，第二行是 CPU / 内存 / 运行时长 / 加载插件数 / 日志级别 / PID）。
 顶部和底部**不铺背景色**，只靠边框高亮表示焦点。
 
@@ -100,11 +111,11 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `↑` / `↓`、`j` / `k` | 导航焦点：切换页面；工作区焦点：滚动日志 / 选择配置项 / 移动日志选择 |
 | `←` / `→` | 切换顶部标签页（窄屏横向导航；工作区焦点也生效） |
 | `h` / `l` | 导航焦点：上一页 / 下一页 |
-| `1`–`5` | 直接跳到概览 / 插件 / 日志 / 配置 / 帮助 |
+| `1`–`6` | 直接跳到概览 / 日志 / 配置 / 插件 / 商店 / 帮助 |
 | `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同） |
 | `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
-| `s` | 启动 bot（等价于 `fuyubot run --background`） |
-| `L`（大写） | **登录**（等价于 `fuyubot login`）：按授权状态弹输入框（bot token / 手机号 / 验证码 / 两步验证密码），`Enter` 提交、`Esc` 取消。只在**实例停着**时可用 |
+| `s` | 启动 bot：先自动检查登录状态，缺登录会弹登录框，成功后自动继续启动（等价于 `fuyubot run --background`）。`--no-login` / `--no-tdlib` 跳过检查 |
+| `L`（大写） | **显式登录**：按授权状态弹输入框（bot token / 手机号 / 验证码 / 两步验证密码），`Enter` 提交、`Esc` 取消。通常直接按 `s` 即可，`L` 用于只想登录、不想启动时。只在**实例停着**时可用 |
 | `x` → `y` | 停止 bot（`y` 是确认框里的确认；走 `.fuyubot/stop` 的优雅停止） |
 | `r` | 刷新状态 / 插件 / 日志 / 配置 |
 | `l` | 日志页 + 工作区焦点：调整日志级别（error / warn / info / debug / trace） |
@@ -118,15 +129,17 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 所以它只读 `.fuyubot/status`、配置、插件目录和 `logs/fuyubot.log`。启停都派生子进程，
 和手敲命令走同一条路——面板里看到的就是真正在跑的那个实例。
 
-唯一的例外是**登录**（`L`）：它在面板进程里跑一次和 `fuyubot login` 完全相同的流程
+唯一的例外是**登录探测**：`s` 启动前会自动跑一次，缺登录时弹框；`L` 是手动触发。
+两者都在面板进程里跑一次和 `fuyubot login` 完全相同的流程
 （同一份 `fuyubot-app` 的 `App::boot` + `login`），把授权状态机的提问弹成输入框，结束后
 立刻关掉 TDLib 交还目录。因此：
 
-- **只在实例停着时可用**——跑着的时候按 `L` 只会提示你先停止；
-- `api_id` / `api_hash` 要事先在环境变量（`TG_API_ID` / `TG_API_HASH`）或 `fuyubot.toml` 里准备好，
-  面板不会再问这两项（那是 `fuyubot login` 的事）；
+- **只在实例停着时可用**——跑着的时候按 `s` / `L` 只会提示你先停止；
+- 首次缺 `api_id` / `api_hash` 时，`s` / `L` 会先弹两步输入框（明文写回 `[telegram]`）；
+  已在环境变量或 `fuyubot.toml` 里就不用再填；
 - 密码框会打码，验证码不打码；`Esc` 取消等同于这一步没给输入，登录会失败并退回待命状态；
-- 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`。
+- 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`；
+- 已有有效 session 时，`s` 的登录探测会直接走完，不会弹框。
 
 日志页按 `l` 打开级别选择框：写入 `.fuyubot/log-level`，运行中的实例每 500ms 读一次并切换，
 `status` 随后显示新的 `log_level`。这是**运行期**开关：只对本次运行生效，重启回到
@@ -924,6 +937,19 @@ fuyubot-android ┘                        └ JNI 回调（onState / onAsk / on
   （按监听器各跑一遍的话，第 N 个会看到被改过 N 次的 payload）。
 - **过滤器里的 `event_type` 键只用来选通道**，不参与负载匹配；等响应写
   `{"event_type":"response","request_id":N}`。
+
+## 宿主预置的两张表 [#宿主预置的两张表]
+
+`HostRuntime` 除了四个机制，还内置两张跨插件表：
+
+- **命令能力表** `fuyubot.host.commands`：插件 `start()` 里登记，宿主按 owner 回滚；
+  `/help` 只读它，`role` / `scopes` / `hidden` 由闸门和 `/help` 共同消费。
+- **TDLib 对象缓存** `fuyubot.host.cache`：chat / user / 群 / 社区 / 成员的全量 JSON，
+  每种默认 100 条 LRU；管线在中间件之前把原始 `update*` 刷进去，`Simplify` 缓存优先。
+  chat list 是独立索引，不占 100 条配额。
+
+两者都走命名服务，不新增 ABI 函数指针。权限表的 `chat_admin` / 频道判定读缓存；
+缓存未命中且离线时直接返回，不会在接收循环上等 TDLib。
 
 ## 注册作用域与卸载 [#注册作用域与卸载]
 
@@ -1991,8 +2017,11 @@ let user_data = (&raw mut *latest).cast::<c_void>();
 
 ## 下一步 [#下一步]
 
-- **普通用户**：到 [Releases](https://github.com/CatMoeCircle/Fuyu-Bot/releases) 下对应平台的包，解压就跑 ——
+- **普通用户（桌面）**：到 [Releases](https://github.com/CatMoeCircle/Fuyu-Bot/releases) 下对应平台的包，
+  解压后直接运行 `fuyubot` 开**终端操作面板**（登录 / 启停 / 日志 / 配置都在里面）——
   见 [下载与安装](./usage/index.mdx)
+- **Android 用户**：推荐官方图形客户端
+  [FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android/releases)（APK），不用在 Termux 里手敲 CLI
 - 要自己编：见 [从源码构建](./usage/build.mdx)
 - 要写插件：看 [插件总览](./plugin/index.mdx)
 - 想改框架：看 [开发文档](./dev/index.mdx)
@@ -2001,8 +2030,8 @@ let user_data = (&raw mut *latest).cast::<c_void>();
 
 # ABI v5 → v6 迁移 (/docs/plugin/abi-v6)
 
-从 0.1.4 起，插件之间的服务调用由宿主转交。最直接的变化：像 `/help` 这样的服务
-终于能可靠地知道**是哪個插件**在做登记——包括调用方在自己的线程上发起的情况。
+从 0.1.4 起，插件之间的服务调用由宿主转交。最直接的变化：像命令表这样的服务
+终于能可靠地知道**是哪个插件**在做登记——包括调用方在自己的线程上发起的情况。
 
 ## 你要做什么 [#你要做什么]
 
@@ -2024,13 +2053,14 @@ cargo build --release
 
 ```rust
 host.call_service(
-    "fuyubot.help.commands",
+    "fuyubot.host.commands",
     "register",
-    r#"{"name":"mycmd","description":"我的命令"}"#,
+    r#"{"name":"mycmd","description":"我的命令","role":"user","scopes":["private","group"]}"#,
 )?;
 ```
 
 不需要传插件名，也传不了别人的名字——身份由宿主判定。
+命令表现在由宿主提供；旧的 `fuyubot.help.commands` 仍保留为兼容别名。
 
 ## 提供方：能准确拿到调用方 [#提供方能准确拿到调用方]
 
@@ -2066,7 +2096,7 @@ let caller = host.current_plugin();   // Some("fuyubot.manage") / None（宿主�
 建议改走同一个入口：
 
 ```c
-const char *reply = host->call_service(host->host_ctx, "fuyubot.help.commands",
+const char *reply = host->call_service(host->host_ctx, "fuyubot.host.commands",
                                        "register", "{\"name\":\"mycmd\"}");
 if (reply == NULL) { /* 失败 */ }
 ```
@@ -2255,7 +2285,8 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
   （直接报 `ServiceNameExists`）。
 - 插件卸载时，它那层作用域连同里面的服务一起消失。
 
-跨插件联动的端到端示例（`/help` 的命令注册表）见[插件联动](./linkage.mdx)。
+跨插件联动的端到端示例（共享服务 `demo.notes`）见[插件联动](./linkage.mdx)；
+命令表本身是宿主预置服务，见[命令表与 /help](./command-table.mdx)。
 
 两条形状上的硬要求：
 
@@ -2296,7 +2327,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `HostApi::call_service` 已经自动把它拼进错误里，Rust 侧直接 `?` 就能看到：
 
 ```text
-服务调用失败：fuyubot.help.commands.register: 没有名为 fuyubot.help.commands 的 service
+服务调用失败：fuyubot.host.commands.register: 没有名为 fuyubot.host.commands 的 service
 ```
 
 > `NULL` 与空串的分工是 v6 才明确的（v5 时两者都当「成功但没有输出」）。
@@ -2308,11 +2339,12 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 ```rust
 let catalog = host.list_services();   // JSON 数组文本
-// [{"name":"fuyubot.help.commands","version":1,
-//   "methods":["register","list"],"plugin":"fuyubot.help"}, …]
+// [{"name":"fuyubot.host.commands","version":1,
+//   "methods":["register","unregister","list","role"],"plugin":null}, …]
 ```
 
-`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity` / `.command`）。
+`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity` /
+`.command` / `.commands` / `.cache`）。
 清单从**调用方**的作用域链算，所以自己的私有服务也在里面；只给元数据，不给 vtable 指针。
 
 C / Go 侧**同样走这一步**：`host->call_service(host_ctx, name, method, input_json)`。
@@ -2333,14 +2365,14 @@ if let Some(name) = caller {
 
 取值规则（v6）：**正在被别人调用时就是调用方**；其余时候是宿主最后把控制权交给的那个插件
 （在插件自己起的线程上则是 `NULL`）。身份由宿主判定，插件自报不了，也拿不到别人的。
-`/help` 的命令归属就是这么来的。
+命令能力表的归属就是这么来的。
 
 v5 只有第二级，所以「插件在自己起的线程上调服务」时归属会静默变成 `null`；
 这条差异以及 v5 → v6 的完整清单见 [ABI v5 → v6 迁移](./abi-v6)。
 
 ### 宿主预置的服务 [#宿主预置的服务]
 
-宿主在根上预置了四个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
+宿主在根上预置了六个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
 
 | 服务名 | 方法 | 协议 |
 | --- | --- | --- |
@@ -2348,10 +2380,23 @@ v5 只有第二级，所以「插件在自己起的线程上调服务」时归�
 | `fuyubot.host.identity` | `usernames` | 无参 → `["FuyuBot"]`，自身全部活跃用户名（`usernames.active_usernames`）；没登录 / 没接 TDLib 时是 `[]` |
 | | `me` | 无参 → `getMe` 的原始 `user` JSON；没登录时 `null` |
 | `fuyubot.host.command` | `reply` | `{"chat_id":…,"message_id":…,"timeout_ms":…,"payload":<sendMessage 参数>}` → TDLib 的最终 `Message`；失败 `{"@type":"error",…}`。宿主决定发新消息还是编辑原命令消息 |
+| `fuyubot.host.commands` | `register` | `{name, description?, role?, scopes?, hidden?}` → `{ok:true, name, plugin}`；失败 `{error}`。归属由宿主判定 |
+| | `unregister` | `{name}` → `{ok:true}`；只能注销自己的 |
+| | `list` | 无参 → 扁平数组 `[{name, description, plugin, role, scopes, hidden}]` |
+| | `role` | `{user_id}` → `{global}`（`user` / `admin` / `owner`），纯内存 |
+| `fuyubot.host.cache` | `get` | `{kind, id, user_id?, ttl_ms?}` → `{value, online}` |
+| | `put` | `{kind, id, user_id?, value}` → `{ok:true}` |
+| | `list_chats` | `{list, limit?}` → `{chats:[chatListEntry…]}` |
+| | `list_groups` | 无参 → `{groups:[chatListGroup…]}` |
+| | `chat_folders` | 无参 → `{value: updateChatFolders 快照}` |
+| | `stats` / `clear` | 无参 → 诊断 / 清空 |
 | `fuyubot.host.scope` | `scope_create` | `{}` → `{"handle":N}`，开一个子作用域 |
 | | `scope_enter` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 | | `scope_leave` | 忽略入参；离开当前作用域 |
 | | `scope_drop` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
+
+命名服务表（`context.names()`）里还能看到 `fuyubot.host.commands` / `.cache`；
+`fuyubot.help.commands` 是 `.commands` 的兼容别名，一个版本后移除。
 
 `fuyubot.host.plugins` 与 ABI 第 8 项 `list_plugins` 同源，只是多一条走服务这条路
 （内置 `/plugins` 插件就是这么读「进程里真在跑的」插件清单的）。`fuyubot.host.identity`
@@ -2417,7 +2462,7 @@ bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地�
 详见[「simplify 操作表」](#simplify-操作表)。
 
 **v5 的尾部追加**：`current_plugin`（第 23 项）。服务方法终于能问出「现在是谁在调我」，
-拿到宿主判定的**权威**插件名——`/help` 的命令归属不再需要入参自报。当时是**纯追加、不改语义**，
+拿到宿主判定的**权威**插件名——命令归属不再需要入参自报。当时是**纯追加、不改语义**，
 靠 `size` 协商，所以没跳版本号。
 
 **版本 6 的改动**：尾部追加 `call_service`（第 24 项），**服务调用改成经过宿主**。
@@ -2665,7 +2710,7 @@ Linux 是 `.so`，macOS 是 `.dylib`。
 | `entry` | 是 | 相对包根的入口路径，必须真的存在 |
 | `abi` | 建议 | 编译时使用的宿主 ABI 版本；不写则加载后才知道 |
 | `platforms` | 否 | 为空或 `["any"]` 表示全平台；否则必须包含当前平台 |
-| `depends` | 否 | 硬依赖的服务名，例如 `["help.commands"]` |
+| `depends` | 否 | 硬依赖的服务名，例如 `["demo.notes"]` |
 | `optional_depends` | 否 | 软依赖的服务名 |
 | `provides` | 否 | 本插件提供的服务名，供展示与依赖检查 |
 | `config` | 否 | 默认配置文件的**相对包根路径**（如 `config.default.toml`）。加载时并进 `[plugin.<id>]`，**优先级最低**：用户配置与插件运行时落盘已有的键不会被覆盖 |
@@ -2772,6 +2817,350 @@ fuyubot plugin uninstall weather-bot   # 脚本插件（按目录名）
 ```
 
 只删插件目录，`[plugin.<id>]` 配置和 `data/plugins/<id>/` 不会被删。
+
+
+# TDLib 对象缓存 (/docs/plugin/cache)
+
+宿主在内存里缓存 TDLib 的原始 JSON 对象，`Simplify` 的读取方法默认**缓存优先**：
+命中直接返回；未命中才发 `getChat` / `getUser` / `getChatMember` 等，成功后回填。
+
+这不是插件各自维护的缓存：表在 `HostRuntime` 里，插件经 `fuyubot.host.cache` 读写。
+所以 A 插件查过的 chat，B 插件随后就能命中；插件卸载也不会带走别人的条目。
+
+## 缓存了什么 [#缓存了什么]
+
+| 类型 | 来源 | 更新 |
+| --- | --- | --- |
+| `chat` | `getChat` / `updateNewChat` | `updateChat*` |
+| `user` | `getUser` / `updateUser` | `updateUser`、`updateUserStatus` |
+| `basic_group` | `getBasicGroup` | `updateBasicGroup` |
+| `supergroup` | `getSupergroup` | `updateSupergroup` |
+| `chat_member` | `getChatMember` | `updateChatMember` |
+| `community` | 仅 `updateCommunity` | `updateCommunity` |
+| `community_full_info` | `getCommunityFullInfo` | `updateCommunityFullInfo` |
+
+`community` 没有对应的 get 方法——TDLib 保证 `updateCommunity` 先于标识符返回，
+所以 `Simplify::community()` 只读缓存。
+
+## 更新从哪来 [#更新从哪来]
+
+管线在**中间件之前**把 TDLib 原始更新刷进缓存，所以下游中间件 / 插件看到更新时，
+缓存已经是新值：
+
+- `updateNewChat`、`updateChat*`；
+- `updateUser` / `updateUserStatus`；
+- `updateBasicGroup` / `updateSupergroup`；
+- `updateChatMember`（字段是 `new_chat_member`，兼容老 `member`）；
+- `updateCommunity` / `updateCommunityFullInfo`；
+- `updateChatFolders`。
+
+几个不能直接按字段合并的已单独处理：
+
+- `updateChatPosition`：`order == 0` 从对应 list 移除，否则替换 / 追加；
+- `updateChatReplyMarkup`：落成 `reply_markup_message_id`；
+- `updateChatAddedToList` / `RemovedFromList`：维护 `chat_lists` 与 `positions`；
+- `updateChatAction` / `WelcomeMessages` / `JoinResult` / `ActiveStories` / `RevenueAmount` /
+  `Boost` / `OnlineMemberCount`：不是 `Chat` 字段，忽略。
+
+## 配置 [#配置]
+
+```toml
+[cache]
+enabled = true
+capacity = 100   # 每种类型的上限，不是总数
+```
+
+- `capacity` 是**每种类型**的上限，按最近最少使用淘汰；
+- 默认 100 条；全量 `Value` 下大约几 MiB，媒体消息多的 chat 会更大；
+- 关掉 `enabled` 后 `Simplify` 不再读写缓存，但连接状态判断仍然保留。
+
+## 连接状态与 TTL [#连接状态与-ttl]
+
+- 只有 `connectionStateReady` / `connectionStateUpdating` 算在线；
+- 离线且缓存未命中时，`Simplify` 直接返回 `None`，不再等 TDLib 超时；
+- `chat_member` 带 **30 秒 TTL**：权限判断不能拿太旧的结果；
+- 其它对象不设 TTL，靠 `update*` 修正 + LRU 控量；
+- `authorizationStateLoggingOut` / `Closed` 时清空缓存并标记离线。
+
+不做逐资源的“还活着吗”探测：`getChat` 本身就是探测，命中后再发一次等于缓存失效。
+
+## Simplify 里的缓存优先方法 [#simplify-里的缓存优先方法]
+
+| 方法 | 行为 |
+| --- | --- |
+| `chat(chat_id, timeout)` | 缓存优先；返回**完整 Chat**（含 `positions` / `chat_lists`） |
+| `user(user_id, timeout)` | 缓存优先 |
+| `basic_group(id, timeout)` | 缓存优先 |
+| `supergroup(id, timeout)` | 缓存优先 |
+| `community_full_info(id, timeout)` | 缓存优先 |
+| `community(id)` | 只读缓存（没有 get 方法） |
+| `chat_member(chat_id, user_id, timeout)` | 缓存 + 30 秒 TTL |
+| `is_chat_admin(chat_id, user_id, right, timeout)` | 走 `chat_member`，因此也吃缓存 |
+
+```rust
+let simplify = Simplify::new(host);
+if let Some(chat) = simplify.chat(chat_id, 2_000) {
+    // 命中缓存时通常立刻返回；未命中且离线时是 None
+}
+```
+
+## chat list 与分组 [#chat-list-与分组]
+
+列表是**独立索引**，不占 `chat` 的 100 条配额，也不夹带完整 Chat：
+
+```rust
+let groups = simplify.chat_list_groups();
+for group in groups {
+    let entries = simplify.chats_in_list(&group["list"], 100);
+    // entries 里是 chatListEntry：chat_id / order / is_pinned / title / type
+}
+
+let folder = simplify.chats_in_folder(folder_id, 100);
+```
+
+- chat 对象被 LRU 淘汰后，列表条目仍然在（只保留轻量字段）；
+- 需要完整 Chat 时再调 `simplify.chat(chat_id)`；
+- folder 标题取 `updateChatFolders` 的 `chatFolderInfo.name.text.text`；
+- folder 被删除时，旧 `folder:<id>` 索引会一起清掉。
+
+`chat_list_groups()` 返回：
+
+```json
+[
+  {
+    "@type": "chatListGroup",
+    "kind": "main",
+    "title": "全部",
+    "list": {"@type": "chatListMain"},
+    "count": 12,
+    "folder": null
+  },
+  {
+    "@type": "chatListGroup",
+    "kind": "folder",
+    "title": "工作",
+    "list": {"@type": "chatListFolder", "chat_folder_id": 1},
+    "count": 3,
+    "folder": { /* chatFolderInfo */ }
+  }
+]
+```
+
+## 权限表也用这份缓存 [#权限表也用这份缓存]
+
+命令能力表的 `chat_admin` 和 `scopes` 判定也读对象缓存：
+
+- `Chat.type` → 私聊 / 群 / 频道，精确判 `scopes`；
+- `ChatMember.status` → 本会话管理员，带 30 秒 TTL；
+- 缓存没有结论时，闸门放行给命令处理器 / `/help` 的回复线程再判，
+  **不会在接收循环上等 TDLib**。
+
+详见[命令表与 /help](./command-table.mdx)。
+
+## 服务接口 [#服务接口]
+
+其它语言 / 非 `Simplify` 调用方经 `fuyubot.host.cache`：
+
+| 方法 | 入参 | 返回 |
+| --- | --- | --- |
+| `get` | `{kind, id, user_id?, ttl_ms?}` | `{value, online}` |
+| `put` | `{kind, id, user_id?, value}` | `{ok:true}` |
+| `list_chats` | `{list, limit?}` | `{chats:[chatListEntry…]}` |
+| `list_groups` | 无 | `{groups:[chatListGroup…]}` |
+| `chat_folders` | 无 | `{value: updateChatFolders 快照}` |
+| `stats` / `clear` | 无 | 诊断 / 手动清空 |
+
+`kind`：`chat` / `user` / `basic_group` / `supergroup` / `chat_member` /
+`community` / `community_full_info`。
+
+## 相关 [#相关]
+
+- [命令表与 /help](./command-table.mdx)
+- [Simplify](./simplify.mdx)
+- [配置文件](../usage/config.mdx)
+
+
+# 命令表与 /help (/docs/plugin/command-table)
+
+从 0.1.4 起，**命令表的主人是宿主**，不是 `/help` 插件。
+
+插件在 `start()` 里经 `fuyubot.host.commands` 登记；宿主按 owner 管生命周期，
+`/help` 只负责读取、过滤和渲染。旧的 `fuyubot.help.commands` 仍保留为**兼容别名**，
+指向同一张表。
+
+## 一张图 [#一张图]
+
+```mermaid
+flowchart LR
+  P["任意插件 start()"] -->|"register(JSON)"| H["宿主 CommandRegistry"]
+  H -->|"list"| Help["/help 插件"]
+  Help -->|"role + 会话缓存"| Render["按插件分组的 Markdown"]
+  Old["旧插件 register"] -->|"fuyubot.help.commands 别名"| H
+```
+
+## 登记命令 [#登记命令]
+
+```rust
+host.call_service(
+    "fuyubot.host.commands",
+    "register",
+    r#"{
+        "name": "ban",
+        "description": "禁言成员",
+        "role": "chat_admin",
+        "scopes": ["group"],
+        "hidden": false
+    }"#,
+)?;
+```
+
+返回：
+
+```json
+{"ok": true, "name": "ban", "plugin": "fuyubot.mod"}
+```
+
+`plugin` 由宿主按**调用者栈**判定，入参里没有这个字段，插件伪造不了。
+同名命令只允许原 owner 更新；别的插件来登记会被拒绝。
+
+登记失败不影响插件本身的其它功能，但这条命令不会进 `/help`，也不会被能力表保护。
+
+## 字段 [#字段]
+
+| 字段 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `name` | 是 | — | 不带 `/`，只允许 `a-z0-9_`，统一转小写 |
+| `description` | 否 | `""` | `/help` 里那行说明 |
+| `role` | 否 | `user` | 最低角色，见下 |
+| `scopes` | 否 | `private + group` | 允许出现的会话，见下 |
+| `hidden` | 否 | `false` | 不进 `/help`，但仍按能力表执行 |
+
+## `role` [#role]
+
+| 值 | 谁能用 |
+| --- | --- |
+| `user` | 任何能触发命令的人 |
+| `chat_admin` | **本会话**的管理员（群主 / 群管理员 / 频道发帖者） |
+| `admin` | 全局管理员（`[roles].admins` 或 `[roles].owners`） |
+| `owner` | 主人（`[roles].owners`；列表为空时 user 账户默认自己是主人，填了就按列表来） |
+
+兼容写法：`chat-admin`、`chatadmin`。
+
+`owner` / `admin` **不受 `[command].whitelist` 或 `whitelist_only` 影响**：
+只要在 `[roles].owners` / `.admins` 里，白名单没写他们也能触发。
+
+判定顺序：
+
+1. `user`：放行；
+2. `admin` / `owner`：宿主闸门用配置在**分发前**直接拦；
+3. `chat_admin`：优先读对象缓存里的 `ChatMember.status`（30 秒 TTL）；
+   缓存没有结论时放行给命令处理器或 `/help` 的回复线程再判；
+4. 频道帖子的发送者是频道身份（没有 `user_id`），视为频道管理员。
+
+`admin` / `owner` 是**全局**角色；群里的 Telegram 管理员是**会话**角色，两者不混。
+
+## `scopes` [#scopes]
+
+| 值 | 会话 |
+| --- | --- |
+| `private` | 私聊 |
+| `group` | 群 / 超级群（`supergroup` 也认） |
+| `channel` | 频道 |
+
+- 普通命令默认 `private + group`；
+- `admin` / `owner` 命令默认**只有 `private`**，要在群里出现必须显式写；
+- 频道必须显式写 `channel`，不会从默认值里继承。
+
+宿主闸门优先用缓存里的 `Chat.type` 精确判私聊 / 群 / 频道；缓存没有时才退回
+按 `chat_id` 正负粗略判。
+
+## `hidden` [#hidden]
+
+`hidden = true` 只是**不进 `/help`**，不是授权：
+
+- 命令仍在能力表里，`role` / `scopes` 照常生效；
+- 适合兼容命令、彩蛋、只给程序调用的命令。
+
+## `/help` 怎么拿到列表 [#help-怎么拿到列表]
+
+`/help` 调宿主的 `list` 方法：
+
+```rust
+let raw = host.call_service("fuyubot.host.commands", "list", "{}")?;
+let entries: Vec<serde_json::Value> = serde_json::from_str(&raw)?;
+```
+
+`list` 返回**未过滤**的扁平数组：
+
+```json
+[
+  {
+    "name": "start",
+    "description": "开始使用",
+    "plugin": "fuyubot.start",
+    "role": "user",
+    "scopes": ["private", "group"],
+    "hidden": false
+  }
+]
+```
+
+然后 `/help` 在自己的回复线程里：
+
+1. 调 `role` 拿当前用户的全局角色；
+2. 从对象缓存拿会话类型 / 本会话管理员身份；
+3. 过滤 `hidden`、`role`、`scopes`；
+4. 按 `plugin` 分组，组标题用宿主报告里的 `display_name`，没有就退回短名。
+
+> `list` 是原始表；按人和会话过滤后的“可见命令列表”目前只在 `/help` 内部计算，
+> 没有单独的 service 方法。别的插件要复用同一份过滤逻辑时，建议在宿主加一个
+> `visible` 方法，而不是自己再拼一遍角色判断。
+
+## 从旧版迁移 [#从旧版迁移]
+
+### 旧版怎么工作 [#旧版怎么工作]
+
+- `/help` 插件自己持有一个 `REGISTRY`；
+- 其它插件调 `fuyubot.help.commands` 的 `register`；
+- `start` / `manage` 声明 `soft_inject = ["fuyubot.help.commands"]`，等 help 先起来；
+- `/help` 直接读自己的注册表，再和 `BUILTIN_COMMANDS` 静态兜底合并。
+
+### 要改什么 [#要改什么]
+
+| 旧 | 新 |
+| --- | --- |
+| `fuyubot.help.commands` | `fuyubot.host.commands` |
+| `soft_inject = ["fuyubot.help.commands"]` | 删除；宿主服务启动时就在 |
+| `{"name":…,"description":…}` | 可继续只传这两个，`role` / `scopes` / `hidden` 用默认值 |
+| help 插件卸载 = 命令表消失 | 命令表在宿主；只有登记它的插件卸载才会摘掉它的条目 |
+| 插件卸载后条目可能残留 | 宿主按 owner 整批回滚 |
+
+旧插件不改也能跑：`fuyubot.help.commands` 是宿主的别名，登记进同一张表。
+但它只是一个版本的兼容层，新代码请直接用 `fuyubot.host.commands`。
+
+### 行为变化 [#行为变化]
+
+- **同名冲突**：以前后登记的会覆盖/并存得不明确；现在跨插件同名会被拒绝。
+  如果两个插件用了同一个命令名，改名或只保留一个。
+- **卸载即消失**：插件卸载 / 加载失败，它登记的命令自动从 `/help` 和能力表里消失。
+- **默认角色**：旧登记没有 `role`，按 `user`；没有 `scopes`，按 `private + group`。
+- **主人 / 管理员命令默认只进私聊**：要群里用，显式写 `scopes`。
+- **静态兜底没了**：`/start`、`/help`、`/plugins` 也由各自插件登记，不再由 help 硬编码。
+
+### 检查清单 [#检查清单]
+
+- [ ] 把 `fuyubot.help.commands` 改成 `fuyubot.host.commands`。
+- [ ] 删掉只为命令登记而写的 `soft_inject`。
+- [ ] 给管理类命令补 `role` / `scopes`；主人命令确认是否真的要进群。
+- [ ] 确认没有和别的插件重名。
+- [ ] 插件卸载后不再依赖旧命令残留。
+- [ ] 用 `/help` 在私聊 / 群 / 频道各看一次。
+
+## 相关 [#相关]
+
+- [TDLib 对象缓存](./cache.mdx)
+- [插件联动](./linkage.mdx)
+- [Simplify](./simplify.mdx)
 
 
 # 订阅与事件 (/docs/plugin/events)
@@ -3579,8 +3968,8 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 
 排查看 `fuyubot status`：`pending` 那一栏会列出插件名**和它还缺哪些**。
 
-完整实例见[插件联动](./linkage.mdx)：内置 `/help` 用共享服务暴露命令表，
-`fuyubot.start` 和 `fuyubot.manage` 用 `soft_inject` + `call_service` 把自己的命令登记进去。
+完整实例见[插件联动](./linkage.mdx)。命令表是宿主预置的 `fuyubot.host.commands`，
+插件用 `call_service` 登记，不需要再 `soft_inject` 等 `/help`；细节见[命令表与 /help](./command-table.mdx)。
 
 ## 按语言看 [#按语言看]
 
@@ -3594,6 +3983,8 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 
 <Cards>
   <Card title="订阅与事件" href="/docs/plugin/events/" />
+  <Card title="命令表与 /help" href="/docs/plugin/command-table/" />
+  <Card title="TDLib 对象缓存" href="/docs/plugin/cache/" />
   <Card title="调用 TDLib" href="/docs/plugin/tdlib/" />
   <Card title="简化封装" href="/docs/plugin/simplify/" />
   <Card title="外部仓库插件" href="/docs/plugin/external/" />
@@ -3619,9 +4010,12 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 插件之间没有共享的 Rust 类型，也没有彼此的符号表。原生插件（cdylib）跑在同一个进程里，
 但只通过宿主的 C ABI 打交道。想「A 把自己的能力借给 B 用」，只有宿主提供的那几条通道。
 
-这篇讲最常用的一条：**命名服务 + 软依赖**。例子就是内置的 `/help`——
-它把命令表暴露成一个进程级服务，`fuyubot.start` 和 `fuyubot.manage` 在启动时把自己的命令登记进去，
-而它们之间没有一行互相 import 的代码。
+这篇讲最常用的一条：**命名服务 + 软依赖**。示例服务叫 `demo.notes`：一个插件提供
+「笔记」能力，另一个插件按名字调用它。
+
+> 命令表已经不由 `/help` 插件提供，而是宿主预置的 `fuyubot.host.commands`。
+> 那部分见[命令表与 /help](./command-table.mdx)；缓存服务见 [TDLib 对象缓存](./cache.mdx)。
+> 本文只讲通用的共享服务模式。
 
 ## 先选通道 [#先选通道]
 
@@ -3632,55 +4026,36 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 | 让宿主 / AI 能发现并调用 | [工具表](./tools.mdx) `register_tool` + `call_tool` | 是 | 是 |
 | 只要求「我启动时它已经在了」 | `inject` / `soft_inject` | — | 不负责传值 |
 
-服务适合「一个插件提供能力、其它插件按名字调」：命令注册表、缓存、鉴权、数据源都属于这一类。
+服务适合「一个插件提供能力、其它插件按名字调」：缓存、鉴权、数据源、笔记都属于这一类。
 它不替代事件——事件是**通知**，服务是**调用**。两者可以叠：服务方法内部照样能 `emit`。
 
-## `/help` 的联动结构 [#help-的联动结构]
-
-内置 `/help` 把命令表暴露成进程级服务 `fuyubot.help.commands`，方法有两个：
-
-| 方法 | 入参 | 返回 |
-| --- | --- | --- |
-| `register` | `{"name":"start","description":"开始使用"}` | `{"ok":true}`；坏入参回 `{"ok":false,"error":"…"}` |
-| `list` | 忽略 | `[{"name":"start","description":"…"}, …]`，**扁平数组**（程序协议）；`/help` 正文再按 `plugin` 分组渲染 |
-
-服务名建议用反向域名（`fuyubot.help.commands`），方法名用动词；协议字段**只增不改**，
-破坏性改动时把 `ServiceVTable.version` 加一（宿主不校验，但调用方可以据此判断）。
-坏入参不要 panic——回一个带 `error` 的 JSON，调用方才有机会降级。
+## 联动结构 [#联动结构]
 
 ```mermaid
 flowchart LR
-  U["用户发 /help"] --> H["help 插件"]
-  H --> T["Markdown 命令表"]
-  S["start 插件"] -.->|"soft_inject"| H
-  M["manage 插件"] -.->|"soft_inject"| H
-  S -->|"register(JSON)"| H
-  M -->|"register(JSON)"| H
+  U["调用方插件"] -->|"call_service('demo.notes','add',…)"| H["宿主"]
+  H -->|"转交"| P["提供方插件"]
+  P -->|"provide_service_shared"| H
+  P -->|"add / list"| R["自己的注册表"]
 ```
 
-三个插件各管一段：
+- 提供方：`start()` 里 `provide_service_shared("demo.notes", &vtable)`；
+- 消费方：`call_service("demo.notes", "add", …)`；
+- 消费方**不链接**提供方，也不 import 它的代码，只认服务名、方法名和 JSON 协议；
+- 需要「提供方先起来」时，消费方用 `soft_inject` / `inject` 声明，但**不传值**。
 
-| 角色 | 插件 | 做什么 |
-| --- | --- | --- |
-| 提供方 | `fuyubot.help` | `start()` 里 `provide_service_shared` 注册服务；`/help` 渲染时合并动态注册表（带归属）与静态基线 |
-| 消费方 | `fuyubot.start` | `soft_inject` 声明软依赖；`start()` 里 `call_service(…, "register", …)` |
-| 消费方 | `fuyubot.manage` | 同上，登记 `/plugins` |
-
-消费方**不链接** help 插件，也不 import 它的任何代码。它只认两个字符串——服务名和方法名——
-外加一份两边都认的 JSON 协议。
-
-> 实例源码在运行时仓库的 `plugins/fuyubot-plugin-help`、`plugins/fuyubot-plugin-start`、
-> `plugins/fuyubot-plugin-manage`；这篇只摘和联动有关的部分。
+服务名建议用反向域名（`demo.notes`），方法名用动词；协议字段**只增不改**，
+破坏性改动时把 `ServiceVTable.version` 加一（宿主不校验，但调用方可以据此判断）。
+坏入参不要 panic——回一个带 `error` 的 JSON，调用方才有机会降级。
 
 ## 提供方：把能力做成服务 [#提供方把能力做成服务]
 
-下面代码用 `fuyubot-abi` 的类型写（三个内置插件就是这么写的）。外部 Rust 插件直接依赖
-crates.io 上的 `fuyubot-abi` 即可，拿到的是同一套 `ServiceVTable` / `ServiceMethod` /
-`Plugin` / `define_plugin!`。
+下面代码用 `fuyubot-abi` 的类型写。外部 Rust 插件直接依赖 crates.io 上的
+`fuyubot-abi`，拿到的是同一套 `ServiceVTable` / `ServiceMethod` / `Plugin` / `define_plugin!`。
 
 ### 1. 写方法 [#1-写方法]
 
-服务方法只有一个签名：收 JSON、回 JSON（或 `NULL` 表示「成功但没输出」）。
+服务方法只有一个签名：收 JSON、回 JSON（或 `NULL` 表示失败）。
 
 ```rust
 use std::cell::RefCell;
@@ -3690,8 +4065,7 @@ thread_local! {
     static REPLY: RefCell<CString> = RefCell::new(CString::new("").unwrap());
 }
 
-/// 把一段文本放进线程局部缓冲，返回给调用方。
-/// 提供方持有返回值：宿主 `call_service` 调完会立刻拷走，不会保存这个指针。
+/// 提供方持有返回值：宿主 `call_service` 调完会立刻拷走。
 fn reply(text: &str) -> *const c_char {
     let text = CString::new(text).unwrap_or_default();
     REPLY.with(|buffer| {
@@ -3700,8 +4074,8 @@ fn reply(text: &str) -> *const c_char {
     })
 }
 
-unsafe extern "C" fn svc_register(
-    context: *mut c_void,
+unsafe extern "C" fn svc_add(
+    _context: *mut c_void,
     input_json: *const c_char,
 ) -> *const c_char {
     let input = match unsafe { CStr::from_ptr(input_json) }.to_str() {
@@ -3712,34 +4086,18 @@ unsafe extern "C" fn svc_register(
         Ok(value) => value,
         Err(_) => return reply(r#"{"ok":false,"error":"不是合法 JSON"}"#),
     };
-    let Some(name) = value.get("name").and_then(|value| value.as_str()) else {
-        return reply(r#"{"ok":false,"error":"缺 name"}"#);
+    let Some(text) = value.get("text").and_then(|value| value.as_str()) else {
+        return reply(r#"{"ok":false,"error":"缺 text"}"#);
     };
-    if name.is_empty() {
-        return reply(r#"{"ok":false,"error":"name 为空"}"#);
-    }
-    // 归属由**宿主**判：问一句「现在是谁在调我」（`current_plugin`），
-    // 插件没法把自己冒充成别人。v6 起这次调用经过宿主，所以调用方即使在
-    // 自己的线程上调进来也认得出；宿主自己调时是 `None`。
-    let plugin = if context.is_null() {
-        None
-    } else {
-        // SAFETY: 提供方把 `vtable.context` 指向自持的 `Box<HostApi>`（见下面的打包）。
-        unsafe { &*(context as *const HostApi) }.current_plugin()
-    };
-    // …把 name / description / plugin 放进自己的注册表…
-    match plugin {
-        Some(plugin) => reply(&format!(r#"{{"ok":true,"plugin":"{plugin}"}}"#)),
-        None => reply(r#"{"ok":true,"plugin":null}"#),
-    }
+    // …把 text 放进自己的注册表…
+    reply(&serde_json::json!({"ok": true, "text": text}).to_string())
 }
 
-/// `list` 方法：把自己的注册表序列化成 JSON 数组。
 unsafe extern "C" fn svc_list(
     _context: *mut c_void,
     _input_json: *const c_char,
 ) -> *const c_char {
-    // 实际实现里读注册表、`serde_json::to_string` 之后交给 `reply`。
+    // 实际实现里读注册表、serde_json::to_string 之后交给 reply。
     reply("[]")
 }
 ```
@@ -3760,27 +4118,26 @@ abort 整个宿主，不是只挂你的插件。解析失败回 `{"ok":false,"er
 use std::ffi::CString;
 use fuyubot_abi::{HostApi, ServiceMethod, ServiceVTable};
 
-struct HelpService {
-    // 服务方法回问「谁在调我」用的宿主句柄；单独 Box 一层保证地址稳定。
+struct NotesService {
+    // 需要回问「谁在调我」时用；单独 Box 一层保证地址稳定。
     #[allow(dead_code)]
     host: Box<HostApi>,
     vtable: ServiceVTable,
-    // 代码里不读这两个字段，但 vtable 的裸指针指向它们的堆缓冲：
-    // 必须和 vtable 同生共死，所以靠「持有」保活。
+    // vtable 的裸指针指向这些堆缓冲，必须与 vtable 同生共死。
     #[allow(dead_code)]
     methods: Vec<ServiceMethod>,
     #[allow(dead_code)]
     names: Vec<CString>,
 }
 
-fn build_service(host: HostApi) -> Box<HelpService> {
+fn build_service(host: HostApi) -> Box<NotesService> {
     let names = vec![
-        CString::new("fuyubot.help.commands").unwrap(),
-        CString::new("register").unwrap(),
+        CString::new("demo.notes").unwrap(),
+        CString::new("add").unwrap(),
         CString::new("list").unwrap(),
     ];
     let methods = vec![
-        ServiceMethod { name: names[1].as_ptr(), func: Some(svc_register) },
+        ServiceMethod { name: names[1].as_ptr(), func: Some(svc_add) },
         ServiceMethod { name: names[2].as_ptr(), func: Some(svc_list) },
     ];
     let host = Box::new(host);
@@ -3788,47 +4145,43 @@ fn build_service(host: HostApi) -> Box<HelpService> {
         name: names[0].as_ptr(),
         version: 1,
         size: core::mem::size_of::<ServiceVTable>() as u32,
-        // 指进 Box 的堆内存：外层 HelpService 搬家也不会让这个地址失效。
         context: (&*host as *const HostApi).cast_mut().cast::<c_void>(),
         methods: methods.as_ptr(),
         method_count: methods.len(),
     };
-    Box::new(HelpService { host, vtable, methods, names })
+    Box::new(NotesService { host, vtable, methods, names })
 }
 ```
 
-这里有几个容易写错的点：
+几个容易写错的点：
 
-- `Vec` 的**堆缓冲**在结构体移动时不会跟着搬，所以 `Box::new` 之后 `names[i].as_ptr()` /
-  `methods.as_ptr()` 仍然有效。**别在注册之后再 `push`**——重新分配会让宿主手里的指针悬空。
+- `Vec` 的**堆缓冲**在结构体移动时不会跟着搬，所以 `Box::new` 之后
+  `names[i].as_ptr()` / `methods.as_ptr()` 仍然有效。**别在注册之后再 `push`**。
 - `version` 是提供方自己的协议版本，宿主**不校验**；它只用于调用方自己判断。
-- `context` 会原样传给每个方法。需要实例状态就把 `self` 指针放这里；`/help` 用它放
-  **宿主句柄**（`HostApi`），注册时才能回问「谁在调我」——这是 `plugin_init` 交给你的那份
-  `HostApi`，`Copy` 且可以跨线程，配套的 `Box` 只是为了让地址稳定。
+- `context` 会原样传给每个方法。需要实例状态就把 `self` 指针放这里；需要问调用方就把
+  `HostApi` 放这里（它是 `Copy` 的，跨线程可用）。
 
 ### 3. `start()` 注册，`stop()` 放下 [#3-start-注册stop-放下]
 
 ```rust
-impl Plugin for HelpPlugin {
+impl Plugin for NotesPlugin {
     fn start(&mut self, _config_json: &str) -> Result<(), String> {
-        // 把 `HostApi` 一起打包进服务：`register` 要靠它问出调用者是谁。
         let service = build_service(self.host);
         let handle = self
             .host
-            .provide_service_shared("fuyubot.help.commands", &service.vtable);
+            .provide_service_shared("demo.notes", &service.vtable);
         if !handle.is_valid() {
             self.host.log(
                 LogLevel::Error,
-                "注册 fuyubot.help.commands 失败（同名服务已存在？）",
+                "注册 demo.notes 失败（同名服务已存在？）",
             );
         }
-        // 持有到 stop：vtable 里的指针全都指向它。
         self.service = Some(service);
         Ok(())
     }
 
     fn stop(&mut self) {
-        // 放下即释放；宿主随后按 owner 整批回滚服务注册（顺序是 stop → rollback）。
+        // 放下即释放；宿主随后按 owner 整批回滚服务注册（stop → rollback）。
         self.service = None;
     }
 }
@@ -3837,56 +4190,41 @@ impl Plugin for HelpPlugin {
 <Callout type="warn">
   **跨插件共享必须用 `provide_service_shared`。** `provide_service` 写的是调用者自己的
   子作用域，兄弟插件沿父链往上看不到它；两个插件各注册一份同名私有服务也不会冲突，
-  但也就谈不上联动。`_shared` 写进程级的根表，同名会和别人撞——所以它必须显眼。
+  但也就谈不上联动。`_shared` 写进程级的根表，同名会和别人撞。
 </Callout>
 
 <Callout type="info">
-  `ServiceHandle` **不是** RAII：它没有 `Drop`，丢在一边不会注销。正常也不需要手动注销——
-  插件卸载时宿主按 owner 回滚它注册的一切，共享服务也一样（写在根表也记得 owner）。
-  这里的 `Option<Box<HelpService>>` 只是为了**保活 VTable**，不是为了「用句柄控制注册」。
+  `ServiceHandle` **不是** RAII：它没有 `Drop`，丢在一边不会注销。插件卸载时宿主按 owner
+  回滚它注册的一切。这里的 `Option<Box<NotesService>>` 只是为了**保活 VTable**。
 </Callout>
 
 ### 4. 提供方也要能单独活 [#4-提供方也要能单独活]
 
-`/help` 的静态基线 `BUILTIN_COMMANDS` 始终包含 `start` / `help` / `plugins` 三个命令；
-动态注册表**优先**（它带宿主判定的归属），静态基线只补缺。所以：
-
-- 没有消费方登记命令，`/help` 仍然列得出内置三件套（收在最后的「其它」段，
-  不会编造归属）；
-- 消费方没起来，只是少几条带归属的动态条目，不会让 `/help` 整个失效。
-
-这是可选联动的通用做法：**提供方给自己留一份能独立工作的兜底**，别把「有人来调我」
-当成自己启动的前提。
+提供服务时给自己留一份兜底：没有消费方来调，插件仍然能工作。
+别把「有人来调我」当成自己启动的前提。
 
 ## 消费方：按名字调用 + 软依赖 [#消费方按名字调用--软依赖]
 
-`fuyubot.start` 的接线只有两段：`start()` 里调服务，`soft_inject()` 里声明排队偏好。
-
 ```rust
-impl Plugin for StartPlugin {    fn start(&mut self, _config_json: &str) -> Result<(), String> {
-        // …订阅 /start…
-
-        // 经共享服务把自己的命令登记进 /help。
-        // 失败也不影响 /start 本身：/help 有静态兜底，这里只是少一条动态登记。
+impl Plugin for ConsumerPlugin {
+    fn start(&mut self, _config_json: &str) -> Result<(), String> {
         match self.host.call_service(
-            "fuyubot.help.commands",
-            "register",
-            r#"{"name":"start","description":"开始使用"}"#,
+            "demo.notes",
+            "add",
+            r#"{"text":"hello"}"#,
         ) {
-            Ok(reply) => self
-                .host
-                .log(LogLevel::Info, &format!("start 已向 /help 登记命令：{reply}")),
+            Ok(reply) => self.host.log(LogLevel::Info, &format!("notes.add: {reply}")),
             Err(error) => self.host.log(
                 LogLevel::Warn,
-                &format!("start 登记命令到 /help 失败（继续跑）：{error}"),
+                &format!("notes.add 失败（继续跑）：{error}"),
             ),
         }
-
         Ok(())
     }
 
+    // 可选：希望提供方先起来时再声明。
     fn soft_inject() -> Vec<String> {
-        vec!["fuyubot.help.commands".to_owned()]
+        vec!["demo.notes".to_owned()]
     }
 }
 ```
@@ -3894,11 +4232,10 @@ impl Plugin for StartPlugin {    fn start(&mut self, _config_json: &str) -> Resu
 `call_service` 是普通安全函数，返回 `Result<String, AbiError>`：
 
 - 服务不存在 / 方法不存在 / 方法指针是 `None` → `Err`；
-- 方法返回 `NULL` → `Ok(String::new())`（「成功但没输出」）；
-- 方法返回字符串 → 立刻拷成 `String`，调用方拿到的是自己的一份，可以随便留着。
+- 方法返回 `NULL` → `Err`（v6 起 `NULL` 表示失败，空串才是「成功但没输出」）；
+- 方法返回字符串 → 立刻拷成 `String`，调用方拿到的是自己的一份。
 
-⚠️ 目前错误类型不细分「服务不存在」和「没有这个方法」，都是 `AbiError::BadString`。
-所以日志里要把服务名、方法名一起打出来，否则排查时只看得到一句「失败了」。
+⚠️ 错误类型不细分「服务不存在」和「没有这个方法」。日志里要把服务名、方法名一起打出来。
 
 ### `soft_inject` 做了什么、没做什么 [#soft_inject-做了什么没做什么]
 
@@ -3908,27 +4245,20 @@ impl Plugin for StartPlugin {    fn start(&mut self, _config_json: &str) -> Resu
 1. 先激活「硬依赖齐 **且** 软依赖也齐」的插件；
 2. 再激活「只有硬依赖齐」的插件。
 
-所以同一批加载时，只要 help 能正常起来，它一定先于 `/start` 和 `/plugins` 激活——
-不管文件名的字典序怎样。
-
 但它**不是**「提供方一定在」的保证：
 
-- 如果 help 自己卡在硬依赖上（停在 `Pending`），消费方的软依赖就不算齐，第二轮照样会激活
-  消费方。这时 `call_service` 会失败。
-- 如果 help 的 `start()` 报错（`Failed`），软依赖同样不阻塞消费方。
-- 运行期中提供方被卸载，消费方仍然处于 `Active`、不会重新跑 `start()`；之后的每次调用
-  都要自己处理错误。
+- 提供方卡在硬依赖上时，消费方的软依赖不算齐，第二轮照样激活消费方；
+- 提供方 `start()` 报错，软依赖同样不阻塞消费方；
+- 运行期中提供方被卸载，消费方仍处于 `Active`，之后的每次调用都要自己处理错误。
 
 一句话：**软依赖管排队，不管可用性**。所以上面的 `match` 分支不是客套，是必须的。
 
 ### 软依赖写服务名还是插件名？ [#软依赖写服务名还是插件名]
 
-`inject` / `soft_inject` 里的名字，宿主认两种：
-
 | 写法 | 宿主查什么 | 什么时候用 |
 | --- | --- | --- |
-| 服务名（`"fuyubot.help.commands"`） | 根作用域的 `Context` 里有没有这个名字 | 推荐。换一个插件提供同名服务，排序仍然成立 |
-| 插件名（`"fuyubot.help"`） | 有没有同名插件处于 `Active` | 只关心「那个插件」而不是「那个能力」时 |
+| 服务名（`"demo.notes"`） | 根作用域的 `Context` 里有没有这个名字 | 推荐。换一个插件提供同名服务，排序仍然成立 |
+| 插件名（`"demo.notes-provider"`） | 有没有同名插件处于 `Active` | 只关心「那个插件」而不是「那个能力」时 |
 
 ⚠️ 软依赖写**私有**服务名是排不上序的：兄弟插件看不到它，管理器在根作用域里也查不到。
 跨插件的能力一律走 `provide_service_shared`，依赖也写同一个服务名。
@@ -3937,18 +4267,19 @@ impl Plugin for StartPlugin {    fn start(&mut self, _config_json: &str) -> Resu
 
 | 场景 | 选择 |
 | --- | --- |
-| 没有 `/help` 也要能跑，只是少一条登记 | `soft_inject` + 运行期降级 |
+| 没有它也要能跑，只是少一个功能 | `soft_inject` + 运行期降级 |
 | 没有数据库 / 鉴权就完全没意义，宁可别启动 | `inject`（硬依赖） |
 | 只要求「它先起来」，不直接调它的服务 | `soft_inject` 写插件名 |
 | 能力名稳定、可能有替代提供者 | `soft_inject` 写服务名 |
 
 硬依赖的语义是**准入**：缺了就不激活，停在 `Pending` 等；如果提供它的插件已经 `Failed`，
-依赖方会被级联标成 `Failed`，而不是永远假装在等。但它也不传值——到了 `start()` 里，
-你仍然要自己 `get_service` / `call_service`。
+依赖方会被级联标成 `Failed`。但它也不传值——到了 `start()` 里，你仍然要自己
+`get_service` / `call_service`。
 
 依赖声明不要写进配置：manifest 是权威来源，`define_plugin!` 从 trait 自动生成。
 只有没有 `plugin_manifest` 的 v3 老插件，宿主才回退到 `[plugin.<名字>].inject` /
-`.soft_inject`（manifest 该侧非空时**覆盖**配置，不是合并）。见[插件总览](./index.mdx#声明依赖inject-与-soft_inject)。
+`.soft_inject`（manifest 该侧非空时**覆盖**配置，不是合并）。见
+[插件总览](./index.mdx#声明依赖inject-与-soft_inject)。
 
 ## 生命周期与所有权 [#生命周期与所有权]
 
@@ -3981,16 +4312,15 @@ C 侧的字段布局与调用示例见 [插件 ABI](./abi.mdx#服务的形状ser
 
 ## 排查 [#排查]
 
-- `/help` 里少了一条命令：先看 `start` / `manage` 的日志有没有
-  `… 已向 /help 注册命令：{"ok":true}`；失败那条会带 `call_service` 的错误。
 - 服务注册失败：宿主日志里有一行 `注册共享服务 … 失败: 命名服务 … 已经注册过了`
   （或「收到了空 vtable」）。
+- 调用失败：日志里要带服务名 + 方法名；`last_error` 会有具体原因。
 - 谁在跑、谁在等：`/plugins` 走宿主预置的 `fuyubot.host.plugins` 服务，会列出
   `active` / `pending`（带 `missing`）/ `failed`（带 `reason`）；`fuyubot status` 读的是
-  实例发布的同一份快照（摘要 + pending / failed 明细）。
+  实例发布的同一份快照。
 - 依赖声明从哪来：`plugin_manifest`。激活时日志里那行
-  `激活 <名字> v<版本>（硬依赖 N、软依赖 M）` 就是宿主实际读到的数量；`status` 里的
-  `pending` / `missing` 也是按它算的。别只改配置——manifest 非空时配置那份会被覆盖。
+  `激活 <名字> v<版本>（硬依赖 N、软依赖 M）` 就是宿主实际读到的数量。
+- 命令表 / 缓存是宿主预置服务，不会再出现「等 `/help` 先起来」这种依赖。
 
 ## 一页检查清单 [#一页检查清单]
 
@@ -4000,9 +4330,10 @@ C 侧的字段布局与调用示例见 [插件 ABI](./abi.mdx#服务的形状ser
 - [ ] 消费方对 `call_service` 的失败有降级分支，不 `unwrap`。
 - [ ] 可选联动用 `soft_inject`，并接受「提供方可能不在」；缺了就活不了才用 `inject`。
 - [ ] 方法里不做慢活、不阻塞调用方线程；也不让 panic 逃出 `extern "C"` 边界。
+- [ ] 命令登记走 `fuyubot.host.commands`，不需要再软依赖 `/help`。
 
 
-# 迁移到目录包 (/docs/plugin/migration)
+# 迁移指南 (/docs/plugin/migration)
 
 旧版本把原生插件平铺在 `plugins/*.dll`，现在推荐一个插件一个目录：
 
@@ -4096,6 +4427,17 @@ fuyubot plugin migrate
 
 `kind` 写 `python` 或 `js`，`entry` 指向入口脚本。脚本自己的 `pyproject.toml` /
 `package.json` 保持原样。
+
+## 命令表迁移（0.1.4） [#命令表迁移014]
+
+目录包迁移只改文件结构；命令表在 0.1.4 还换了一次主人：
+
+- 旧：`/help` 插件提供 `fuyubot.help.commands`，插件软依赖它；
+- 新：宿主提供 `fuyubot.host.commands`，`/help` 只读；
+- 旧服务名保留为兼容别名，但新代码应直接用新名字；
+- 旧登记默认 `role=user` / `scopes=private+group`，不需要补字段也能跑。
+
+完整对照和检查清单见[命令表与 /help](./command-table.mdx#从旧版迁移)。
 
 ## 验证 [#验证]
 
@@ -4802,6 +5144,21 @@ fn stop(&mut self) {
   但 `user_data` 指向的状态还是得自己释放。
 </Callout>
 
+## 登记命令 [#登记命令]
+
+命令表由宿主提供，在 `start()` 里登记即可，不需要等 `/help`、也不需要 `soft_inject`：
+
+```rust
+self.host.call_service(
+    "fuyubot.host.commands",
+    "register",
+    r#"{"name":"hello","description":"打个招呼","role":"user","scopes":["private","group"]}"#,
+)?;
+```
+
+`role` / `scopes` / `hidden` 的默认值与语义见[命令表与 /help](./command-table.mdx)。
+命令回调里回复用 `Command::reply_then`，不要自己拼 `sendMessage`（见[配置文件](../usage/config.mdx)）。
+
 ## 读 / 写配置 [#读--写配置]
 
 每个插件在 `fuyubot.toml` 的 `[plugin.<插件名>]` 下有自己的一段（见[配置文件](../usage/config.mdx)）。
@@ -5429,6 +5786,47 @@ let _guard = on_command(host, move |command| {
 三条提醒：等待靠**更新投递**；`UpdateFilter::to_json()` 里的 `update_type` 是**通道选择**
 （`event_type` 键），不参与负载匹配——详见[订阅与事件](./events.mdx)。
 
+## 8.1 缓存优先的对象读取 [#81-缓存优先的对象读取]
+
+`Simplify` 的 chat / user / 群 / 社区 / 成员读取默认走宿主缓存
+（`[cache]`，见[TDLib 对象缓存](./cache.mdx)）：
+
+<TypeTable
+  type={{
+    'chat(chat_id, timeout_ms)': {
+      description: '缓存优先；返回完整 Chat（含 positions / chat_lists）。未命中且离线时直接 None。',
+      type: 'Option<Value>',
+    },
+    'user(user_id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'basic_group(id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'supergroup(id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'community_full_info(id, timeout_ms)': { description: '缓存优先。', type: 'Option<Value>' },
+    'community(id)': {
+      description: '只读缓存：TDLib 没有 getCommunity，updateCommunity 是唯一来源。',
+      type: 'Option<Value>',
+    },
+    'chat_member(chat_id, user_id, timeout_ms)': {
+      description: '缓存优先，带 30 秒 TTL。',
+      type: 'Option<Value>',
+    },
+    'chats_in_list(list, limit)': {
+      description: '读独立 chat list 索引，返回精简的 chatListEntry（不含完整 Chat）。',
+      type: 'Vec<Value>',
+    },
+    'chats_in_folder(folder_id, limit)': {
+      description: 'chats_in_list 的 chatListFolder 便捷入口。',
+      type: 'Vec<Value>',
+    },
+    'chat_list_groups()': {
+      description: 'main / archive / 各 folder 的分组索引（带 list / count / folder 元数据）。',
+      type: 'Vec<Value>',
+    },
+  }}
+/>
+
+列表条目只带 `chat_id / order / is_pinned / title / type`；需要完整对象时再调 `chat()`。
+完整 Chat 永远包含完整的 `positions` / `chat_lists`，不会拿列表条目顶替。
+
 ## 9. 实体与下载 [#9-实体与下载]
 
 <TypeTable
@@ -5477,7 +5875,7 @@ TDLib 里 `user` **连 `is_bot` 都没有**（身份在 `user.type`），管理�
       type: 'bool',
     },
     'chat_member(chat_id, user_id, timeout_ms)': {
-      description: '原始 ChatMember；超时 / TDLib 报错都是 None。',
+      description: '原始 ChatMember；缓存优先，带 30 秒 TTL；超时 / TDLib 报错都是 None。',
       type: 'Option<Value>',
     },
     'is_admin_status(&status, right)': {
@@ -5711,8 +6109,11 @@ simplify.send_message_then(chat_id, &params, |result| match result {
 
 # 插件商店 (/docs/plugin/store)
 
-商店是 TUI 里的一个页面：拉一份静态 `index.json`，搜索、看详情、下载、校验、
-解压、安装、卸载。宿主和插件运行时不会联网。
+商店是 TUI 里的一个页面：拉一份静态 `index.json`（schema 2 的轻索引），搜索、看详情、
+下载、校验、解压、安装、换版本、回滚、卸载。宿主和插件运行时不会联网。
+
+不想开面板也可以先在浏览器里逛[插件目录页](https://catmoecircle.github.io/FuyuBot-plugins/)
+（与商店同一份索引，按宿主 ABI / 平台筛选版本）。
 
 ## 配置并打开 [#配置并打开]
 
@@ -5742,14 +6143,33 @@ fuyubot run --tui
 | `↑` `↓` / `k` `j` | 选择插件 |
 | `PgUp` / `PgDn` | 翻页 |
 | `Home` / `End` / `g` `G` | 跳到首尾 |
-| `Enter` | 安装选中的插件 |
+| `Enter` | 安装选中的版本（已装别的版本就是升级 / 降级） |
+| `v` | 选历史版本（ABI / 平台不兼容的版本会标红，选不了） |
+| `b` | 回滚到上一次换版本前的版本 |
 | `x` | 卸载选中的已安装插件 |
 | `/` | 输入过滤词（id / 名称 / 简介） |
 | `r` | 重新拉索引 |
 | `Esc` | 返回插件页 |
 
-安装完成后需要重启实例（Windows 不能替换已加载的 DLL）。已安装的插件再按 `Enter`
-会提示先卸载旧版本，商店不做原地覆盖。
+换版本会先把旧目录挪到 `plugins/.backup/<id>/`（脚本插件是
+`plugins/.backup/scripts/<id>/`），新版本落位失败会自动还原；`b` 把备份换回来。
+运行中的实例还持有 DLL，Windows 上必须先停实例：按 `Esc` 回插件页再按 `x`
+（商店页里的 `x` 是卸载，不是停止）。
+
+安装 / 换版本后需要重启实例（Windows 不能替换已加载的 DLL）。选中已安装的那个版本再按
+`Enter` 只会提示「已经装好了」，不会重复下载。
+
+商店选版本的规则（低版本宿主不会被迫装高 ABI 的新版本）：
+
+1. `latest` 未下架、ABI ≤ 本宿主、且有本平台（或 `any`）的包 → 用它；
+2. 否则按版本列表倒序找第一个同样条件的版本；
+3. 都不满足就报原因：需要升级 fuyubot / 没有本平台包 / 全被下架。
+
+想固定在某个历史版本，按 `v` 选它；想回到换版本之前，按 `b`。
+
+列表**只显示本机能装的插件**：ABI 比本宿主新的、没有本平台包的、全被下架的都不出现，
+被隐藏的数量显示在列表标题里（`索引 · 7（隐藏 2 个不兼容）`）。这样低版本宿主看到的就是
+真正能跑的那一批，而不是一屏点进去全报错的条目。
 
 没有配置索引地址时，商店页会显示「未配置」，不影响启动、加载和运行。
 
@@ -5776,69 +6196,123 @@ weather-plugin-1.2.0-android-x86_64.zip
 ## 维护一个索引（给商城 / 私有源） [#维护一个索引给商城--私有源]
 
 索引是一个静态 JSON，可以放在 GitHub Pages、对象存储或任何支持 HTTPS 的地方。
-最小形式：
+**schema 2** 把索引拆成「主文件 + 每插件分片」：主文件只放列表字段，选中插件时再拉
+`plugins/<id>.json` 拿描述和版本表。这样主文件不会随插件数量 / 版本数量膨胀。
+
+主文件：
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "plugins": [
     {
       "id": "com.example.weather",
       "name": "Weather",
       "summary": "天气查询",
-      "repo": "owner/weather",
       "latest": "1.2.0",
-      "versions": [
-        {
-          "version": "1.2.0",
-          "api": ">=0.1, <1.0",
-          "abi": 6,
-          "depends": [],
-          "yanked": false,
-          "assets": {
-            "windows-x86_64": {
-              "url": "https://github.com/owner/weather/releases/download/v1.2.0/weather-plugin-1.2.0-windows-x86_64.zip",
-              "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-              "size": 123456
-            }
-          }
-        }
-      ]
+      "detail": "plugins/com.example.weather.json",
+      "repo": "owner/weather",
+      "tags": ["weather"],
+      "abis": [5, 6],
+      "platform_min_abi": {
+        "windows-x86_64": 5,
+        "linux-x86_64": 5,
+        "any": 5
+      }
     }
   ]
 }
 ```
 
-字段：
+`plugins/com.example.weather.json`：
+
+```json
+{
+  "schema": 2,
+  "plugin": {
+    "id": "com.example.weather",
+    "name": "Weather",
+    "summary": "天气查询",
+    "repo": "owner/weather",
+    "license": "MIT",
+    "homepage": "https://example.com",
+    "latest": "1.2.0",
+    "versions": [
+      {
+        "version": "1.1.0",
+        "api": ">=0.1, <1.0",
+        "abi": 5,
+        "depends": [],
+        "yanked": false,
+        "assets": {
+          "windows-x86_64": {
+            "url": "https://github.com/owner/weather/releases/download/v1.1.0/weather-plugin-1.1.0-windows-x86_64.zip",
+            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "size": 123456
+          }
+        }
+      },
+      {
+        "version": "1.2.0",
+        "api": ">=0.1, <1.0",
+        "abi": 6,
+        "depends": [],
+        "yanked": false,
+        "assets": {
+          "windows-x86_64": {
+            "url": "https://github.com/owner/weather/releases/download/v1.2.0/weather-plugin-1.2.0-windows-x86_64.zip",
+            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "size": 123456
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+主文件字段：
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `schema` | 是 | 固定 `1` |
-| `plugins[].id` | 是 | 插件 id，必须与包内 `plugin.json` 一致 |
+| `schema` | 是 | 固定 `2`（客户端仍兼容 schema 1 的全量索引） |
+| `plugins[].id` | 是 | 插件 id，必须与分片、包内 `plugin.json` 一致 |
 | `plugins[].name` | 是 | 展示名 |
 | `plugins[].summary` | 否 | 列表里的一句话简介 |
-| `plugins[].description` | 否 | 详情页长描述 |
 | `plugins[].repo` | 否 | 源码仓库，`owner/repo` |
-| `plugins[].license` | 否 | 许可证 |
-| `plugins[].homepage` | 否 | 主页 |
 | `plugins[].tags` | 否 | 搜索标签 |
-| `plugins[].latest` | 否 | 最新版本号；缺省时取版本列表里最大的非 yanked 版本 |
+| `plugins[].latest` | 否 | 最新版本号；缺省时取分片里最大的非 yanked 版本 |
+| `plugins[].detail` | 是 | 分片地址，相对索引地址解析，约定为 `plugins/<id>.json` |
+| `plugins[].abis` | 否 | 摘要：非 yanked 版本出现过的 ABI（目录页筛选用，客户端可忽略） |
+| `plugins[].platform_min_abi` | 否 | 摘要：平台 → 该平台**可用**版本里最低的 ABI（`0` = 版本没声明 ABI）。商店用它判断本机能不能装，**不兼容的插件不会出现在列表里**；没有这份摘要时宁多勿漏 |
+
+分片字段：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `schema` | 是 | 固定 `2` |
+| `plugin` | 是 | 完整条目：`description` / `license` / `homepage` / `tags` / `latest` / `versions` |
+| `plugin.versions` | 是 | **按版本号升序**；客户端从后往前找最新的可用版本 |
 | `versions[].version` | 是 | 版本号，与包内 `plugin.json` 一致 |
 | `versions[].assets` | 是 | 平台 → 资产；平台键用 `windows-x86_64`、`android-aarch64` 这类写法，纯脚本用 `any` |
 | `versions[].assets[].url` | 是 | 只允许 `https://` |
 | `versions[].assets[].sha256` | 是 | 64 位小写十六进制；下载后必须匹配 |
 | `versions[].assets[].size` | 是 | 字节数 |
 | `versions[].api` | 否 | 兼容的宿主版本范围，仅展示 |
-| `versions[].abi` | 否 | 需要的 ABI；高于宿主的版本不会安装 |
+| `versions[].abi` | 否 | 需要的 ABI；高于宿主的版本不参与选择（会回退到旧版本） |
 | `versions[].depends` | 否 | 依赖的服务名，仅展示 |
 | `versions[].yanked` | 否 | `true` 表示撤回，不会再被选中 |
 
 索引本身也要满足：
 
-- 只通过 HTTPS 提供，索引大小不超过 2MB；
+- 只通过 HTTPS 提供；主文件不超过 8MB，单个分片不超过 1MB；
+- `detail` 只能是相对路径或 `https://`，不许带 `..`、不许明文 http；
 - 资产 URL 必须直接指向 zip，不能是 HTML 页面或会变的 `latest` 链接；
 - 每个版本的资产都要有正确的 `sha256`，否则商店会拒绝安装；
 - 一个 zip 只放一个插件。
+
+> 只认 schema 1 的旧宿主会把 schema 2 索引报成「schema 不支持」；升级宿主即可。
+> 商店会带 `If-None-Match` 复用本地缓存，网络断掉时也能用上一次的列表。
 
 ## 收录到官方商城 [#收录到官方商城]
 
@@ -5872,7 +6346,7 @@ versions:
 
 ## 安全与限制 [#安全与限制]
 
-- 只接受 HTTPS 的索引和资产；http、相对路径、`file://` 都会被拒绝；
+- 索引地址与资产 URL 只接受 HTTPS（http、`file://` 拒绝）；明细分片允许相对路径，但不许 `..`；
 - 下载后强制校验 sha256，失败即停止，不会落盘；
 - 解压时拒绝 `..`、绝对路径、符号链接、大小写冲突、Windows 保留名；
 - 单包上限 50MB，解压后 200MB，最多 2000 个文件；
@@ -7151,8 +7625,12 @@ demo/
 | `[telegram].api_id` | `0` | TDLib api_id（到 [my.telegram.org](https://my.telegram.org) 申请）。不是秘密；`0` = 没配，`run` 会问 |
 | `[telegram].data_dir` | `data` | TDLib 的数据目录：database 与 files **都**指它。相对项目根 |
 | `[command].prefix` | bot `["/"]`<br/>user `["."]` | 命令头**数组**，可配多个（每项单个字符，不能是字母 / 数字 / 空白）。不写按账号默认：bot 认 `/`、user 认 `.`。写了就**整套替换**（bot 不再自动保留 `/`）。user 账户下 `/` 即使写进数组也始终不生效 |
-| `[command].whitelist` | `[]` | 额外允许触发命令的用户 id（数字）。user 账户自己发的始终触发；bot 账户非空时只响应表里的用户 |
+| `[command].whitelist` | `[]` | 额外允许触发命令的用户 id（数字）。user 账户自己发的始终触发；bot 账户非空时只响应表里的用户。**主人 / 全局管理员不受它影响** |
 | `[command].whitelist_only` | `true` | user 账户的**白名单模式**：只响应自己与 `whitelist` 里的用户。改成 `false` 可关，但 **⚠️ 不建议**——关掉后任何人都能触发插件；bot 不受它影响 |
+| `[roles].owners` | `[]` | 主人用户 id。最高权限；列表为空时 user 账户默认自己是主人，配置后按列表来（可换成别人）。bot 账户必须显式配置。主人绕过 `[command].whitelist` |
+| `[roles].admins` | `[]` | 全局管理员用户 id。能用 `admin` 级命令，但不能用 `owner` 级；群里的 Telegram 管理员**不**自动成为全局管理员 |
+| `[cache].enabled` | `true` | 是否启用宿主 TDLib 对象缓存；关掉后 `Simplify` 直连 TDLib，连接状态判断仍保留 |
+| `[cache].capacity` | `100` | **每种类型**（chat / user / basic_group / supergroup / chat_member / community / community_full_info）的条数上限，LRU 淘汰 |
 | `[plugins].dir` | `plugins` | `run` 从这里加载插件（动态库 + `scripts/` 下的脚本插件）；`--plugin-dir` 覆盖它 |
 | `[plugins].log_level` | `info` | 插件日志的最低级别：error / warn / info / debug / trace。排查插件时调成 `"debug"`；**写错级别名会报错**。运行中也可以在 `run --tui` 的日志页按 `Tab` 聚焦工作区后按 `l` 临时调整（只对本次运行生效） |
 | `[tdlib].path` | 空 | 留空 = 按四级优先级自动找 tdjson；指定时给 tdjson 的**目录**或文件路径 |
@@ -7188,9 +7666,51 @@ whitelist_only = false   # ⚠️ 不建议：关掉后任何人都能触发插�
 处理，回复走编辑）。**不建议关闭**：任何人发来的命令都会进插件，user 账户尤其容易被滥用。
 bot 账户不受这个开关影响；`whitelist` 非空时 bot 仍只响应表里的用户。
 
+**主人 / 全局管理员始终放行**：在 `[roles].owners` / `.admins` 里的人不受
+`[command].whitelist` 或 `whitelist_only` 影响——即使不在白名单里、即使白名单模式开着，
+他们发命令也能进插件。bot 账户额外排除自己的出站消息，这一条对主人也成立。
+
 插件回复命令统一走 `Command::reply` / `Command::reply_then`（其它语言走
 `fuyubot.host.command` service）：宿主决定发新消息还是编辑原命令消息——bot 账户 / user 账户里
 白名单用户触发 → `sendMessage` + `reply_to`；user 账户**自己**触发 → 编辑原命令消息。
+
+## 角色：主人与管理员 [#角色主人与管理员]
+
+`[command].whitelist` 决定**能不能触发**；`[roles]` 决定**触发后能做什么**。两者分开：
+
+```toml
+[roles]
+owners = [123456789]   # 主人：最高权限
+admins = [987654321]   # 全局管理员
+```
+
+- 主人 / 管理员**绕过** `whitelist`，始终能触发；
+- bot 账户没有隐式主人，`owners` 为空就是没有主人；
+- user 账户在 `owners` 为空时默认自己是主人；一旦配置了 `owners`，就完全按列表来——
+  自己不在列表里就不再是主人，可以换成别人；
+- 群里的 Telegram 管理员是**会话角色**，由宿主现查，不会因为写进这里就变成全局管理员。
+
+> 改 `owners` 时先把自己 id 写进去：一旦列表非空，user 账户自己就不再自动是主人；
+> 忘记写自己会丢失 `owner` 级命令，普通命令不受影响。
+
+命令的 `role` / `scopes` 元数据见[命令表与 /help](../plugin/command-table.mdx)。
+
+## TDLib 对象缓存 [#tdlib-对象缓存]
+
+宿主会缓存 chat / user / 群 / 社区 / 成员，`Simplify` 默认缓存优先：
+
+```toml
+[cache]
+enabled = true
+capacity = 100   # 每种类型，不是总数
+```
+
+- LRU 淘汰；chat list 是独立索引，不占这 100 条配额；
+- `chat_member` 带 30 秒 TTL；
+- 离线且缓存未命中时直接返回，不再等 TDLib 超时；
+- 关掉 `enabled` 只是不读写缓存，不会改变命令 / 权限语义。
+
+详见 [TDLib 对象缓存](../plugin/cache.mdx)。
 
 ## 插件自己的配置段 [#插件自己的配置段]
 
@@ -7261,24 +7781,33 @@ name = "mybot"
 account_type = "bot"
 api_id = 12345
 data_dir = "data"
-api_hash = ""      # run 首次问过之后会把明文写回这里（见下）
+api_hash = ""       # 首次 run 后自动写入
+
+[roles]
+owners = []         # 主人 id；为空时 user 账户默认自己是主人
+admins = []         # 全局管理员 id
+
+[cache]
+enabled = true
+capacity = 100      # 每种类型，不是总数
 
 [command]
-# prefix = ["/", "."]  # 命令头数组；不写按账号默认（bot "/"、user "."），写了整套替换
-whitelist = []     # 额外允许触发命令的用户 id；自己发的始终触发
-whitelist_only = true   # user 账户白名单模式；⚠️ 不建议关闭（false = 任何人都能触发）
+# prefix = ["/"]    # 不写按账号默认；写了整套替换
+whitelist = []      # 额外允许触发命令的用户 id
+whitelist_only = true   # ⚠️ 不建议关闭；false = 任何人都能触发
 
 [plugins]
 dir = "plugins"
-log_level = "info"   # 排查插件时调成 "debug" / "trace"
+log_level = "info"
+registry_url = "https://catmoecircle.github.io/FuyuBot-plugins/index.json"
 
 [tdlib]
-path = ""          # 留空 = 按加载优先级自动找 tdjson
+path = ""           # 留空自动找 tdjson
 log_verbosity = 1
 ```
 
 <Callout type="warn">
-  **凭据的边界**：`api_id` 与 `api_hash` 是**例外**——它们**每次冷启动**都要随 `setTdlibParameters` 发给 TDLib（session 还有效也一样），不记住就得每次手输，所以 `fuyubot run` 交互式问过之后会把它们**明文写回** `[telegram]` 段。这意味着这份文件从此带着你的应用密钥：**别提交进版本库、别整份发给别人**。不想落盘就设 `TG_API_ID` / `TG_API_HASH`（环境变量优先，且不会被写回）。Bot Token、手机号、验证码、两步验证密码仍然**一律不落盘**，只认环境变量或交互输入（连日志也不许出现）。session 由 TDLib 自己落在 `data_dir`，配置里不记任何登录态。
+  **凭据**：`api_id` / `api_hash` 每次冷启动都要随 `setTdlibParameters` 发出；`fuyubot run` 问过之后会把 `api_hash` **明文写回** `[telegram]`。不想落盘就用 `TG_API_ID` / `TG_API_HASH`。Bot Token、手机号、验证码、两步验证密码仍然只走环境变量或交互输入。session 由 TDLib 落在 `data_dir`。
 </Callout>
 
 ## 几条约定 [#几条约定]
@@ -7385,6 +7914,15 @@ $env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
   [FuyuBot-Script Releases](https://github.com/CatMoeCircle/FuyuBot-Script/releases) 下
   `fuyubot-script-<OS>-<平台>.zip`，解压后把 `plugins/fuyubot.script/` 放进插件目录。
 
+## Android：用官方 App [#android用官方-app]
+
+Android 上**推荐直接用图形客户端** [FuyuBot-for-Android](https://github.com/CatMoeCircle/FuyuBot-for-Android/releases)
+（fuyuTD，Kotlin + Compose，内核与本仓同源），到 Release 下对应 ABI 的
+`fuyubot-<版本>-arm64-v8a.apk` / `fuyubot-<版本>-x86_64.apk` 安装即可。
+
+它负责初始化目录、登录、启停和日志查看，不需要在 Termux 里手敲 CLI，也不用自己配 TDLib。
+桌面 / 服务器继续用下面的 zip 包。
+
 <Callout type="warn">
   脚本插件**只装它本身还不够**：Python 脚本要 [uv](https://docs.astral.sh/uv/)，
   JS / TS 脚本要 [bun](https://bun.sh)（≥ 1.3.1）。这两个运行时不在发行包里、
@@ -7442,12 +7980,28 @@ fuyubot 0.1.0
 但每次启动都要发给 TDLib，所以 `run` 首次问过之后会把明文写回 `fuyubot.toml`（也可以事先设环境变量 `TG_API_HASH`
 让它一次都不问）——那份文件要当密钥看待，别提交进版本库（见 [配置文件](./config.mdx)）。
 
-## 跑起来 [#跑起来]
+## 跑起来（推荐：TUI） [#跑起来推荐tui]
 
 ```powershell
-# 前台：会问 api_id / api_hash（或读 TG_API_ID / TG_API_HASH），然后走登录
-.\fuyubot.exe run --config demo\fuyubot.toml
+# 推荐：终端操作面板；首次 s 会自动检查登录
+.\fuyubot.exe run --tui --config demo\fuyubot.toml
 ```
+
+也可以先 `cd demo`，再直接运行 `..\\fuyubot.exe`（不带子命令 = 同一个面板，全默认参数）。
+
+- **首次登录**：按 `s` 会自动检查登录；缺 `api_id` / `api_hash` 先弹两步输入，
+  随后弹 bot token / 手机号 / 验证码输入框。不用先跑 `fuyubot login`。
+- **日常启停**：`s` 启动、`x` 再按 `y` 停止；`L` 只登录、不启动。
+- **日志 / 配置 / 商店**：左侧导航，商店在插件下面。
+- 面板本身不占实例锁；启动后可以退出面板，实例继续在后台跑。
+
+> **服务器 / CI / 无终端**再用手敲的 `run`（或 `run --background`）：
+>
+> ```powershell
+> .\\fuyubot.exe run --config demo\\fuyubot.toml
+> ```
+>
+> 无终端下没有 stdin，登录要提前用 `fuyubot login` 或环境变量准备好。
 
 <Callout type="warn">
   真账号的最后一环**没有端到端验过**：`run` 会问凭据、驱动授权状态机、`getMe` 打印账户，然后才开分发；
@@ -7585,6 +8139,10 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir demo-plugins
 
 # 运行与实例管理 (/docs/usage/run)
 
+> **桌面用户推荐先看[操作面板](#操作面板tui)**：直接运行 `fuyubot`（不带子命令）或
+> `run --tui`，登录、启停、日志、配置、商店都在一个界面里。本页的 `run` 主要给
+> 服务器 / CI / 无终端场景。
+
 ## 一个目录一个实例 [#一个目录一个实例]
 
 实例状态与运行期控制放在 `<项目根>/.fuyubot/` 下，**每件事各占一个文件**：
@@ -7600,7 +8158,7 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir demo-plugins
 - 陈旧的 `lock` **不用手工清理**：拿锁时会顺手删掉上一个实例的 `status` / `stop` / `log-level`。
 - `--replay` **不占锁、不发布状态**：离线开发路径不该和跑着的实例互斥。
 
-## 前台运行 [#前台运行]
+## 无终端：前台运行 [#无终端前台运行]
 
 ```powershell
 .\fuyubot.exe run --config demo\fuyubot.toml
@@ -7643,8 +8201,15 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir demo-plugins
 ## 操作面板（`--tui`） [#操作面板--tui]
 
 ```powershell
+.\fuyubot.exe                 # 不带子命令 = 直接开面板（双击 exe 就是它）
 .\fuyubot.exe run --tui --config demo\fuyubot.toml
 ```
+
+两个入口是同一个面板：**不带子命令**时全走默认值（配置文件默认 `fuyubot.toml`），
+需要自定配置 / 参数才用 `run --tui`。面板需要真终端，非 TTY 下会报错而不是画出半屏。
+
+首次缺 `api_id` / `api_hash` 时，按 `s`（启动）或 `L`（只登录）会先弹两步输入框；
+填完明文写回 `[telegram]`，再继续登录 / 启动。已经在配置或环境变量里的不会重复问。
 
 打开的是**操作面板**，不是前台 bot：顶部版本栏（`[fuyubot - v…]`；实例运行中才显示状态，
 没跑时只显示刷新时间）、左侧导航、中央工作区、底部两行（当前可用操作 / 资源占用）。
@@ -7661,11 +8226,12 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir demo-plugins
 | `↑` / `↓`、`j` / `k` | 导航焦点：切页；工作区焦点：滚动日志 / 选择配置项 / 移动日志选择 |
 | `←` / `→` | 切换顶部标签页（窄屏横向导航；工作区焦点也生效） |
 | `h` / `l` | 导航焦点：上一页 / 下一页 |
-| `1`–`5` | 直接跳到概览 / 插件 / 日志 / 配置 / 帮助 |
+| `1`–`6` | 直接跳到概览 / 日志 / 配置 / 插件 / 商店 / 帮助 |
 | `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同）；插件页：开关选中项 |
 | `Space` | 插件页 + 工作区焦点：启用 / 禁用选中项（目录挪进 `plugins/.disabled/`，旧形态 dll 加 `.disable` 后缀） |
 | `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
-| `s` | 启动 bot（派生 `run --background`，带上面板拿到的 `--api-id` / `--log-level` 等参数） |
+| `s` | 启动 bot：先自动检查登录，缺登录会弹登录框，成功后自动继续（派生 `run --background`，带上面板拿到的 `--api-id` / `--log-level` 等参数） |
+| `L`（大写） | 显式登录：只走登录、不启动实例；通常直接按 `s` 即可 |
 | `x` → `y` | 停止 bot（`y` 是确认；`.fuyubot/stop` 走插件的 `plugin_stop`） |
 | `r` | 立刻刷新状态 / 插件 / 日志 / 配置 |
 | `l` | 日志页 + 工作区焦点：调整运行中实例的日志级别（下一圈生效） |
@@ -7685,8 +8251,9 @@ fuyubot run --replay examples/replay/new_message.json --plugin-dir demo-plugins
 （Windows 上库被占用时改名还会直接失败，面板会报错；先 `x` 停止再按 `Space`）。
 加载器只扫启用态的路径，所以没有第二份「禁用清单」要跟插件目录同步。
 
-面板**不占实例锁、不加载插件、不接 TDLib**——TDLib 的数据库同一时刻只能一个进程打开。
-它读 `.fuyubot/status`、配置、插件目录与 `logs/fuyubot.log`；启停都派生子进程，
+面板**不占实例锁、不加载插件**；平时也不接 TDLib——TDLib 的数据库同一时刻只能一个进程打开。
+唯一例外是 `s` / `L` 的登录探测：它跑完立刻关掉，再派生子进程。
+面板读 `.fuyubot/status`、配置、插件目录与 `logs/fuyubot.log`；启停都派生子进程，
 和手敲命令走同一条路，所以看到的就是真正在跑的那个实例。
 
 日志级别是**运行期**的：配置里的 `[plugins].log_level` 决定启动值，日志页按 `l` 选的值只对

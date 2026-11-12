@@ -1,7 +1,7 @@
 # ABI v5 → v6 迁移 (/docs/plugin/abi-v6)
 
-从 0.1.4 起，插件之间的服务调用由宿主转交。最直接的变化：像 `/help` 这样的服务
-终于能可靠地知道**是哪個插件**在做登记——包括调用方在自己的线程上发起的情况。
+从 0.1.4 起，插件之间的服务调用由宿主转交。最直接的变化：像命令表这样的服务
+终于能可靠地知道**是哪个插件**在做登记——包括调用方在自己的线程上发起的情况。
 
 ## 你要做什么 [#你要做什么]
 
@@ -23,13 +23,14 @@ cargo build --release
 
 ```rust
 host.call_service(
-    "fuyubot.help.commands",
+    "fuyubot.host.commands",
     "register",
-    r#"{"name":"mycmd","description":"我的命令"}"#,
+    r#"{"name":"mycmd","description":"我的命令","role":"user","scopes":["private","group"]}"#,
 )?;
 ```
 
 不需要传插件名，也传不了别人的名字——身份由宿主判定。
+命令表现在由宿主提供；旧的 `fuyubot.help.commands` 仍保留为兼容别名。
 
 ## 提供方：能准确拿到调用方 [#提供方能准确拿到调用方]
 
@@ -65,7 +66,7 @@ let caller = host.current_plugin();   // Some("fuyubot.manage") / None（宿主�
 建议改走同一个入口：
 
 ```c
-const char *reply = host->call_service(host->host_ctx, "fuyubot.help.commands",
+const char *reply = host->call_service(host->host_ctx, "fuyubot.host.commands",
                                        "register", "{\"name\":\"mycmd\"}");
 if (reply == NULL) { /* 失败 */ }
 ```

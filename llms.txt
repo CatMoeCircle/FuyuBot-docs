@@ -11,13 +11,15 @@
 - 插件开发: 用 Rust / C / C++ / Go 写原生插件（一个 cdylib）
   - [插件总览](/docs/plugin): 一个 cdylib = 一个插件：七个导出符号、依赖声明与最小闭环
   - [插件分发包](/docs/plugin/bundle): 目录结构、plugin.json 字段，以及安装到机器人里的方法
-  - [插件商店](/docs/plugin/store): 配置索引、在 TUI 里安装插件，以及自己维护一个索引
-  - [迁移到目录包](/docs/plugin/migration): 把平铺的 dll 和旧脚本插件改成 plugins/<id>/ 结构
+  - [插件商店](/docs/plugin/store): 配置索引、在 TUI 里安装 / 换版本 / 回滚插件，以及自己维护一个索引
+  - [迁移指南](/docs/plugin/migration): 目录包迁移（平铺 dll → plugins/<id>/）与 0.1.4 命令表迁移
   - [Rust 插件](/docs/plugin/rust): 依赖 fuyubot-abi，实现 Plugin trait + define_plugin! 的最小写法
   - [C 与 C++ 插件](/docs/plugin/native): 同一份头文件、extern "C"、用你自己的工具链编译
   - [Go 插件](/docs/plugin/go): cgo 编 c-shared，逻辑用 Go 写、ABI 用一层 C 薄壳
   - [订阅与事件](/docs/plugin/events): on/off/emit、过滤器、双通道与归属
-  - [插件联动](/docs/plugin/linkage): 用共享服务互相调用、用软依赖排好启动顺序——以内置 /help 的命令注册为例
+  - [命令表与 /help](/docs/plugin/command-table): 命令登记在宿主，/help 只读；role / scopes / hidden 控制谁能看、在哪看
+  - [TDLib 对象缓存](/docs/plugin/cache): 宿主缓存 chat / user / 群 / 社区 / 成员，Simplify 默认缓存优先
+  - [插件联动](/docs/plugin/linkage): 用共享服务互相调用、用软依赖排好启动顺序
   - [调用 TDLib](/docs/plugin/tdlib): td_invoke、请求号与 response 通道、便捷封装
   - [Simplify 封装](/docs/plugin/simplify): fuyubot-simplify 的 API 参考：按功能范围分组的参数结构体、链式设置器与返回值
   - [外部仓库插件](/docs/plugin/external): 不进本体 workspace 的原生插件，怎么接依赖、怎么拿插件目录

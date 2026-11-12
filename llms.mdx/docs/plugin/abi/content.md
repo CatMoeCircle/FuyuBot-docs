@@ -149,7 +149,8 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
   （直接报 `ServiceNameExists`）。
 - 插件卸载时，它那层作用域连同里面的服务一起消失。
 
-跨插件联动的端到端示例（`/help` 的命令注册表）见[插件联动](./linkage.mdx)。
+跨插件联动的端到端示例（共享服务 `demo.notes`）见[插件联动](./linkage.mdx)；
+命令表本身是宿主预置服务，见[命令表与 /help](./command-table.mdx)。
 
 两条形状上的硬要求：
 
@@ -190,7 +191,7 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 `HostApi::call_service` 已经自动把它拼进错误里，Rust 侧直接 `?` 就能看到：
 
 ```text
-服务调用失败：fuyubot.help.commands.register: 没有名为 fuyubot.help.commands 的 service
+服务调用失败：fuyubot.host.commands.register: 没有名为 fuyubot.host.commands 的 service
 ```
 
 > `NULL` 与空串的分工是 v6 才明确的（v5 时两者都当「成功但没有输出」）。
@@ -202,11 +203,12 @@ C++ 里必须把它们放进 `extern "C"` 块，否则名字被 mangle，宿主 
 
 ```rust
 let catalog = host.list_services();   // JSON 数组文本
-// [{"name":"fuyubot.help.commands","version":1,
-//   "methods":["register","list"],"plugin":"fuyubot.help"}, …]
+// [{"name":"fuyubot.host.commands","version":1,
+//   "methods":["register","unregister","list","role"],"plugin":null}, …]
 ```
 
-`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity` / `.command`）。
+`plugin` 为 `null` 的是宿主预置服务（`fuyubot.host.scope` / `.plugins` / `.identity` /
+`.command` / `.commands` / `.cache`）。
 清单从**调用方**的作用域链算，所以自己的私有服务也在里面；只给元数据，不给 vtable 指针。
 
 C / Go 侧**同样走这一步**：`host->call_service(host_ctx, name, method, input_json)`。
@@ -227,14 +229,14 @@ if let Some(name) = caller {
 
 取值规则（v6）：**正在被别人调用时就是调用方**；其余时候是宿主最后把控制权交给的那个插件
 （在插件自己起的线程上则是 `NULL`）。身份由宿主判定，插件自报不了，也拿不到别人的。
-`/help` 的命令归属就是这么来的。
+命令能力表的归属就是这么来的。
 
 v5 只有第二级，所以「插件在自己起的线程上调服务」时归属会静默变成 `null`；
 这条差异以及 v5 → v6 的完整清单见 [ABI v5 → v6 迁移](./abi-v6)。
 
 ### 宿主预置的服务 [#宿主预置的服务]
 
-宿主在根上预置了四个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
+宿主在根上预置了六个服务，任何插件沿父链都看得见，直接 `call_service` 就行：
 
 | 服务名 | 方法 | 协议 |
 | --- | --- | --- |
@@ -242,10 +244,23 @@ v5 只有第二级，所以「插件在自己起的线程上调服务」时归�
 | `fuyubot.host.identity` | `usernames` | 无参 → `["FuyuBot"]`，自身全部活跃用户名（`usernames.active_usernames`）；没登录 / 没接 TDLib 时是 `[]` |
 | | `me` | 无参 → `getMe` 的原始 `user` JSON；没登录时 `null` |
 | `fuyubot.host.command` | `reply` | `{"chat_id":…,"message_id":…,"timeout_ms":…,"payload":<sendMessage 参数>}` → TDLib 的最终 `Message`；失败 `{"@type":"error",…}`。宿主决定发新消息还是编辑原命令消息 |
+| `fuyubot.host.commands` | `register` | `{name, description?, role?, scopes?, hidden?}` → `{ok:true, name, plugin}`；失败 `{error}`。归属由宿主判定 |
+| | `unregister` | `{name}` → `{ok:true}`；只能注销自己的 |
+| | `list` | 无参 → 扁平数组 `[{name, description, plugin, role, scopes, hidden}]` |
+| | `role` | `{user_id}` → `{global}`（`user` / `admin` / `owner`），纯内存 |
+| `fuyubot.host.cache` | `get` | `{kind, id, user_id?, ttl_ms?}` → `{value, online}` |
+| | `put` | `{kind, id, user_id?, value}` → `{ok:true}` |
+| | `list_chats` | `{list, limit?}` → `{chats:[chatListEntry…]}` |
+| | `list_groups` | 无参 → `{groups:[chatListGroup…]}` |
+| | `chat_folders` | 无参 → `{value: updateChatFolders 快照}` |
+| | `stats` / `clear` | 无参 → 诊断 / 清空 |
 | `fuyubot.host.scope` | `scope_create` | `{}` → `{"handle":N}`，开一个子作用域 |
 | | `scope_enter` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
 | | `scope_leave` | 忽略入参；离开当前作用域 |
 | | `scope_drop` | `{"handle":N}`；成功 `null`，失败 `{"error":"…"}` |
+
+命名服务表（`context.names()`）里还能看到 `fuyubot.host.commands` / `.cache`；
+`fuyubot.help.commands` 是 `.commands` 的兼容别名，一个版本后移除。
 
 `fuyubot.host.plugins` 与 ABI 第 8 项 `list_plugins` 同源，只是多一条走服务这条路
 （内置 `/plugins` 插件就是这么读「进程里真在跑的」插件清单的）。`fuyubot.host.identity`
@@ -311,7 +326,7 @@ bot 与用户号挑不同反应方法 / Markdown → entities / 富消息本地�
 详见[「simplify 操作表」](#simplify-操作表)。
 
 **v5 的尾部追加**：`current_plugin`（第 23 项）。服务方法终于能问出「现在是谁在调我」，
-拿到宿主判定的**权威**插件名——`/help` 的命令归属不再需要入参自报。当时是**纯追加、不改语义**，
+拿到宿主判定的**权威**插件名——命令归属不再需要入参自报。当时是**纯追加、不改语义**，
 靠 `size` 协商，所以没跳版本号。
 
 **版本 6 的改动**：尾部追加 `call_service`（第 24 项），**服务调用改成经过宿主**。

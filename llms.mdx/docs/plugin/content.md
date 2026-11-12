@@ -183,8 +183,8 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 
 排查看 `fuyubot status`：`pending` 那一栏会列出插件名**和它还缺哪些**。
 
-完整实例见[插件联动](./linkage.mdx)：内置 `/help` 用共享服务暴露命令表，
-`fuyubot.start` 和 `fuyubot.manage` 用 `soft_inject` + `call_service` 把自己的命令登记进去。
+完整实例见[插件联动](./linkage.mdx)。命令表是宿主预置的 `fuyubot.host.commands`，
+插件用 `call_service` 登记，不需要再 `soft_inject` 等 `/help`；细节见[命令表与 /help](./command-table.mdx)。
 
 ## 按语言看 [#按语言看]
 
@@ -198,6 +198,8 @@ manifest 里能声明两个列表，它们决定**宿主什么时候让你跑**�
 
 <Cards>
   <Card title="订阅与事件" href="/docs/plugin/events/" />
+  <Card title="命令表与 /help" href="/docs/plugin/command-table/" />
+  <Card title="TDLib 对象缓存" href="/docs/plugin/cache/" />
   <Card title="调用 TDLib" href="/docs/plugin/tdlib/" />
   <Card title="简化封装" href="/docs/plugin/simplify/" />
   <Card title="外部仓库插件" href="/docs/plugin/external/" />

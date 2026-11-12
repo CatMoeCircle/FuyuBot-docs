@@ -2,8 +2,14 @@
 
 跑框架的那个 CLI。它就是运行时包里的 `fuyubot(.exe)`（从源码跑时是 `target/{debug,release}/fuyubot`）。
 
+> 桌面 / 本机**推荐直接开 TUI**（`fuyubot` 不带子命令，或 `run --tui`）：
+> 登录、启停、日志、配置、插件和商店都在面板里。`run` / `--background` 主要留给
+> 服务器、CI 和无终端场景。
+
 ```text
-fuyubot <COMMAND>
+fuyubot [COMMAND]
+
+不带 COMMAND = 直接开终端操作面板（与 `run --tui` 同一个入口）
 
 Commands:
   init    初始化一个 fuyubot 项目（生成 fuyubot.toml 与插件目录）
@@ -16,10 +22,14 @@ Commands:
   plugin  插件管理
 ```
 
+**不带子命令**（`./fuyubot`、双击 exe）开的是[终端操作面板](../usage/run.mdx#操作面板)，
+参数全走默认值，等价于 `fuyubot run --tui`；它需要真终端。`run` 及其全部开关
+（`--background` / `--replay` / `--no-tdlib` …）行为不变。
+
 ## `init` [#init]
 
 ```text
-fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
+fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>] [--api-hash <HASH>]
 ```
 
 | 参数 | 默认 | 说明 |
@@ -27,12 +37,13 @@ fuyubot init [--dir <DIR>] [--name <NAME>] [--api-id <API_ID>]
 | `--dir` | `.` | 项目目录，生成 `<dir>/fuyubot.toml` 与 `<dir>/plugins/` |
 | `--name` | `fuyubot` | 只影响配置里的 `name` |
 | `--api-id` | `0` | TDLib api_id（不是秘密，可以写进配置）；`0` = 没配，`run` 会问 |
+| `--api-hash` | 空 | TDLib api_hash；给了就明文写进 `[telegram].api_hash`，不给等首次 `run` / 面板问 |
 
-`init` **只写 `api_id`**：`api_hash` 这个命令连参数都不收（init 阶段手上不该有它）——`run` 首次会问，问完写回配置。
+`init` 会把给了的 `api_id` / `api_hash` 写进配置；`api_hash` 是明文，和 `run` 首次问完写回是同一种存储。
 重复 `init` 会被挡住（不覆盖你改过的配置）。
 
 ```text
-$ fuyubot init --dir demo --name mybot --api-id 12345
+$ fuyubot init --dir demo --name mybot --api-id 12345 --api-hash 0123456789abcdef0123456789abcdef
 已生成 demo\fuyubot.toml
 插件目录：demo\plugins
 下一步：装 fuyubot-script 插件，或按文档站示例自己写插件（plugins/ 或 plugins/scripts/）
@@ -81,7 +92,7 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 ```
 
 布局固定为四段：**顶部版本栏**（`[fuyubot - v…]`；实例运行中才显示状态，没跑时只显示刷新时间）、
-**左侧导航**（概览 / 插件 / 日志 / 配置 / 帮助）、**中央工作区**、**底部两行**
+**左侧导航**（概览 / 日志 / 配置 / 插件 / 商店 / 帮助）、**中央工作区**、**底部两行**
 （第一行是当前可用操作，第二行是 CPU / 内存 / 运行时长 / 加载插件数 / 日志级别 / PID）。
 顶部和底部**不铺背景色**，只靠边框高亮表示焦点。
 
@@ -100,11 +111,11 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 | `↑` / `↓`、`j` / `k` | 导航焦点：切换页面；工作区焦点：滚动日志 / 选择配置项 / 移动日志选择 |
 | `←` / `→` | 切换顶部标签页（窄屏横向导航；工作区焦点也生效） |
 | `h` / `l` | 导航焦点：上一页 / 下一页 |
-| `1`–`5` | 直接跳到概览 / 插件 / 日志 / 配置 / 帮助 |
+| `1`–`6` | 直接跳到概览 / 日志 / 配置 / 插件 / 商店 / 帮助 |
 | `Enter` | 日志页：进入日志选择模式；配置页：编辑选中的配置项（`e` 同） |
 | `y` | 日志选择模式：复制选中行（TDLib Update 复制完整 JSON） |
-| `s` | 启动 bot（等价于 `fuyubot run --background`） |
-| `L`（大写） | **登录**（等价于 `fuyubot login`）：按授权状态弹输入框（bot token / 手机号 / 验证码 / 两步验证密码），`Enter` 提交、`Esc` 取消。只在**实例停着**时可用 |
+| `s` | 启动 bot：先自动检查登录状态，缺登录会弹登录框，成功后自动继续启动（等价于 `fuyubot run --background`）。`--no-login` / `--no-tdlib` 跳过检查 |
+| `L`（大写） | **显式登录**：按授权状态弹输入框（bot token / 手机号 / 验证码 / 两步验证密码），`Enter` 提交、`Esc` 取消。通常直接按 `s` 即可，`L` 用于只想登录、不想启动时。只在**实例停着**时可用 |
 | `x` → `y` | 停止 bot（`y` 是确认框里的确认；走 `.fuyubot/stop` 的优雅停止） |
 | `r` | 刷新状态 / 插件 / 日志 / 配置 |
 | `l` | 日志页 + 工作区焦点：调整日志级别（error / warn / info / debug / trace） |
@@ -118,15 +129,17 @@ fuyubot run [--config <CONFIG>] [--plugin-dir <PLUGIN_DIR>] [--api-id <ID>] [--n
 所以它只读 `.fuyubot/status`、配置、插件目录和 `logs/fuyubot.log`。启停都派生子进程，
 和手敲命令走同一条路——面板里看到的就是真正在跑的那个实例。
 
-唯一的例外是**登录**（`L`）：它在面板进程里跑一次和 `fuyubot login` 完全相同的流程
+唯一的例外是**登录探测**：`s` 启动前会自动跑一次，缺登录时弹框；`L` 是手动触发。
+两者都在面板进程里跑一次和 `fuyubot login` 完全相同的流程
 （同一份 `fuyubot-app` 的 `App::boot` + `login`），把授权状态机的提问弹成输入框，结束后
 立刻关掉 TDLib 交还目录。因此：
 
-- **只在实例停着时可用**——跑着的时候按 `L` 只会提示你先停止；
-- `api_id` / `api_hash` 要事先在环境变量（`TG_API_ID` / `TG_API_HASH`）或 `fuyubot.toml` 里准备好，
-  面板不会再问这两项（那是 `fuyubot login` 的事）；
+- **只在实例停着时可用**——跑着的时候按 `s` / `L` 只会提示你先停止；
+- 首次缺 `api_id` / `api_hash` 时，`s` / `L` 会先弹两步输入框（明文写回 `[telegram]`）；
+  已在环境变量或 `fuyubot.toml` 里就不用再填；
 - 密码框会打码，验证码不打码；`Esc` 取消等同于这一步没给输入，登录会失败并退回待命状态；
-- 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`。
+- 登完之后 session 落在 `data/`，启动实例会直接进 `authorizationStateReady`；
+- 已有有效 session 时，`s` 的登录探测会直接走完，不会弹框。
 
 日志页按 `l` 打开级别选择框：写入 `.fuyubot/log-level`，运行中的实例每 500ms 读一次并切换，
 `status` 随后显示新的 `log_level`。这是**运行期**开关：只对本次运行生效，重启回到
