@@ -7,7 +7,7 @@ Android 的**内核**是一个 JNI 库（不是可执行文件）。它从 2026-
 fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64   # Actions artifact，不挂 Release
 ├─ libfuyubotjni.so      ← System.loadLibrary("fuyubotjni")
 ├─ libtdjson.so          ← 同 ABI，必须一起装
-├─ plugins/*.so          ← 可选内置插件（/start、/help、/plugins）
+├─ plugins/<id>/         ← 可选内置插件包（plugin.json + bin/*.so，/start、/help、/plugins）
 ├─ include/fuyubot_jni.h ← C 符号的头文件（可选）
 └─ README.txt
 ```
@@ -24,8 +24,9 @@ APK 由本仓 `release-bot.yml` 的 `build-apk` job 出；这个包只提供**�
 ## 装法 [#装法]
 
 1. 两个 `.so` 放进 `app/src/main/jniLibs/<abi>/`；
-2. `plugins/` 里的 `.so`（可选）拷进你的 `<root>/plugins/`，并 `chmod 0444`
-   （动态加载的代码要是只读的，Android 14 起对 `targetSdk 34+` 有这个要求）；
+2. `plugins/<id>/` 插件包（可选）整个拷进你的 `<root>/plugins/`，目录与 `.so` 都 `chmod 0444`
+   （动态加载的代码要是只读的，Android 14 起对 `targetSdk 34+` 有这个要求；
+   包内布局是 `plugin.json` + `bin/*.so`）；
 3. 代码里**先加载 tdjson，再加载 fuyubotjni**。
 
 ```kotlin

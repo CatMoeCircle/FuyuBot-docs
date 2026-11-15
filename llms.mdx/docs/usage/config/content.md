@@ -79,18 +79,25 @@ bot 账户不受这个开关影响；`whitelist` 非空时 bot 仍只响应表�
 
 ## 角色：主人与管理员 [#角色主人与管理员]
 
+<Callout type="warn">
+  **用 bot 账户时必须配主人。** bot **没有隐式主人**——Telegram 没有「这个 bot 是谁建的」
+  这种接口，宿主无从推断，所以 `[roles].owners` 为空时 `owner` / `admin` 级命令**谁都触发不了**，
+  而且不会报错（内置的 `/plugins` 就是 `owner` 级）。宿主会在启动 / 登录后打一行告警提醒，
+  看到就把 id 补上。
+</Callout>
+
 `[command].whitelist` 决定**能不能触发**；`[roles]` 决定**触发后能做什么**。两者分开：
 
 ```toml
 [roles]
-owners = [123456789]   # 主人：最高权限
-admins = [987654321]   # 全局管理员
+owners = [123456789]   # 主人：最高权限；bot 账户**必配**
+admins = [987654321]   # 全局管理员：可选
 ```
 
-- 主人 / 管理员**绕过** `whitelist`，始终能触发；
-- bot 账户没有隐式主人，`owners` 为空就是没有主人；
-- user 账户在 `owners` 为空时默认自己是主人；一旦配置了 `owners`，就完全按列表来——
-  自己不在列表里就不再是主人，可以换成别人；
+- **bot 账户**：`owners` 为空 = 没有主人，必须手写 id（问 [@userinfobot](https://t.me/userinfobot) 查）；
+- **user 账户**：`owners` 为空时**自己默认就是主人**，不配也能用 `owner` 级命令；
+  一旦写了 `owners` 就完全按列表来——自己不在表里就不再是主人，可以换成别人；
+- 主人 / 管理员**绕过** `whitelist` 与 `whitelist_only`，始终能触发；
 - 群里的 Telegram 管理员是**会话角色**，由宿主现查，不会因为写进这里就变成全局管理员。
 
 > 改 `owners` 时先把自己 id 写进去：一旦列表非空，user 账户自己就不再自动是主人；

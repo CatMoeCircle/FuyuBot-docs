@@ -18,6 +18,10 @@ plugins/
 入口文件名不限，`plugin.json` 的 `entry` 指向哪个人就用哪个。Windows 是 `.dll`，
 Linux 是 `.so`，macOS 是 `.dylib`。
 
+内置插件也遵循同一份布局：发布包里是 `plugins/fuyubot.start/`、`plugins/fuyubot.help/`、
+`plugins/fuyubot.manage/`，每份都有 `plugin.json` + `bin/`；`fuyubot init` / `run`
+会自动装进项目的插件目录。
+
 ## plugin.json [#pluginjson]
 
 最小可用的原生插件清单：

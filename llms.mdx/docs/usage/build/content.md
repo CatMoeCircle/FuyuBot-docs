@@ -45,9 +45,10 @@ cargo build --workspace --offline
 ## 发布包是怎么出的 [#发布包是怎么出的]
 
 `.github/workflows/release-bot.yml` 在 `v*` tag 上按平台编 `fuyubot` 与三个内置插件，
-**分开**打两份中间包（本体 / 插件），`publish` 再把它们叠成各平台一个 zip：
-解压得到 `<资产名>/`，里面有可执行文件、该平台的 `tdjson`（从 `TDLib-v<版本>` 那个 Release 取）
-和 `plugins/`。
+**构建阶段就组好最终布局**（内置插件按分发格式 v1 铺成 `plugins/<id>/` 目录包，不单独打包），
+每平台出一份中间 `.tar.gz`，`publish` 再转成各平台一个 zip：
+解压出来**就是本体**（没有外层目录），里面有可执行文件、该平台的 `tdjson`
+（从 `TDLib-v<版本>` 那个 Release 取）和 `plugins/`。
 名字与 `crates/fuyubot-tdlib/src/loader/vendored.rs` 的 `ASSETS` 表同一套口径（`x86_64` / `aarch64`），
 加平台时两边一起加。
 

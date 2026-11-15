@@ -22,8 +22,8 @@
 ## fuyubot 本体（用户下载即用） [#fuyubot-本体用户下载即用]
 
 运行时仓库的 `release-bot.yml` 在 `v*` tag（或手动 dispatch）上按平台编 `fuyubot-cli` 与三个内置插件，
-**构建阶段就把最终布局组好**（`plugins/` 直接填内置插件，不单独打包），每平台出一份中间
-`.tar.gz`（已是最终布局）；`publish`（Linux runner）把它转成用户下载的 zip 再挂 Release：
+**构建阶段就把最终布局组好**（内置插件按分发格式 v1 铺成 `plugins/<id>/` 目录包，不单独打包），
+每平台出一份中间 `.tar.gz`（已是最终布局）；`publish`（Linux runner）把它转成用户下载的 zip 再挂 Release：
 
 ```mermaid
 graph LR
@@ -42,7 +42,7 @@ graph LR
 ```text
 fuyubot.exe / fuyubot
 tdjson.dll / libtdjson.so / libtdjson.dylib
-plugins/          # 内置插件：/start、/help、/plugins
+plugins/<id>/     # 内置插件包：plugin.json + bin/*.{dll,so,dylib}（/start、/help、/plugins）
 README.txt
 ```
 
@@ -66,7 +66,7 @@ zip 只在 `publish`（Linux runner）里生成，Windows runner 的 bash 没有
 fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
 ├─ libfuyubotjni.so      # System.loadLibrary("fuyubotjni")
 ├─ libtdjson.so
-├─ plugins/*.so          # 可选内置插件
+├─ plugins/<id>/         # 可选内置插件包：plugin.json + bin/*.so
 ├─ include/fuyubot_jni.h
 └─ README.txt
 ```

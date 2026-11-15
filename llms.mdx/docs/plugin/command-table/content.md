@@ -64,6 +64,9 @@ host.call_service(
 
 兼容写法：`chat-admin`、`chatadmin`。
 
+内置插件里，`/plugins` 登记为 `role = "owner"`（只有主人能列出插件清单），
+`/start`、`/help` 保持默认的 `user`。
+
 `owner` / `admin` **不受 `[command].whitelist` 或 `whitelist_only` 影响**：
 只要在 `[roles].owners` / `.admins` 里，白名单没写他们也能触发。
 
@@ -99,6 +102,29 @@ host.call_service(
 - 命令仍在能力表里，`role` / `scopes` 照常生效；
 - 适合兼容命令、彩蛋、只给程序调用的命令。
 
+## 可见性（谁能看见哪些命令） [#可见性谁能看见哪些命令]
+
+`/help` 的过滤有**两条轴**，别混：
+
+| 轴 | 规则 |
+| --- | --- |
+| 角色（层级） | `owner` ⊃ `admin` ⊃ `user`：主人看得见管理员和普通命令，管理员**看不见**主人才能用的命令 |
+| 会话（`chat_admin`） | 只认**本会话**的 Telegram 管理员（频道按频道管理员处理）；全局角色不继承它，主人不是本群管理员也看不到 |
+
+会话范围（`scopes`）只在群 / 频道里挡命令。**私聊是主人的管理视图**：
+
+- 全局主人在私聊里看得见全部未隐藏的 `user` / `admin` / `owner` 命令，**不受 `scopes`
+  限制**——只在群里用的管理员命令也会列出来，方便主人一次看全；
+- 普通用户和全局管理员仍按 `scopes` 过滤；
+- 群 / 频道对所有人（含主人）都严格按 `scopes`；
+- `hidden = true` 对谁都不显示；`chat_admin` 命令在私聊里谁都不显示（那里没有会话管理员）。
+
+| 看的人 | 私聊 | 群 / 频道 |
+| --- | --- | --- |
+| 主人 | 全部 `user` / `admin` / `owner`（忽略 `scopes`） | `scopes` 命中的 `user` / `admin` / `owner`；本会话管理员再看到 `chat_admin` |
+| 全局管理员 | `scopes` 命中的 `user` / `admin` | 同上，但没有 `owner` 命令 |
+| 普通用户 | `scopes` 命中的 `user` | `scopes` 命中的 `user`；本会话管理员再看到 `chat_admin` |
+
 ## `/help` 怎么拿到列表 [#help-怎么拿到列表]
 
 `/help` 调宿主的 `list` 方法：
@@ -127,7 +153,7 @@ let entries: Vec<serde_json::Value> = serde_json::from_str(&raw)?;
 
 1. 调 `role` 拿当前用户的全局角色；
 2. 从对象缓存拿会话类型 / 本会话管理员身份；
-3. 过滤 `hidden`、`role`、`scopes`；
+3. 过滤 `hidden`、`role`、`scopes`（私聊里全局主人不受 `scopes` 限制，见上一节）；
 4. 按 `plugin` 分组，组标题用宿主报告里的 `display_name`，没有就退回短名。
 
 > `list` 是原始表；按人和会话过滤后的“可见命令列表”目前只在 `/help` 内部计算，

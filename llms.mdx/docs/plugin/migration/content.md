@@ -43,6 +43,8 @@ fuyubot plugin migrate
 - 写一份 `plugin.json`；
 - 对旧脚本目录补一个 `plugin.json`（脚本本身不动）；
 - 内置插件和已经是目录包的插件跳过，重复执行不会重复迁移。
+  内置插件由 `fuyubot init` / `run` 自动装成包（`plugins/fuyubot.start/` 等），
+  老版本留下的平铺 dll 会在那一步就地迁走——`migrate` 不碰它们，避免重复加载。
 
 迁移完再跑一次 `fuyubot plugin list`，然后启动实例验证。
 

@@ -395,7 +395,7 @@ Android 的**内核**是一个 JNI 库（不是可执行文件）。它从 2026-
 fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64   # Actions artifact，不挂 Release
 ├─ libfuyubotjni.so      ← System.loadLibrary("fuyubotjni")
 ├─ libtdjson.so          ← 同 ABI，必须一起装
-├─ plugins/*.so          ← 可选内置插件（/start、/help、/plugins）
+├─ plugins/<id>/         ← 可选内置插件包（plugin.json + bin/*.so，/start、/help、/plugins）
 ├─ include/fuyubot_jni.h ← C 符号的头文件（可选）
 └─ README.txt
 ```
@@ -412,8 +412,9 @@ APK 由本仓 `release-bot.yml` 的 `build-apk` job 出；这个包只提供**�
 ## 装法 [#装法]
 
 1. 两个 `.so` 放进 `app/src/main/jniLibs/<abi>/`；
-2. `plugins/` 里的 `.so`（可选）拷进你的 `<root>/plugins/`，并 `chmod 0444`
-   （动态加载的代码要是只读的，Android 14 起对 `targetSdk 34+` 有这个要求）；
+2. `plugins/<id>/` 插件包（可选）整个拷进你的 `<root>/plugins/`，目录与 `.so` 都 `chmod 0444`
+   （动态加载的代码要是只读的，Android 14 起对 `targetSdk 34+` 有这个要求；
+   包内布局是 `plugin.json` + `bin/*.so`）；
 3. 代码里**先加载 tdjson，再加载 fuyubotjni**。
 
 ```kotlin
@@ -1310,7 +1311,8 @@ FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作�
 - 转换在编译期完成：日志里只有一条 `已转换 …\td_api.tl：共 N 条`。条数取决于那份文件，**别当常量写进断言**。
 
 `.cargo/config.toml` 另有两个别名：`cargo bot`（= `fuyubot run`）、`cargo package-bot`
-（release 构建 `fuyubot` + 三个内置插件，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级）。
+（release 构建 `fuyubot` + 三个内置插件，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级；
+`init` / `run` 会把内置插件装成项目的 `plugins/<id>/` 插件包，旧版本的平铺 dll 会就地迁移）。
 
 
 ## 两类测试 [#两类测试]
@@ -1562,8 +1564,8 @@ cargo fmt --all --check             # 0 diff
 ## fuyubot 本体（用户下载即用） [#fuyubot-本体用户下载即用]
 
 运行时仓库的 `release-bot.yml` 在 `v*` tag（或手动 dispatch）上按平台编 `fuyubot-cli` 与三个内置插件，
-**构建阶段就把最终布局组好**（`plugins/` 直接填内置插件，不单独打包），每平台出一份中间
-`.tar.gz`（已是最终布局）；`publish`（Linux runner）把它转成用户下载的 zip 再挂 Release：
+**构建阶段就把最终布局组好**（内置插件按分发格式 v1 铺成 `plugins/<id>/` 目录包，不单独打包），
+每平台出一份中间 `.tar.gz`（已是最终布局）；`publish`（Linux runner）把它转成用户下载的 zip 再挂 Release：
 
 ```mermaid
 graph LR
@@ -1582,7 +1584,7 @@ graph LR
 ```text
 fuyubot.exe / fuyubot
 tdjson.dll / libtdjson.so / libtdjson.dylib
-plugins/          # 内置插件：/start、/help、/plugins
+plugins/<id>/     # 内置插件包：plugin.json + bin/*.{dll,so,dylib}（/start、/help、/plugins）
 README.txt
 ```
 
@@ -1606,7 +1608,7 @@ zip 只在 `publish`（Linux runner）里生成，Windows runner 的 bash 没有
 fuyubot-<版本>-android-jni-<abi>.zip        <abi> = arm64-v8a | x86_64
 ├─ libfuyubotjni.so      # System.loadLibrary("fuyubotjni")
 ├─ libtdjson.so
-├─ plugins/*.so          # 可选内置插件
+├─ plugins/<id>/         # 可选内置插件包：plugin.json + bin/*.so
 ├─ include/fuyubot_jni.h
 └─ README.txt
 ```
@@ -2684,6 +2686,10 @@ plugins/
 入口文件名不限，`plugin.json` 的 `entry` 指向哪个人就用哪个。Windows 是 `.dll`，
 Linux 是 `.so`，macOS 是 `.dylib`。
 
+内置插件也遵循同一份布局：发布包里是 `plugins/fuyubot.start/`、`plugins/fuyubot.help/`、
+`plugins/fuyubot.manage/`，每份都有 `plugin.json` + `bin/`；`fuyubot init` / `run`
+会自动装进项目的插件目录。
+
 ## plugin.json [#pluginjson]
 
 最小可用的原生插件清单：
@@ -3047,6 +3053,9 @@ host.call_service(
 
 兼容写法：`chat-admin`、`chatadmin`。
 
+内置插件里，`/plugins` 登记为 `role = "owner"`（只有主人能列出插件清单），
+`/start`、`/help` 保持默认的 `user`。
+
 `owner` / `admin` **不受 `[command].whitelist` 或 `whitelist_only` 影响**：
 只要在 `[roles].owners` / `.admins` 里，白名单没写他们也能触发。
 
@@ -3082,6 +3091,29 @@ host.call_service(
 - 命令仍在能力表里，`role` / `scopes` 照常生效；
 - 适合兼容命令、彩蛋、只给程序调用的命令。
 
+## 可见性（谁能看见哪些命令） [#可见性谁能看见哪些命令]
+
+`/help` 的过滤有**两条轴**，别混：
+
+| 轴 | 规则 |
+| --- | --- |
+| 角色（层级） | `owner` ⊃ `admin` ⊃ `user`：主人看得见管理员和普通命令，管理员**看不见**主人才能用的命令 |
+| 会话（`chat_admin`） | 只认**本会话**的 Telegram 管理员（频道按频道管理员处理）；全局角色不继承它，主人不是本群管理员也看不到 |
+
+会话范围（`scopes`）只在群 / 频道里挡命令。**私聊是主人的管理视图**：
+
+- 全局主人在私聊里看得见全部未隐藏的 `user` / `admin` / `owner` 命令，**不受 `scopes`
+  限制**——只在群里用的管理员命令也会列出来，方便主人一次看全；
+- 普通用户和全局管理员仍按 `scopes` 过滤；
+- 群 / 频道对所有人（含主人）都严格按 `scopes`；
+- `hidden = true` 对谁都不显示；`chat_admin` 命令在私聊里谁都不显示（那里没有会话管理员）。
+
+| 看的人 | 私聊 | 群 / 频道 |
+| --- | --- | --- |
+| 主人 | 全部 `user` / `admin` / `owner`（忽略 `scopes`） | `scopes` 命中的 `user` / `admin` / `owner`；本会话管理员再看到 `chat_admin` |
+| 全局管理员 | `scopes` 命中的 `user` / `admin` | 同上，但没有 `owner` 命令 |
+| 普通用户 | `scopes` 命中的 `user` | `scopes` 命中的 `user`；本会话管理员再看到 `chat_admin` |
+
 ## `/help` 怎么拿到列表 [#help-怎么拿到列表]
 
 `/help` 调宿主的 `list` 方法：
@@ -3110,7 +3142,7 @@ let entries: Vec<serde_json::Value> = serde_json::from_str(&raw)?;
 
 1. 调 `role` 拿当前用户的全局角色；
 2. 从对象缓存拿会话类型 / 本会话管理员身份；
-3. 过滤 `hidden`、`role`、`scopes`；
+3. 过滤 `hidden`、`role`、`scopes`（私聊里全局主人不受 `scopes` 限制，见上一节）；
 4. 按 `plugin` 分组，组标题用宿主报告里的 `display_name`，没有就退回短名。
 
 > `list` 是原始表；按人和会话过滤后的“可见命令列表”目前只在 `/help` 内部计算，
@@ -4379,6 +4411,8 @@ fuyubot plugin migrate
 - 写一份 `plugin.json`；
 - 对旧脚本目录补一个 `plugin.json`（脚本本身不动）；
 - 内置插件和已经是目录包的插件跳过，重复执行不会重复迁移。
+  内置插件由 `fuyubot init` / `run` 自动装成包（`plugins/fuyubot.start/` 等），
+  老版本留下的平铺 dll 会在那一步就地迁走——`migrate` 不碰它们，避免重复加载。
 
 迁移完再跑一次 `fuyubot plugin list`，然后启动实例验证。
 
@@ -7574,9 +7608,10 @@ cargo build --workspace --offline
 ## 发布包是怎么出的 [#发布包是怎么出的]
 
 `.github/workflows/release-bot.yml` 在 `v*` tag 上按平台编 `fuyubot` 与三个内置插件，
-**分开**打两份中间包（本体 / 插件），`publish` 再把它们叠成各平台一个 zip：
-解压得到 `<资产名>/`，里面有可执行文件、该平台的 `tdjson`（从 `TDLib-v<版本>` 那个 Release 取）
-和 `plugins/`。
+**构建阶段就组好最终布局**（内置插件按分发格式 v1 铺成 `plugins/<id>/` 目录包，不单独打包），
+每平台出一份中间 `.tar.gz`，`publish` 再转成各平台一个 zip：
+解压出来**就是本体**（没有外层目录），里面有可执行文件、该平台的 `tdjson`
+（从 `TDLib-v<版本>` 那个 Release 取）和 `plugins/`。
 名字与 `crates/fuyubot-tdlib/src/loader/vendored.rs` 的 `ASSETS` 表同一套口径（`x86_64` / `aarch64`），
 加平台时两边一起加。
 
@@ -7677,18 +7712,25 @@ bot 账户不受这个开关影响；`whitelist` 非空时 bot 仍只响应表�
 
 ## 角色：主人与管理员 [#角色主人与管理员]
 
+<Callout type="warn">
+  **用 bot 账户时必须配主人。** bot **没有隐式主人**——Telegram 没有「这个 bot 是谁建的」
+  这种接口，宿主无从推断，所以 `[roles].owners` 为空时 `owner` / `admin` 级命令**谁都触发不了**，
+  而且不会报错（内置的 `/plugins` 就是 `owner` 级）。宿主会在启动 / 登录后打一行告警提醒，
+  看到就把 id 补上。
+</Callout>
+
 `[command].whitelist` 决定**能不能触发**；`[roles]` 决定**触发后能做什么**。两者分开：
 
 ```toml
 [roles]
-owners = [123456789]   # 主人：最高权限
-admins = [987654321]   # 全局管理员
+owners = [123456789]   # 主人：最高权限；bot 账户**必配**
+admins = [987654321]   # 全局管理员：可选
 ```
 
-- 主人 / 管理员**绕过** `whitelist`，始终能触发；
-- bot 账户没有隐式主人，`owners` 为空就是没有主人；
-- user 账户在 `owners` 为空时默认自己是主人；一旦配置了 `owners`，就完全按列表来——
-  自己不在列表里就不再是主人，可以换成别人；
+- **bot 账户**：`owners` 为空 = 没有主人，必须手写 id（问 [@userinfobot](https://t.me/userinfobot) 查）；
+- **user 账户**：`owners` 为空时**自己默认就是主人**，不配也能用 `owner` 级命令；
+  一旦写了 `owners` 就完全按列表来——自己不在表里就不再是主人，可以换成别人；
+- 主人 / 管理员**绕过** `whitelist` 与 `whitelist_only`，始终能触发；
 - 群里的 Telegram 管理员是**会话角色**，由宿主现查，不会因为写进这里就变成全局管理员。
 
 > 改 `owners` 时先把自己 id 写进去：一旦列表非空，user 账户自己就不再自动是主人；
@@ -7892,7 +7934,8 @@ $env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
 
 不用装 Rust、不用编译：到 [Releases](https://github.com/CatMoeCircle/Fuyu-Bot/releases) 下对应平台的 zip，
 解压后里面就是可执行文件，**TDLib 动态库已经和它放在同一个目录**（运行时按「可执行文件所在目录」
-自动找到，不用配环境变量、不用单独装 TDLib），内置插件在同级的 `plugins/`。
+自动找到，不用配环境变量、不用单独装 TDLib），内置插件在同级的 `plugins/<id>/`（插件包：
+`plugin.json` + `bin/` 里的动态库）。
 
 ## 下载哪个包 [#下载哪个包]
 
@@ -7909,6 +7952,9 @@ $env:FUYUBOT_TDLIB_VENDORED_CACHE = "F:\Rust\FuyuBot\.tdlib-cache"
 | macOS（Apple Silicon） | `fuyubot-<版本>-macos-aarch64.zip` | `fuyubot` + `libtdjson.dylib` + `plugins/` + `README.txt` |
 
 - **解压出来就是本体**：zip 里没有额外的一层目录，建议先建一个空目录再往里解压。
+- **内置插件是目录包**：`plugins/fuyubot.start/`、`plugins/fuyubot.help/`、`plugins/fuyubot.manage/`
+  里各有一份 `plugin.json` 和 `bin/`；`init` / `run` 会按这个布局装进项目（老项目的平铺 dll
+  会自动迁成包，不会重复加载）。
 - 归档一律 `.zip`（Windows 资源管理器双击就能解，Linux / macOS 用 `unzip`）。
 - **上面没有的平台**（Intel Mac 等）暂时没有包，自己编：见 [从源码构建](./build.mdx)。
 - 想让机器人支持 Python / JS / TS 脚本，要**另装脚本插件**：到
@@ -7980,6 +8026,27 @@ fuyubot 0.1.0
 `api_id` 到 [my.telegram.org](https://my.telegram.org) 申请，**它不是秘密**，可以直接写进配置；`api_hash` 是凭据，
 但每次启动都要发给 TDLib，所以 `run` 首次问过之后会把明文写回 `fuyubot.toml`（也可以事先设环境变量 `TG_API_HASH`
 让它一次都不问）——那份文件要当密钥看待，别提交进版本库（见 [配置文件](./config.mdx)）。
+
+## 先把主人配上 [#先把主人配上]
+
+<Callout type="warn">
+  **用 bot 账户时这一步不能省。** `[roles].owners` 为空就等于**没有主人**：`owner` / `admin`
+  级命令谁都触发不了（内置的 `/plugins` 就是 `owner` 级），而且不报错——宿主会在启动 /
+  登录后打一行告警提醒。user 账户不受影响，**自己默认就是主人**。
+</Callout>
+
+```toml
+[roles]
+owners = [123456789]   # 你的 Telegram 用户 id，问 @userinfobot 查；可以填多个
+admins = []            # 可选的全局管理员（能用 admin 级命令，不能用 owner 级）
+```
+
+- **bot 账户**：必须显式写 `owners`，bot 没有隐式主人；
+- **user 账户**：`owners` 为空时自己默认是主人；写了 `owners` 就按列表来，自己不在表里就不再是主人（可以换成别人）；
+- 主人 / 全局管理员**不受** `[command].whitelist` / `whitelist_only` 影响；
+- 群里的 Telegram 管理员是**会话角色**，不会因为写进 `[roles]` 就变成全局管理员。
+
+改完重启实例生效，细节见[配置文件 · 角色](./config.mdx)。
 
 ## 跑起来（推荐：TUI） [#跑起来推荐tui]
 
