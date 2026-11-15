@@ -41,7 +41,8 @@ FUYUBOT_TDLIB_VENDORED_CACHE → $CARGO_HOME/fuyubot-tdlib-vendored → <工作�
 - 转换在编译期完成：日志里只有一条 `已转换 …\td_api.tl：共 N 条`。条数取决于那份文件，**别当常量写进断言**。
 
 `.cargo/config.toml` 另有两个别名：`cargo bot`（= `fuyubot run`）、`cargo package-bot`
-（release 构建 `fuyubot` + 三个内置插件，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级）。
+（release 构建 `fuyubot` + 三个内置插件，产物在 `target/release/`，tdjson 由 build.rs 放到 exe 同级；
+`init` / `run` 会把内置插件装成项目的 `plugins/<id>/` 插件包，旧版本的平铺 dll 会就地迁移）。
 
 
 ## 两类测试
